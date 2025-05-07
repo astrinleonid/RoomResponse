@@ -110,7 +110,7 @@ def extract_metadata_from_path(folder_path):
     parts = folder_path.split('-')
 
     if len(parts) < 2:
-        print(f"Not enough parts in folder name: {folder_name}")
+        print(f"Not enough parts in folder name: {folder_path}")
         return None
 
     # Find which part contains "scenario"
@@ -126,7 +126,7 @@ def extract_metadata_from_path(folder_path):
             break
 
     if scenario_index == -1:
-        print(f"No scenario pattern found in: {folder_name}")
+        print(f"No scenario pattern found in: {folder_path}")
         return None
 
     # Determine computer name (if any)
@@ -138,7 +138,7 @@ def extract_metadata_from_path(folder_path):
     remaining_parts = parts[scenario_index + 1:]
 
     if not remaining_parts:
-        print(f"No room name found in: {folder_name}")
+        print(f"No room name found in: {folder_path}")
         return None
 
     room_name = remaining_parts[0]
@@ -349,12 +349,8 @@ def create_mfcc_dataset_hierarchical(root_folder, substring='recording',
 
 def main():
     parser = argparse.ArgumentParser(description='Copy specific sub-subfolders from a directory structure')
-    parser.add_argument('source', help='Source directory')
-    parser.add_argument('--destination', default='room_data_temp', help='Destination directory')
     parser.add_argument('--download_folder', default='/Users/leonidastrin/Downloads',
                         help='Folder where downloaded data is stored')
-    parser.add_argument('--project_folder', default='/Users/leonidastrin/PycharmProjects/RoomResponse/Data',
-                        help='Folder where the project takes data from')
     parser.add_argument('--subfolder-name', default='diagnostics',
                         help='Name of the sub-subfolder to copy (default: diagnostics)')
     parser.add_argument('--dataset_file', default='mfcc_dataset_with_metadata.csv',
@@ -365,8 +361,9 @@ def main():
 
     args = parser.parse_args()
 
-    source = os.path.join(args.download_folder, args.source)
-    destination = os.path.join(args.project_folder, args.destination)
+    source = args.download_folder
+    project_folder =  os.path.dirname(os.path.abspath(__file__))
+    destination = os.path.join(project_folder, "room_data_temp")
     print(f"Copying data from {source} to {destination}")
     copy_specific_subfolders(source, destination, args.subfolder_name, args.zip)
 

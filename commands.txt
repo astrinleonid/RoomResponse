@@ -1,0 +1,10 @@
+1st command:
+(sonar_analyzer_env) C:\Users\Nof\Desktop\leonid-rooresponse\RoomResponse>python form_dataset.py leonid-rooresponse\data --download_folder C:\Users\Nof\Desktop\  --project_folder C:\Users\Nof\Desktop\leonid-rooresponse\RoomResponse
+
+Changed to
+(sonar_analyzer_env) C:\Users\Nof\Desktop\leonid-rooresponse\RoomResponse>python form_dataset.py --download_folder C:\Users\Nof\Desktop\leonid-rooresponse\data
+
+Need to bring source after the python file location [the data location]
+* this file will be created in the folder: mfcc_dataset_with_metadata.csv
+2nd command:
+python pairwise_scenario_comparison.py
