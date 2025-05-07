@@ -358,7 +358,6 @@ def main():
     parser.add_argument('-z', '--zip', action='store_true',
                         help='Process zip files instead of directories')
 
-
     args = parser.parse_args()
 
     source = args.download_folder
