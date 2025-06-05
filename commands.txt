@@ -1,6 +1,8 @@
 Examples:
 1st command:
+C:\Users\Nof\miniconda3\envs\sonar_analyzer_env\python.exe form_dataset.py --download_folder C:\Users\Nof\Desktop\leonid-rooresponse\data
 python form_dataset.py --download_folder C:\Users\Nof\Desktop\leonid-rooresponse\data
 * this file will be created in the folder: mfcc_dataset_with_metadata.csv
 2nd command:
+C:\Users\Nof\miniconda3\envs\sonar_analyzer_env\python.exe pairwise_scenario_comparison.py
 python pairwise_scenario_comparison.py

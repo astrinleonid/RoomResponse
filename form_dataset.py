@@ -1,4 +1,3 @@
-
 import os
 import shutil
 import re
@@ -6,148 +5,144 @@ import glob
 import argparse
 import numpy as np
 import pandas as pd
+import librosa
 from tqdm import tqdm
 from copyFolder import copy_specific_subfolders
 from extract_features import extract_mfcc_from_array
 
-METADATA = ['computer_name','scenario_id','room_name','signal_shape']
+# Configuration constants
+DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_MFCC_COEFFICIENTS = 13
+AUDIO_PADDING_VALUE = 0.0
+METADATA_COLUMNS = ['computer_name', 'scenario_id', 'room_name', 'signal_shape', 'filename']
 
 
-def combine_files_to_numpy_array(file_list, pad_value=np.nan):
+def load_wav_files(file_paths, sample_rate=DEFAULT_SAMPLE_RATE):
     """
-    Reads multiple text files containing float values (one per line) and
-    combines them into a single NumPy array where each row represents data from one file.
-    Pads shorter files with a specified pad_value to match the length of the longest file.
-
+    Load multiple WAV files and return as a padded numpy array.
+    
     Args:
-        file_list (list): List of paths to text files
-        pad_value: Value to use for padding (default: np.nan)
-
+        file_paths (list): List of WAV file paths to load
+        sample_rate (int): Target sample rate for all files
+        
     Returns:
-        numpy.ndarray: A 2D NumPy array where each row contains values from one file
+        numpy.ndarray: 2D array where each row is audio from one file
     """
-    # First, determine the maximum length by reading all files
-    file_data = []
+    print(f"Loading {len(file_paths)} WAV files...")
+    
+    audio_data = []
     max_length = 0
-
-    values_array = []
-
-    print("Extracting data from files ...")
-    for file_path in tqdm(file_list):
+    
+    # Load each WAV file
+    for file_path in tqdm(file_paths, desc="Loading audio"):
         try:
-            with open(file_path, 'r') as file:
-                # Read lines from the file and convert to float
-                values = []
-                for line in file:
-                    if line.startswith('#'):
-                        continue
-                    try:
-                        value = float(line.split(',')[1].strip())
-                        values.append(value)
-                    except:
-                        print("Warning: line with no value")
-                max_length = max(max_length, len(values))
-                values_array.append(values)
-        except FileNotFoundError:
-            print(f"Warning: File not found: {file_path}")
-            file_data.append([])  # Add empty list to maintain corresponding indices
-        except ValueError as e:
-            print(f"Warning: Error parsing values in {file_path}: {e}")
-            file_data.append([])  # Add empty list to maintain corresponding indices
+            # Load audio file (librosa handles resampling and mono conversion)
+            audio, _ = librosa.load(file_path, sr=sample_rate, mono=True)
+            audio_data.append(audio)
+            max_length = max(max_length, len(audio))
+            
+        except Exception as e:
+            print(f"Warning: Failed to load {file_path}: {e}")
+            audio_data.append(np.array([]))  # Empty array for failed loads
+    
+    # Create padded array where all audio has same length
+    num_files = len(file_paths)
+    padded_audio = np.full((num_files, max_length), AUDIO_PADDING_VALUE, dtype=np.float32)
+    
+    # Fill with actual audio data
+    for i, audio in enumerate(audio_data):
+        if len(audio) > 0:
+            padded_audio[i, :len(audio)] = audio
+    
+    print(f"Loaded audio: {num_files} files, max length: {max_length} samples")
+    return padded_audio
 
-    # Create a 2D array with proper padding
-    result_array = np.full((len(file_list), max_length), pad_value)
 
-    # Fill the array with actual data
-    for i, values in enumerate(values_array):
-        if values:  # Only process non-empty lists
-            result_array[i, :len(values)] = values
-
-    return result_array
-
-def extract_files_with_substring(folder_path, substring):
+def find_wav_files(folder_path, recording_type="average"):
     """
-    Extract all files from a folder that contain a specific substring in their names.
-
+    Find all WAV files in a folder that match the recording type.
+    
     Args:
-        folder_path (str): Path to the folder to search in
-        substring (str): Substring to look for in file names
-
+        folder_path (str): Path to search in
+        recording_type (str): Type of recording - "average" or "raw"
+                             "average": files ending with "recording.wav" (but not "raw_recording.wav")
+                             "raw": files ending with "raw_recording.wav"
+        
     Returns:
-        list: List of file paths that contain the substring
+        list: List of matching WAV file paths
     """
-    matching_files = []
-
-    # Check if the folder exists
     if not os.path.isdir(folder_path):
-        print(f"Error: The folder '{folder_path}' does not exist.")
-        return matching_files
+        print(f"Warning: Directory not found: {folder_path}")
+        return []
+    
+    wav_files = []
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        
+        # Check if it's a WAV file
+        if not (os.path.isfile(file_path) and filename.lower().endswith('.wav')):
+            continue
+        
+        # Filter based on recording type
+        filename_lower = filename.lower()
+        
+        if recording_type == "raw":
+            # For raw recordings: must end with "raw_recording.wav"
+            if filename_lower.endswith('raw_recording.wav'):
+                wav_files.append(file_path)
+        else:  # recording_type == "average" (default)
+            # For average recordings: must end with "recording.wav" but NOT "raw_recording.wav"
+            if filename_lower.endswith('recording.wav') and not filename_lower.endswith('raw_recording.wav'):
+                wav_files.append(file_path)
+    
+    return wav_files
 
-    # Walk through all files in the folder
-    for file_name in os.listdir(folder_path):
-        # Get the full file path
-        file_path = os.path.join(folder_path, file_name)
 
-        # Check if it's a file (not a directory) and contains the substring
-        if os.path.isfile(file_path) and substring.lower() in file_name.lower():
-            matching_files.append(file_path)
-
-    return matching_files
-
-
-def extract_metadata_from_path(folder_path):
+def parse_folder_metadata(folder_path):
     """
-    Extract metadata from folder name in the format: <computer name>-Scenario<scenario ID>-<Room name>
-
+    Extract metadata from folder name using pattern: <computer>-Scenario<id>-<room>-<shape>
+    
     Args:
         folder_path (str): Path to the folder
-
+        
     Returns:
-        dict: Dictionary containing computer_name, scenario_id, and room_name
+        dict or None: Metadata dictionary or None if parsing fails
     """
-    # Get the folder name from the path
-
-    parts = folder_path.split('-')
-
+    folder_name = os.path.basename(folder_path)
+    parts = folder_name.split('-')
+    
     if len(parts) < 2:
-        print(f"Not enough parts in folder name: {folder_path}")
+        print(f"Warning: Invalid folder name format: {folder_name}")
         return None
-
-    # Find which part contains "scenario"
+    
+    # Find scenario part using regex
     scenario_pattern = re.compile(r'[Ss]c.*?rio(\d+(?:\.\d+)?)')
     scenario_index = -1
     scenario_id = None
-
+    
     for i, part in enumerate(parts):
         match = scenario_pattern.match(part)
         if match:
             scenario_index = i
             scenario_id = match.group(1)
             break
-
+    
     if scenario_index == -1:
-        print(f"No scenario pattern found in: {folder_path}")
+        print(f"Warning: No scenario found in folder: {folder_name}")
         return None
-
-    # Determine computer name (if any)
-    computer_name = None
-    if scenario_index > 0:
-        computer_name = parts[0].split('_')[-1]
-
-    # Determine room name and signal shape
+    
+    # Extract computer name (before scenario)
+    computer_name = parts[0].split('_')[-1] if scenario_index > 0 else None
+    
+    # Extract room and signal shape (after scenario)
     remaining_parts = parts[scenario_index + 1:]
-
     if not remaining_parts:
-        print(f"No room name found in: {folder_path}")
+        print(f"Warning: No room name found in folder: {folder_name}")
         return None
-
+    
     room_name = remaining_parts[0]
-
-    # Signal shape is optional
-    signal_shape = None
-    if len(remaining_parts) > 1:
-        signal_shape = remaining_parts[1]
-
+    signal_shape = remaining_parts[1] if len(remaining_parts) > 1 else None
+    
     return {
         "computer_name": computer_name,
         "scenario_id": scenario_id,
@@ -155,241 +150,349 @@ def extract_metadata_from_path(folder_path):
         "signal_shape": signal_shape
     }
 
-def create_mfcc_dataset_hierarchical(root_folder, substring='recording',
-                                     sample_rate=22050, n_mfcc=13,
-                                     output_file='mfcc_dataset_with_metadata.csv',
-                                     append=True, replace_duplicates=False):
-    """
-    Creates a dataset of MFCC features from a hierarchical folder structure
-    with metadata extracted from folder names. Can append to existing dataset.
-    Optimized to avoid unnecessary MFCC extraction for existing entries.
 
+def load_existing_dataset(output_file):
+    """
+    Load existing dataset if it exists.
+    
     Args:
-        root_folder (str): Path to the root folder containing subfolders
-        substring (str): Substring to filter files by name
-        sample_rate (int): Sample rate of audio files
-        n_mfcc (int): Number of MFCC coefficients to extract
-        output_file (str): Path to save the CSV dataset
-        append (bool): If True, append to existing file; if False, create new file
-        replace_duplicates (bool): If True, replace existing entries with same metadata; if False, keep both
-
+        output_file (str): Path to existing CSV file
+        
     Returns:
-        pandas.DataFrame: The created or updated dataset
+        tuple: (DataFrame or None, set of existing entries)
     """
-    existing_df = None
-    existing_entries = set()
-
-    # Check if output file exists and load it if needed
-    if append and os.path.exists(output_file):
-        print(f"Loading existing dataset from {output_file}")
+    if not os.path.exists(output_file):
+        return None, set()
+    
+    try:
         existing_df = pd.read_csv(output_file)
-        print(f"Loaded {len(existing_df)} existing entries")
+        print(f"Loaded existing dataset: {len(existing_df)} entries")
+        
+        # Create set of existing entries for duplicate checking
+        existing_entries = set()
+        for _, row in existing_df.iterrows():
+            entry_key = tuple(str(row.get(col, '')) for col in METADATA_COLUMNS)
+            existing_entries.add(entry_key)
+        
+        return existing_df, existing_entries
+        
+    except Exception as e:
+        print(f"Warning: Failed to load existing dataset: {e}")
+        return None, set()
 
-        # Create a set of existing entries based on metadata
-        if not replace_duplicates:
-            # Only create this set if we're not replacing entries
-            for _, row in existing_df.iterrows():
-                entry_key = (
-                    str(row.get('computer_name', '')),
-                    str(row.get('scenario_id', '')),
-                    str(row.get('room_name', '')),
-                    str(row.get('signal_shape', '')),
-                    str(row.get('filename', ''))
-                )
-                existing_entries.add(entry_key)
 
-    # Find all subfolders that might contain scenario data
-    scenario_folders = [f for f in glob.glob(os.path.join(root_folder, "*"))
-                        if os.path.isdir(f)]
-
-    total_files_found = 0
-    total_files_processed = 0
-    new_data = []
-
-    # First pass: collect metadata and determine which files need processing
+def collect_files_to_process(root_folder, recording_type, existing_entries, replace_duplicates):
+    """
+    Scan folders and collect WAV files that need processing.
+    
+    Args:
+        root_folder (str): Root directory to scan
+        recording_type (str): Type of recording - "average" or "raw"
+        existing_entries (set): Set of existing dataset entries
+        replace_duplicates (bool): Whether to replace existing entries
+        
+    Returns:
+        tuple: (list of file paths, dict mapping file paths to metadata)
+    """
+    print(f"Scanning folders for {recording_type} WAV files...")
+    
+    # Find all scenario folders
+    scenario_folders = [f for f in glob.glob(os.path.join(root_folder, "*")) if os.path.isdir(f)]
+    print(f"Found {len(scenario_folders)} scenario folders")
+    
     files_to_process = []
     file_metadata = {}
-
-    for scenario_folder in scenario_folders:
-        # Extract metadata from folder name
-        metadata = extract_metadata_from_path(scenario_folder)
-
+    total_files_found = 0
+    
+    for folder_path in scenario_folders:
+        # Parse metadata from folder name
+        metadata = parse_folder_metadata(folder_path)
         if metadata is None:
-            print(f"Warning: Could not extract metadata from {scenario_folder}. Skipping.")
             continue
-
-        # Check if there's a diagnostics subfolder
-        diagnostics_folder = os.path.join(scenario_folder, "diagnostics")
-        if not os.path.exists(diagnostics_folder):
-            print(f"Warning: No diagnostics folder found in {scenario_folder}")
+        
+        # Look for diagnostics subfolder
+        diagnostics_path = os.path.join(folder_path, "diagnostics")
+        if not os.path.exists(diagnostics_path):
+            print(f"Warning: No diagnostics folder in {folder_path}")
             continue
-
-        # Get recording files from diagnostics folder
-        recording_files = extract_files_with_substring(diagnostics_folder, substring)
-
-        if not recording_files:
-            print(f"Warning: No recording files found in {diagnostics_folder}")
+        
+        # Find WAV files in diagnostics folder based on recording type
+        wav_files = find_wav_files(diagnostics_path, recording_type)
+        total_files_found += len(wav_files)
+        
+        if not wav_files:
+            print(f"Warning: No {recording_type} WAV files found in {diagnostics_path}")
             continue
-
-        print(f"Found {len(recording_files)} recording files in {diagnostics_folder}")
-        total_files_found += len(recording_files)
-
+        
+        print(f"Found {len(wav_files)} {recording_type} WAV files in {os.path.basename(folder_path)}")
+        
         # Check each file against existing entries
-        for file_path in recording_files:
+        for file_path in wav_files:
             filename = os.path.basename(file_path)
-            entry_key = (
+            entry_key = tuple([
                 str(metadata['computer_name']),
                 str(metadata['scenario_id']),
                 str(metadata['room_name']),
                 str(metadata['signal_shape']),
                 filename
-            )
-
-            # Skip if entry exists and we're not replacing
+            ])
+            
+            # Skip if already exists and not replacing
             if not replace_duplicates and entry_key in existing_entries:
-                print(f"Skipping {filename} - already exists in dataset")
+                print(f"Skipping {filename} - already in dataset")
                 continue
-
-            # If we're replacing or entry doesn't exist, add to processing list
+            
             files_to_process.append(file_path)
             file_metadata[file_path] = metadata
+    
+    print(f"Total {recording_type} files found: {total_files_found}")
+    print(f"Files to process: {len(files_to_process)}")
+    
+    return files_to_process, file_metadata
 
-    print(f"Found {total_files_found} total files, {len(files_to_process)} need processing")
 
-    # Second pass: process only the necessary files
-    if files_to_process:
-        # Read audio data only for files that need processing
-        audio_array = combine_files_to_numpy_array(files_to_process)
+def extract_features_from_files(file_paths, file_metadata, sample_rate, n_mfcc):
+    """
+    Extract MFCC features from WAV files and create dataset rows.
+    
+    Args:
+        file_paths (list): List of WAV file paths
+        file_metadata (dict): Mapping of file paths to metadata
+        sample_rate (int): Audio sample rate
+        n_mfcc (int): Number of MFCC coefficients
+        
+    Returns:
+        list: List of dataset rows (dictionaries)
+    """
+    if not file_paths:
+        return []
+    
+    # Load all audio files
+    audio_array = load_wav_files(file_paths, sample_rate)
+    
+    # Extract MFCC features
+    print("Extracting MFCC features...")
+    mfcc_array = extract_mfcc_from_array(audio_array, sample_rate=sample_rate, n_mfcc=n_mfcc)
+    
+    # Process each file's features
+    dataset_rows = []
+    for i, file_path in enumerate(file_paths):
+        metadata = file_metadata[file_path]
+        mfcc_features = mfcc_array[i]
+        
+        # Remove invalid frames (NaN or all zeros)
+        valid_mask = ~(np.isnan(mfcc_features[0]) | (np.sum(np.abs(mfcc_features), axis=0) == 0))
+        
+        if not np.any(valid_mask):
+            print(f"Warning: No valid MFCC data for {os.path.basename(file_path)}")
+            continue
+        
+        # Average valid MFCC coefficients across time
+        valid_mfcc = mfcc_features[:, valid_mask]
+        mfcc_averaged = np.mean(valid_mfcc, axis=1)
+        
+        # Create dataset row
+        row = {
+            'filename': os.path.basename(file_path),
+            'computer_name': metadata['computer_name'],
+            'scenario_id': metadata['scenario_id'],
+            'room_name': metadata['room_name'],
+            'signal_shape': metadata['signal_shape'],
+            'path': file_path
+        }
+        
+        # Add MFCC coefficients as separate columns
+        for j, mfcc_value in enumerate(mfcc_averaged):
+            row[f'mfcc_{j}'] = mfcc_value
+        
+        dataset_rows.append(row)
+    
+    print(f"Successfully processed {len(dataset_rows)} files")
+    return dataset_rows
 
-        # Extract MFCC features
-        print("Extracting MFCC coefficients ...")
-        mfcc_array = extract_mfcc_from_array(audio_array, sample_rate=sample_rate, n_mfcc=n_mfcc)
 
-        # Process MFCC features and add to dataset
-        for i, file_path in enumerate(files_to_process):
-            metadata = file_metadata[file_path]
-            mfcc = mfcc_array[i]
-
-            # Remove NaN frames
-            mask = ~np.isnan(mfcc[0])
-            if not np.any(mask):
-                print(f"Warning: No valid MFCC data for file {os.path.basename(file_path)}. Skipping.")
-                continue
-
-            valid_mfcc = mfcc[:, mask]
-
-            # Average across time frames to get a fixed-length feature vector
-            mfcc_avg = np.mean(valid_mfcc, axis=1)
-
-            # Create a row with metadata, filename, and features
-            row = {
-                'filename': os.path.basename(file_path),
-                'computer_name': metadata['computer_name'],
-                'scenario_id': metadata['scenario_id'],
-                'room_name': metadata['room_name'],
-                'signal_shape': metadata['signal_shape'],
-                'path': file_path  # Store full path for reference
-            }
-
-            # Add each MFCC coefficient as a separate column
-            for j in range(len(mfcc_avg)):
-                row[f'mfcc_{j}'] = mfcc_avg[j]
-
-            new_data.append(row)
-            total_files_processed += 1
-
-    # Create DataFrame from new data
-    new_df = pd.DataFrame(new_data) if new_data else pd.DataFrame()
-
-    # Combine with existing data if appending
-    if append and existing_df is not None and not existing_df.empty:
-        if replace_duplicates and not new_df.empty:
-            # Define metadata columns to check for duplicates
-            metadata_cols = ['computer_name', 'scenario_id', 'room_name', 'signal_shape', 'filename']
-
-            print("Replacing duplicates based on metadata...")
-            # Remove entries from existing_df that match new data
-            for _, new_row in new_df.iterrows():
-                match_condition = True
-                for col in metadata_cols:
-                    if col in new_row and col in existing_df:
-                        match_condition = match_condition & (existing_df[col] == new_row[col])
-
-                # Drop matching rows from existing_df
-                if not match_condition.empty:
-                    existing_df = existing_df.loc[~match_condition]
-
-            # Concatenate remaining existing data with new data
-            final_df = pd.concat([existing_df, new_df], ignore_index=True)
-
-            # Report how many were replaced
-            num_replaced = len(existing_df) - len(final_df) + len(new_df)
-            print(f"Replaced {num_replaced} duplicate entries")
-        else:
-            print("Appending new entries to existing dataset...")
-            # Simply concatenate the dataframes
-            final_df = pd.concat([existing_df, new_df], ignore_index=True)
-    else:
-        # Just use the new data or empty DataFrame if no new data
-        final_df = new_df if not new_df.empty else pd.DataFrame()
-
-    print(f"Total files found: {total_files_found}")
-    print(f"Total files processed: {total_files_processed}")
-    print(f"Total samples in dataset: {len(final_df)}")
-
-    # Save to CSV
-    if not final_df.empty:
-        final_df.to_csv(output_file, index=False)
-        print(f"Dataset saved to {output_file}")
-    else:
-        print("No data to save.")
-
+def combine_with_existing_data(new_rows, existing_df, replace_duplicates):
+    """
+    Combine new data with existing dataset.
+    
+    Args:
+        new_rows (list): List of new dataset rows
+        existing_df (DataFrame or None): Existing dataset
+        replace_duplicates (bool): Whether to replace duplicates
+        
+    Returns:
+        DataFrame: Combined dataset
+    """
+    new_df = pd.DataFrame(new_rows) if new_rows else pd.DataFrame()
+    
+    # If no existing data, return new data
+    if existing_df is None or existing_df.empty:
+        return new_df
+    
+    # If no new data, return existing data
+    if new_df.empty:
+        return existing_df
+    
+    if replace_duplicates:
+        print("Replacing duplicate entries...")
+        # Remove duplicates from existing data based on metadata columns
+        for _, new_row in new_df.iterrows():
+            # Create condition to match all metadata columns
+            conditions = []
+            for col in METADATA_COLUMNS:
+                if col in existing_df.columns:
+                    conditions.append(existing_df[col] == new_row[col])
+            
+            if conditions:
+                # Remove matching rows
+                combined_condition = conditions[0]
+                for condition in conditions[1:]:
+                    combined_condition = combined_condition & condition
+                existing_df = existing_df[~combined_condition]
+    
+    # Combine dataframes
+    final_df = pd.concat([existing_df, new_df], ignore_index=True)
+    print(f"Combined dataset: {len(final_df)} total entries")
+    
     return final_df
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Copy specific sub-subfolders from a directory structure')
-    parser.add_argument('--download_folder', default='/Users/leonidastrin/Downloads',
-                        help='Folder where downloaded data is stored')
-    parser.add_argument('--subfolder-name', default='diagnostics',
-                        help='Name of the sub-subfolder to copy (default: diagnostics)')
-    parser.add_argument('--dataset_file', default='mfcc_dataset_with_metadata.csv',
-                        help='Name of the dataset file (default: mfcc_dataset_with_metadata.csv)')
-    parser.add_argument('-z', '--zip', action='store_true',
-                        help='Process zip files instead of directories')
-
-    args = parser.parse_args()
-
-    source = args.download_folder
-    project_folder =  os.path.dirname(os.path.abspath(__file__))
-    destination = os.path.join(project_folder, "room_data_temp")
-    print(f"Copying data from {source} to {destination}")
-    copy_specific_subfolders(source, destination, args.subfolder_name, args.zip)
-
-    if args.zip:
-        print(f"Finished extracting and copying all matching '{args.subfolder_name}' folders")
-    else:
-        print(f"Finished copying all matching '{args.subfolder_name}' folders")
-
-    dataset = create_mfcc_dataset_hierarchical(
-        root_folder=destination,
-        substring='recording',
-        sample_rate=16000,  # Adjust based on your audio files
-        n_mfcc=13,
-        output_file=args.dataset_file
+def create_mfcc_dataset(root_folder, recording_type="average", sample_rate=DEFAULT_SAMPLE_RATE, 
+                       n_mfcc=DEFAULT_MFCC_COEFFICIENTS, output_file="mfcc_dataset.csv", 
+                       append=True, replace_duplicates=False):
+    """
+    Main function to create MFCC dataset from WAV files.
+    
+    Args:
+        root_folder (str): Root directory containing scenario folders
+        recording_type (str): Type of recording - "average" or "raw"
+        sample_rate (int): Audio sample rate
+        n_mfcc (int): Number of MFCC coefficients
+        output_file (str): Output CSV file path
+        append (bool): Whether to append to existing file
+        replace_duplicates (bool): Whether to replace duplicate entries
+        
+    Returns:
+        DataFrame: The created dataset
+    """
+    print(f"=== Starting MFCC Dataset Creation for {recording_type.upper()} recordings ===")
+    
+    # Load existing dataset if appending
+    existing_df, existing_entries = load_existing_dataset(output_file) if append else (None, set())
+    
+    # Collect files that need processing
+    files_to_process, file_metadata = collect_files_to_process(
+        root_folder, recording_type, existing_entries, replace_duplicates
     )
-    try:
-        shutil.rmtree(destination)
-        print(f"Cleaned up temporary directory: {destination}")
-    except Exception as e:
-        print(f"Warning: Could not remove temporary directory: {e}")
+    
+    # Extract features from files
+    new_rows = extract_features_from_files(files_to_process, file_metadata, sample_rate, n_mfcc)
+    
+    # Combine with existing data
+    final_dataset = combine_with_existing_data(new_rows, existing_df, replace_duplicates)
+    
+    # Save dataset
+    if not final_dataset.empty:
+        final_dataset.to_csv(output_file, index=False)
+        print(f"Dataset saved to: {output_file}")
+        print(f"Total entries: {len(final_dataset)}")
+    else:
+        print("No data to save")
+    
+    return final_dataset
 
+
+def print_dataset_summary(dataset):
+    """
+    Print a summary of the dataset contents.
+    
+    Args:
+        dataset (DataFrame): The dataset to summarize
+    """
+    if dataset.empty:
+        print("Dataset is empty")
+        return
+    
+    print("\n=== Dataset Summary ===")
+    print(f"Total samples: {len(dataset)}")
+    print(f"Unique computers: {dataset['computer_name'].nunique()}")
+    print(f"  -> {list(dataset['computer_name'].unique())}")
+    print(f"Unique scenarios: {dataset['scenario_id'].nunique()}")
+    print(f"  -> {list(dataset['scenario_id'].unique())}")
+    print(f"Unique rooms: {dataset['room_name'].nunique()}")
+    print(f"  -> {list(dataset['room_name'].unique())}")
+    print(f"Unique signal shapes: {dataset['signal_shape'].nunique()}")
+    print(f"  -> {list(dataset['signal_shape'].unique())}")
+    
+    print("\nFirst few rows:")
     print(dataset.head())
-    print("\nDataset Summary:")
-    print(f"Unique computers: {dataset['computer_name'].nunique()} \n {dataset['computer_name'].unique()}")
-    print(f"Unique signals: {dataset['signal_shape'].nunique()} \n {dataset['signal_shape'].unique()}")
-    print(f"Unique scenarios: {dataset['scenario_id'].nunique()} \n {dataset['scenario_id'].unique()}")
-    print(f"Unique rooms: {dataset['room_name'].nunique()} \n {dataset['room_name'].unique()}")
+
+
+def main():
+    """
+    Main entry point - handles command line arguments and orchestrates the process.
+    """
+    parser = argparse.ArgumentParser(
+        description='Process WAV files from folder structure and create MFCC dataset'
+    )
+    parser.add_argument('--download_folder', 
+                       default='/Users/leonidastrin/Downloads',
+                       help='Source folder containing downloaded data')
+    parser.add_argument('--subfolder-name', 
+                       default='diagnostics',
+                       help='Name of subfolder containing WAV files')
+    parser.add_argument('--dataset_file', 
+                       default='mfcc_dataset_with_metadata.csv',
+                       help='Output CSV file name')
+    parser.add_argument('--recording_type', 
+                       choices=['average', 'raw'],
+                       default='average',
+                       help='Type of recording to process: "average" for recording.wav files, "raw" for raw_recording.wav files (default: average)')
+    parser.add_argument('-z', '--zip', 
+                       action='store_true',
+                       help='Process zip files instead of directories')
+    
+    args = parser.parse_args()
+    
+    # Set up paths
+    source_folder = args.download_folder
+    project_folder = os.path.dirname(os.path.abspath(__file__))
+    temp_folder = os.path.join(project_folder, "room_data_temp")
+    
+    print(f"Source folder: {source_folder}")
+    print(f"Temporary folder: {temp_folder}")
+    print(f"Recording type: {args.recording_type}")
+    
+    # Copy relevant subfolders to temporary location
+    print("Copying relevant folders...")
+    copy_specific_subfolders(source_folder, temp_folder, args.subfolder_name, args.zip)
+    
+    if args.zip:
+        print("Finished extracting and copying from zip files")
+    else:
+        print("Finished copying folders")
+    
+    # Create MFCC dataset from copied folders
+    dataset = create_mfcc_dataset(
+        root_folder=temp_folder,
+        recording_type=args.recording_type,
+        sample_rate=DEFAULT_SAMPLE_RATE,
+        n_mfcc=DEFAULT_MFCC_COEFFICIENTS,
+        output_file=args.dataset_file,
+        append=True,
+        replace_duplicates=False
+    )
+    
+    # Clean up temporary folder
+    try:
+        shutil.rmtree(temp_folder)
+        print(f"Cleaned up temporary folder: {temp_folder}")
+    except Exception as e:
+        print(f"Warning: Could not remove temporary folder: {e}")
+    
+    # Print results
+    print_dataset_summary(dataset)
+    print(f"\n=== Process Complete for {args.recording_type.upper()} recordings ===")
 
 
 if __name__ == "__main__":
