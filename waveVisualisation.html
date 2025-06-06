@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WAV Waveform Visualizer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .upload-area {
+            border: 3px dashed rgba(255, 255, 255, 0.5);
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: rgba(255, 255, 255, 0.8);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .upload-area.dragover {
+            border-color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .upload-text {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+
+        .canvas-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        #waveformCanvas {
+            width: 100%;
+            height: 300px;
+            border-radius: 10px;
+            background: linear-gradient(to bottom, #1a1a2e, #16213e);
+            cursor: crosshair;
+        }
+
+        .zoom-info {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 0.9em;
+            display: none;
+        }
+
+        .waveform-wrapper {
+            position: relative;
+        }
+
+        .time-scale {
+            height: 30px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 0 0 10px 10px;
+            position: relative;
+            margin-top: -10px;
+            padding: 5px 10px;
+            font-family: monospace;
+            font-size: 0.8em;
+            color: rgba(255, 255, 255, 0.8);
+            display: none;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info-panel {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2em;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 WAV Waveform Visualizer</h1>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-text">📁 Drop your WAV file here or click to browse</div>
+            <div style="font-size: 0.9em; opacity: 0.8;">Supports WAV audio files</div>
+            <input type="file" id="fileInput" accept=".wav,audio/wav" />
+        </div>
+
+        <div id="loadingDiv" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            Processing your audio file...
+        </div>
+
+        <div class="canvas-container" id="canvasContainer">
+            <div class="waveform-wrapper">
+                <canvas id="waveformCanvas"></canvas>
+                <div class="time-scale" id="timeScale"></div>
+            </div>
+            <div class="zoom-info" id="zoomInfo">
+                <div>📊 Interactive Zoom: Click and drag to select region • Double-click to zoom out</div>
+                <div id="zoomDetails">Duration: 2.33s</div>
+            </div>
+        </div>
+
+        <div class="controls" id="controls" style="display: none;">
+            <button id="playBtn">▶️ Play</button>
+            <button id="pauseBtn" disabled>⏸️ Pause</button>
+            <button id="stopBtn" disabled>⏹️ Stop</button>
+            <button id="resetZoomBtn">🔄 Reset Zoom</button>
+            <button id="toggleModeBtn">📊 Show Absolute Mode</button>
+        </div>
+
+        <div class="info-panel" id="infoPanel">
+            <h3>📊 Audio Information</h3>
+            <div class="info-item">
+                <span>File Name:</span>
+                <span id="fileName">-</span>
+            </div>
+            <div class="info-item">
+                <span>Sample Rate:</span>
+                <span id="sampleRate">-</span>
+            </div>
+            <div class="info-item">
+                <span>Duration:</span>
+                <span id="duration">-</span>
+            </div>
+            <div class="info-item">
+                <span>Channels:</span>
+                <span id="channels">-</span>
+            </div>
+            <div class="info-item">
+                <span>Bit Depth:</span>
+                <span id="bitDepth">-</span>
+            </div>
+            <div class="info-item">
+                <span>Display Mode:</span>
+                <span id="displayMode">Normalized</span>
+            </div>
+            <div class="info-item">
+                <span>Max Amplitude:</span>
+                <span id="maxAmplitude">-</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let audioContext;
+        let audioBuffer;
+        let source;
+        let isPlaying = false;
+        let startTime = 0;
+        let pauseTime = 0;
+        let displayMode = 'normalized'; // 'normalized' or 'absolute'
+        let zoomLevel = 1;
+        let zoomOffset = 0; // For panning when zoomed
+        let viewStart = 0; // Start sample of current view
+        let viewEnd = 0; // End sample of current view
+        let isSelecting = false;
+        let selectionStart = 0;
+        let selectionEnd = 0;
+        let mouseX = 0;
+        let waveformData;
+
+        const fileInput = document.getElementById('fileInput');
+        const uploadArea = document.getElementById('uploadArea');
+        const canvas = document.getElementById('waveformCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingDiv = document.getElementById('loadingDiv');
+        const infoPanel = document.getElementById('infoPanel');
+        const canvasContainer = document.getElementById('canvasContainer');
+        const controls = document.getElementById('controls');
+
+        // File upload handling
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFile(files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+
+        async function handleFile(file) {
+            if (!file.name.toLowerCase().endsWith('.wav')) {
+                alert('Please select a WAV file.');
+                return;
+            }
+
+            loadingDiv.style.display = 'block';
+            canvasContainer.style.display = 'none';
+            controls.style.display = 'none';
+            infoPanel.style.display = 'none';
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                await processAudioFile(arrayBuffer, file.name);
+            } catch (error) {
+                console.error('Error processing file:', error);
+                alert('Error processing the audio file. Please make sure it\'s a valid WAV file.');
+                loadingDiv.style.display = 'none';
+            }
+        }
+
+        async function processAudioFile(arrayBuffer, fileName) {
+            try {
+                console.log('Processing audio file:', fileName);
+                console.log('Array buffer size:', arrayBuffer.byteLength);
+
+                // Initialize Web Audio API
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log('Audio context created');
+                }
+
+                // Decode audio data
+                console.log('Decoding audio data...');
+                audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                console.log('Audio decoded successfully:', {
+                    duration: audioBuffer.duration,
+                    sampleRate: audioBuffer.sampleRate,
+                    channels: audioBuffer.numberOfChannels
+                });
+
+                // Extract waveform data
+                console.log('Extracting waveform data...');
+                waveformData = extractWaveformData(audioBuffer);
+                console.log('Waveform data extracted, length:', waveformData.length);
+
+                // Initialize view to show entire waveform
+                viewStart = 0;
+                viewEnd = waveformData.length - 1;
+
+                // Update UI
+                updateAudioInfo(fileName, audioBuffer);
+
+                // Force canvas resize and redraw
+                setTimeout(() => {
+                    drawWaveform();
+                    console.log('Waveform drawn');
+                }, 100);
+
+                loadingDiv.style.display = 'none';
+                infoPanel.style.display = 'block';
+                canvasContainer.style.display = 'block';
+                controls.style.display = 'flex';
+                document.getElementById('zoomInfo').style.display = 'block';
+                document.getElementById('timeScale').style.display = 'block';
+
+            } catch (error) {
+                console.error('Error in processAudioFile:', error);
+                alert('Error processing audio: ' + error.message);
+                loadingDiv.style.display = 'none';
+                throw error;
+            }
+        }
+
+        function extractWaveformData(buffer) {
+            // Extract ALL samples for maximum resolution capability
+            const channelData = buffer.getChannelData(0);
+            const samples = channelData.length;
+
+            console.log('Extracting full resolution waveform:', {
+                totalSamples: samples,
+                sampleRate: buffer.sampleRate,
+                duration: buffer.duration
+            });
+
+            // Return the raw sample data for maximum zoom capability
+            return Array.from(channelData);
+        }
+
+        function updateAudioInfo(fileName, buffer) {
+            document.getElementById('fileName').textContent = fileName;
+            document.getElementById('sampleRate').textContent = `${buffer.sampleRate} Hz`;
+            document.getElementById('duration').textContent = `${buffer.duration.toFixed(2)} seconds`;
+            document.getElementById('channels').textContent = buffer.numberOfChannels;
+            document.getElementById('bitDepth').textContent = '16-bit (estimated)';
+        }
+
+        function drawWaveform() {
+            console.log('Drawing waveform...');
+
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+
+            if (width === 0 || height === 0) {
+                console.warn('Canvas has zero dimensions, retrying in 200ms...');
+                setTimeout(drawWaveform, 200);
+                return;
+            }
+
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+            // Clear canvas with gradient background
+            const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+            bgGradient.addColorStop(0, '#1a1a2e');
+            bgGradient.addColorStop(1, '#16213e');
+            ctx.fillStyle = bgGradient;
+            ctx.fillRect(0, 0, width, height);
+
+            if (!waveformData || waveformData.length === 0) {
+                console.warn('No waveform data available');
+                return;
+            }
+
+            const centerY = height / 2;
+            const viewLength = viewEnd - viewStart + 1;
+            const samplesPerPixel = viewLength / width;
+
+            // Update zoom info with simplified duration display
+            const zoomRatio = waveformData.length / viewLength;
+            const timeStart = (viewStart / waveformData.length) * audioBuffer.duration;
+            const timeEnd = (viewEnd / waveformData.length) * audioBuffer.duration;
+            const displayDuration = timeEnd - timeStart;
+
+            // Format duration appropriately
+            let durationText;
+            if (displayDuration >= 1) {
+                durationText = `Duration: ${displayDuration.toFixed(2)}s`;
+            } else if (displayDuration >= 0.001) {
+                durationText = `Duration: ${(displayDuration * 1000).toFixed(1)}ms`;
+            } else {
+                durationText = `Duration: ${(displayDuration * 1000).toFixed(2)}ms`;
+            }
+
+            document.getElementById('zoomDetails').textContent = durationText;
+
+            // Get the data for current view
+            const viewData = waveformData.slice(viewStart, viewEnd + 1);
+            const maxAmplitude = Math.max(...viewData.map(Math.abs));
+
+            if (maxAmplitude === 0) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Silent audio detected', width / 2, height / 2);
+                return;
+            }
+
+            // Create gradient for waveform
+            const gradient = ctx.createLinearGradient(0, 0, 0, height);
+            gradient.addColorStop(0, '#FF6B6B');
+            gradient.addColorStop(0.5, '#4ECDC4');
+            gradient.addColorStop(1, '#45B7D1');
+            ctx.fillStyle = gradient;
+
+            // Draw waveform
+            if (samplesPerPixel <= 1) {
+                // High resolution: draw individual samples or small groups
+                const barWidth = Math.max(1, width / viewLength);
+                for (let i = 0; i < viewLength && i < width; i++) {
+                    const amplitude = viewData[i] || 0;
+                    let visualHeight;
+
+                    if (displayMode === 'normalized') {
+                        visualHeight = Math.max(1, Math.abs(amplitude / maxAmplitude) * (centerY - 10));
+                    } else {
+                        visualHeight = Math.max(1, Math.abs(amplitude) * (centerY - 10));
+                    }
+
+                    const x = i * barWidth;
+                    // Draw positive/negative with different colors
+                    if (amplitude >= 0) {
+                        ctx.fillRect(x, centerY - visualHeight, barWidth, visualHeight);
+                    } else {
+                        ctx.fillRect(x, centerY, barWidth, visualHeight);
+                    }
+                }
+            } else {
+                // Lower resolution: downsample by finding peaks in blocks
+                const blockSize = Math.ceil(samplesPerPixel);
+                for (let x = 0; x < width; x++) {
+                    const startIdx = Math.floor(x * samplesPerPixel);
+                    const endIdx = Math.min(startIdx + blockSize, viewLength);
+
+                    let maxPos = 0, maxNeg = 0;
+                    for (let i = startIdx; i < endIdx; i++) {
+                        const sample = viewData[i] || 0;
+                        if (sample > maxPos) maxPos = sample;
+                        if (sample < maxNeg) maxNeg = sample;
+                    }
+
+                    let posHeight, negHeight;
+                    if (displayMode === 'normalized') {
+                        posHeight = Math.abs(maxPos / maxAmplitude) * (centerY - 10);
+                        negHeight = Math.abs(maxNeg / maxAmplitude) * (centerY - 10);
+                    } else {
+                        posHeight = Math.abs(maxPos) * (centerY - 10);
+                        negHeight = Math.abs(maxNeg) * (centerY - 10);
+                    }
+
+                    // Draw positive amplitude
+                    if (posHeight > 0) {
+                        ctx.fillRect(x, centerY - posHeight, 1, posHeight);
+                    }
+                    // Draw negative amplitude
+                    if (negHeight > 0) {
+                        ctx.fillRect(x, centerY, 1, negHeight);
+                    }
+                }
+            }
+
+            // Draw center line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+            ctx.stroke();
+
+            // Draw time scale
+            drawTimeScale();
+
+            // Draw selection overlay if selecting
+            if (isSelecting) {
+                const startX = Math.min(selectionStart, mouseX);
+                const endX = Math.max(selectionStart, mouseX);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fillRect(startX, 0, endX - startX, height);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(startX, 0, endX - startX, height);
+            }
+        }
+
+        function drawTimeScale() {
+            const timeScaleDiv = document.getElementById('timeScale');
+            const width = canvas.offsetWidth;
+            const viewLength = viewEnd - viewStart + 1;
+            const startTime = (viewStart / waveformData.length) * audioBuffer.duration;
+            const endTime = (viewEnd / waveformData.length) * audioBuffer.duration;
+            const totalViewTime = endTime - startTime;
+
+            // Clear previous content
+            timeScaleDiv.innerHTML = '';
+
+            // Determine appropriate time intervals based on zoom level
+            let interval, unit, precision;
+            if (totalViewTime > 60) {
+                // Minutes and seconds for long views
+                interval = totalViewTime > 300 ? 60 : 30; // 1min or 30s intervals
+                unit = 'min:sec';
+                precision = 0;
+            } else if (totalViewTime > 10) {
+                // Seconds for medium views
+                interval = totalViewTime > 60 ? 10 : 5;
+                unit = 's';
+                precision = 1;
+            } else if (totalViewTime > 1) {
+                // Seconds with decimals
+                interval = totalViewTime > 5 ? 1 : 0.5;
+                unit = 's';
+                precision = 2;
+            } else if (totalViewTime > 0.1) {
+                // Milliseconds for high zoom
+                interval = totalViewTime > 0.5 ? 0.1 : 0.05;
+                unit = 's';
+                precision = 3;
+            } else {
+                // Very high zoom - milliseconds or microseconds
+                if (totalViewTime > 0.01) {
+                    interval = 0.01; // 10ms
+                    unit = 'ms';
+                    precision = 1;
+                } else {
+                    interval = 0.001; // 1ms
+                    unit = 'ms';
+                    precision = 2;
+                }
+            }
+
+            // Calculate tick positions
+            const firstTick = Math.ceil(startTime / interval) * interval;
+            const numTicks = Math.floor((endTime - firstTick) / interval) + 1;
+
+            for (let i = 0; i < numTicks && i < 20; i++) { // Limit to 20 ticks max
+                const tickTime = firstTick + (i * interval);
+                if (tickTime > endTime) break;
+
+                const pixelPos = ((tickTime - startTime) / totalViewTime) * width;
+
+                // Create tick mark
+                const tick = document.createElement('div');
+                tick.style.position = 'absolute';
+                tick.style.left = pixelPos + 'px';
+                tick.style.top = '0px';
+                tick.style.height = '100%';
+                tick.style.borderLeft = '1px solid rgba(255, 255, 255, 0.4)';
+                tick.style.fontSize = '0.75em';
+                tick.style.paddingLeft = '3px';
+                tick.style.paddingTop = '2px';
+                tick.style.whiteSpace = 'nowrap';
+
+                // Format time label
+                let label;
+                if (unit === 'min:sec') {
+                    const minutes = Math.floor(tickTime / 60);
+                    const seconds = Math.floor(tickTime % 60);
+                    label = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                } else if (unit === 'ms') {
+                    if (precision === 1) {
+                        label = `${(tickTime * 1000).toFixed(1)}ms`;
+                    } else {
+                        label = `${(tickTime * 1000).toFixed(2)}ms`;
+                    }
+                } else {
+                    label = `${tickTime.toFixed(precision)}s`;
+                }
+
+                tick.textContent = label;
+                timeScaleDiv.appendChild(tick);
+            }
+
+            // Add start and end time labels if there's space
+            if (numTicks < 15) {
+                // Start time
+                const startLabel = document.createElement('div');
+                startLabel.style.position = 'absolute';
+                startLabel.style.left = '2px';
+                startLabel.style.bottom = '2px';
+                startLabel.style.fontSize = '0.7em';
+                startLabel.style.opacity = '0.7';
+                startLabel.textContent = `${startTime.toFixed(3)}s`;
+                timeScaleDiv.appendChild(startLabel);
+
+                // End time
+                const endLabel = document.createElement('div');
+                endLabel.style.position = 'absolute';
+                endLabel.style.right = '2px';
+                endLabel.style.bottom = '2px';
+                endLabel.style.fontSize = '0.7em';
+                endLabel.style.opacity = '0.7';
+                endLabel.textContent = `${endTime.toFixed(3)}s`;
+                timeScaleDiv.appendChild(endLabel);
+            }
+        }
+
+        // Audio playback controls
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (!audioBuffer) return;
+
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            const offset = pauseTime;
+            source.start(0, offset);
+            startTime = audioContext.currentTime - offset;
+            isPlaying = true;
+
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('pauseBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = false;
+
+            source.onended = () => {
+                if (isPlaying) {
+                    stopAudio();
+                }
+            };
+        });
+
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            if (source && isPlaying) {
+                source.stop();
+                pauseTime = audioContext.currentTime - startTime;
+                isPlaying = false;
+
+                document.getElementById('playBtn').disabled = false;
+                document.getElementById('pauseBtn').disabled = true;
+            }
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', stopAudio);
+
+        function stopAudio() {
+            if (source) {
+                source.stop();
+                source = null;
+            }
+            isPlaying = false;
+            pauseTime = 0;
+            startTime = 0;
+
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('pauseBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        // Interactive zoom controls
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+
+            isSelecting = true;
+            selectionStart = x;
+            selectionEnd = x;
+            mouseX = x;
+            canvas.style.cursor = 'crosshair';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+
+            if (isSelecting) {
+                drawWaveform(); // Redraw to show selection
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (isSelecting) {
+                const rect = canvas.getBoundingClientRect();
+                selectionEnd = e.clientX - rect.left;
+
+                // Only zoom if selection is wide enough (at least 5 pixels)
+                if (Math.abs(selectionEnd - selectionStart) > 5) {
+                    zoomToSelection();
+                }
+
+                isSelecting = false;
+                canvas.style.cursor = 'crosshair';
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            if (isSelecting) {
+                isSelecting = false;
+                drawWaveform();
+            }
+        });
+
+        // Double-click to zoom out
+        canvas.addEventListener('dblclick', () => {
+            zoomOut();
+        });
+
+        function zoomToSelection() {
+            const width = canvas.offsetWidth;
+            const viewLength = viewEnd - viewStart + 1;
+
+            const startX = Math.min(selectionStart, selectionEnd);
+            const endX = Math.max(selectionStart, selectionEnd);
+
+            // Convert pixel coordinates to sample indices
+            const startRatio = startX / width;
+            const endRatio = endX / width;
+
+            const newViewStart = Math.floor(viewStart + startRatio * viewLength);
+            const newViewEnd = Math.floor(viewStart + endRatio * viewLength);
+
+            // Ensure we have at least a few samples to show
+            if (newViewEnd - newViewStart > 1) {
+                viewStart = Math.max(0, newViewStart);
+                viewEnd = Math.min(waveformData.length - 1, newViewEnd);
+
+                console.log('Zoomed to selection:', { viewStart, viewEnd, samples: viewEnd - viewStart + 1 });
+                drawWaveform();
+            }
+        }
+
+        function zoomOut() {
+            const currentLength = viewEnd - viewStart + 1;
+            const newLength = Math.min(currentLength * 2, waveformData.length);
+            const center = Math.floor((viewStart + viewEnd) / 2);
+
+            viewStart = Math.max(0, center - Math.floor(newLength / 2));
+            viewEnd = Math.min(waveformData.length - 1, viewStart + newLength - 1);
+
+            console.log('Zoomed out:', { viewStart, viewEnd, samples: viewEnd - viewStart + 1 });
+            drawWaveform();
+        }
+
+        // Reset zoom button
+        document.getElementById('resetZoomBtn').addEventListener('click', () => {
+            viewStart = 0;
+            viewEnd = waveformData.length - 1;
+            console.log('Reset zoom to full view');
+            if (waveformData) {
+                drawWaveform();
+            }
+        });
+
+        // Toggle display mode
+        document.getElementById('toggleModeBtn').addEventListener('click', () => {
+            displayMode = displayMode === 'normalized' ? 'absolute' : 'normalized';
+            const modeText = displayMode === 'normalized' ? 'Normalized' : 'Absolute (True Amplitude)';
+            document.getElementById('displayMode').textContent = modeText;
+            document.getElementById('toggleModeBtn').textContent =
+                displayMode === 'normalized' ? '📊 Show Absolute' : '📊 Show Normalized';
+
+            if (waveformData) {
+                drawWaveform();
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (waveformData) {
+                setTimeout(drawWaveform, 100);
+            }
+        });
+    </script>
+</body>
+</html>
