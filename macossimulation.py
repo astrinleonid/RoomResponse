@@ -6,18 +6,18 @@ from datetime import datetime
 
 
 class RoomResponseRecorder:
-    def __init__(self, sample_rate=48000, pulse_samples=480, cycle_samples = 4800, num_pulses = 5, volume = 1):
+    def __init__(self, sample_rate=48000, pulse_samples=40, duration = 0.1, num_pulses = 5, volume = 1):
         self.sample_rate = sample_rate
-        self.pulse_duration = pulse_samples / sample_rate  # 10ms pulse duration
+        self.pulse_duration = duration
+        self.cycle_samples = int(duration * sample_rate)
         self.recording_duration = self.pulse_duration * num_pulses  # Total recording time
-        self.pulse_interval = cycle_samples / sample_rate  # 100ms between pulses (center to center)
+        self.pulse_interval = self.cycle_samples / sample_rate  # 100ms between pulses (center to center)
         self.num_pulses = num_pulses
         self.volume = volume
         self.pulse_frequency = 1000
 
         self.pulse_samples = pulse_samples  # Exactly 10ms at 44.1kHz
-        self.gap_samples = cycle_samples - pulse_samples  # Exactly 90ms at 44.1kHz
-        self.cycle_samples = cycle_samples  # Exactly 100ms at 44.1kHz (441 + 3969)
+        self.gap_samples = self.cycle_samples - pulse_samples  # Exactly 90ms at 44.1kHz
 
         # Generate the complete playback signal with all pulses
         self.playback_signal = self._generate_complete_signal()
@@ -320,10 +320,12 @@ class RoomResponseRecorder:
 
 def main():
     # Create recorder instance
+
+
     recorder = RoomResponseRecorder(
-        sample_rate=48000,
+        sample_rate=22100,
         pulse_samples=24,  # 10ms pulses
-        cycle_samples= 2880,  # 1kHz tone
+        duration = 0.08,  # 1kHz tone
         num_pulses = 40,
         volume = 0.5
     )
