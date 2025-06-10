@@ -3,7 +3,8 @@ import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import itertools
@@ -24,6 +25,7 @@ def pairwise_scenario_classification(df):
 
     print(f"Loaded dataset with {df.shape[0]} samples and {df.shape[1]} columns")
 
+    df = df.sample(frac=1).reset_index(drop=True)
     # Extract features
     feature_cols = [col for col in df.columns if col.startswith('mfcc_')]
 
@@ -58,7 +60,10 @@ def pairwise_scenario_classification(df):
         # Extract features and labels
         X = scenario_df[feature_cols].values
         # Convert scenario IDs to binary labels (0 for scenario1, 1 for scenario2)
-        y = (scenario_df['scenario_id'] == scenario2).astype(int).values
+        y = np.where(scenario_df['scenario_id'] == scenario1, 0, 1)
+
+        print(X)
+        print(y)
 
         # Print class distribution
         print(f"  Samples for Scenario {scenario1}: {np.sum(y == 0)}")
@@ -67,7 +72,7 @@ def pairwise_scenario_classification(df):
         try:
             # Split data
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.25, random_state=42, stratify=y
+                X, y, test_size=0.25
             )
 
             # Standardize features
@@ -76,11 +81,12 @@ def pairwise_scenario_classification(df):
             X_test_scaled = scaler.transform(X_test)
 
             # Train SVM model
-            svm = SVC(kernel='rbf', C=10, gamma='scale', random_state=42)
-            svm.fit(X_train_scaled, y_train)
+            model = SVC(kernel='rbf', C=10, gamma='scale')
+            # model = LogisticRegression()
+            model.fit(X_train_scaled, y_train)
 
             # Predict and evaluate
-            y_pred = svm.predict(X_test_scaled)
+            y_pred = model.predict(X_test_scaled)
             accuracy = accuracy_score(y_test, y_pred)
 
             # Store in accuracy matrix for heatmap
@@ -88,7 +94,7 @@ def pairwise_scenario_classification(df):
             accuracy_matrix[j, i] = accuracy  # Mirror for symmetric heatmap
 
             # Cross-validation for more robust evaluation
-            cv_scores = cross_val_score(svm, X, y, cv=5)
+            cv_scores = cross_val_score(model, X, y, cv=5)
 
             print(f"  Test accuracy: {accuracy:.4f}")
             print(f"  5-fold CV accuracy: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
@@ -98,7 +104,7 @@ def pairwise_scenario_classification(df):
 
             # # Create confusion matrix
             cm = confusion_matrix(y_test, y_pred)
-
+            print(cm)
 
             # Store results
             results[(scenario1, scenario2)] = {

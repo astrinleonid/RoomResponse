@@ -436,7 +436,7 @@ def main():
         description='Process WAV files from folder structure and create MFCC dataset'
     )
     parser.add_argument('--download_folder', 
-                       default='/Users/leonidastrin/Downloads',
+                       default='/Users/leonidastrin/Downloads/SonarVisionAutomation/output',
                        help='Source folder containing downloaded data')
     parser.add_argument('--subfolder-name', 
                        default='diagnostics',
