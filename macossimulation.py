@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class RoomResponseRecorder:
-    def __init__(self, sample_rate=48000, pulse_samples=40, duration = 0.1, num_pulses = 5, volume = 1):
+    def __init__(self, sample_rate=48000, pulse_samples=10, duration = 0.1, num_pulses = 5, volume = 1):
         self.sample_rate = sample_rate
         self.pulse_duration = duration
         self.cycle_samples = int(duration * sample_rate)
@@ -324,9 +324,9 @@ def main():
 
     recorder = RoomResponseRecorder(
         sample_rate=22100,
-        pulse_samples=24,  # 10ms pulses
-        duration = 0.08,  # 1kHz tone
-        num_pulses = 40,
+        pulse_samples=10,  # 10ms pulses
+        duration = 0.3,  # 1kHz tone
+        num_pulses = 20,
         volume = 0.5
     )
 
