@@ -1,0 +1,47 @@
+[build-system]
+requires = [
+    "setuptools>=64",
+    "wheel",
+    "pybind11>=2.6.0",
+    "numpy>=1.19.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdl_audio_core"
+version = "0.1.0"
+description = "Low-level SDL2 audio module for simultaneous playback and recording"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "SDL Audio Core Team"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Scientific/Engineering"
+]
+requires-python = ">=3.7"
+dependencies = [
+    "numpy>=1.19.0",
+    "pybind11>=2.6.0"
+]
+
+[project.optional-dependencies]
+test = ["pytest", "scipy", "matplotlib"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sdl_audio_core*"]
+
+[tool.setuptools.package-data]
+sdl_audio_core = ["*.pyd", "*.so", "*.dll"]
