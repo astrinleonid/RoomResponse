@@ -8,11 +8,12 @@ Usage:
     python collect_scenario.py --interactive # Interactive device selection
 
 This script collects room response data for a single scenario with the naming convention:
-<computer_name>_Scenario<number>_<room_name>
+<computer_name>-Scenario<number>-<room_name>
 """
 
 import sys
 import argparse
+import json
 from DatasetCollector import SingleScenarioCollector
 
 
@@ -26,8 +27,9 @@ Examples:
   python collect_scenario.py                    # Use default audio devices
   python collect_scenario.py -i                 # Interactive device selection
   python collect_scenario.py --interactive      # Interactive device selection
+  python collect_scenario.py --quiet --scenario-number 1 --description "Empty room test"
 
-Dataset naming convention: <computer_name>_Scenario<number>_<room_name>
+Dataset naming convention: <computer_name>-Scenario<number>-<room_name>
         """
     )
 
@@ -38,52 +40,49 @@ Dataset naming convention: <computer_name>_Scenario<number>_<room_name>
     )
 
     parser.add_argument(
-        '--sample-rate',
-        type=int,
-        default=48000,
-        help='Audio sample rate in Hz (default: 48000)'
-    )
-
-    parser.add_argument(
-        '--pulse-duration',
-        type=float,
-        default=0.008,
-        help='Pulse duration in seconds (default: 0.008)'
-    )
-
-    parser.add_argument(
-        '--cycle-duration',
-        type=float,
-        default=0.1,
-        help='Cycle duration in seconds (default: 0.1)'
-    )
-
-    parser.add_argument(
-        '--num-pulses',
-        type=int,
-        default=8,
-        help='Number of pulses in test signal (default: 8)'
-    )
-
-    parser.add_argument(
-        '--volume',
-        type=float,
-        default=0.6,
-        help='Playback volume 0.0-1.0 (default: 0.4)'
-    )
-
-    parser.add_argument(
-        '--impulse-form',
-        choices=['square', 'sine'],
-        default='sine',
-        help='Pulse shape (default: sine)'
-    )
-
-    parser.add_argument(
         '--output-dir',
         type=str,
         default='room_response_dataset',
         help='Base output directory (default: room_response_dataset)'
+    )
+
+    parser.add_argument(
+        '--config-file',
+        type=str,
+        default='recorderConfig.json',
+        help='Recorder configuration file (default: recorderConfig.json)'
+    )
+
+    parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Quiet mode - use defaults for computer and room names without prompting'
+    )
+
+    parser.add_argument(
+        '--scenario-number',
+        type=str,
+        help='Scenario number (if not provided, will prompt user)'
+    )
+
+    parser.add_argument(
+        '--description',
+        type=str,
+        help='Scenario description (if not provided, will prompt user)'
+    )
+
+    parser.add_argument(
+        '--num-measurements',
+        type=int,
+        default=30,
+        help='Number of measurements to collect (default: 30)'
+    )
+
+    parser.add_argument(
+        '--measurement-interval',
+        type=float,
+        default=2.0,
+        help='Interval between measurements in seconds (default: 2.0)'
     )
 
     return parser.parse_args()
@@ -102,74 +101,127 @@ def main():
         print("🔊 Using default audio devices")
         print("   (Use -i or --interactive for device selection)")
 
-    # Create recorder configuration from arguments
-    recorder_config = {
-        'sample_rate': args.sample_rate,
-        'pulse_duration': args.pulse_duration,
-        'pulse_fade': 0.0001,  # Keep default fade
-        'cycle_duration': args.cycle_duration,
-        'num_pulses': args.num_pulses,
-        'volume': args.volume,
-        'impulse_form': args.impulse_form
+    print(f"\nConfiguration:")
+    print(f"  Config file: {args.config_file}")
+    print(f"  Output directory: {args.output_dir}")
+    if args.quiet:
+        print("  Mode: Quiet (using defaults)")
+
+    # Load defaults from config file
+    defaults = {
+        "computer": "unknownComp",
+        "room": "unknownRoom"
     }
 
-    scenario_parameters = {}
+    try:
+        with open(args.config_file, 'r') as f:
+            file_config = json.load(f)
+
+        for param in defaults.keys():
+            if param in file_config:
+                defaults[param] = file_config[param]
+    except FileNotFoundError:
+        print(f"Warning: Config file '{args.config_file}' not found. Using built-in defaults.")
+        file_config = {}
+    except json.JSONDecodeError as e:
+        print(f"Warning: Invalid JSON in config file '{args.config_file}': {e}. Using built-in defaults.")
+        file_config = {}
+
     # Get scenario information
-    computer_name = input("Enter computer name: ").strip().replace(" ", "_")
+    scenario_parameters = {}
+
+    # Computer name
+    computer_name = None
+    if not args.quiet:
+        computer_name = input(f"\nEnter computer name (default {defaults['computer']}): ").strip().replace(" ", "_")
+
     if not computer_name:
-        computer_name = "LeonidDesctop"
+        computer_name = defaults['computer']
     scenario_parameters["computer_name"] = computer_name
 
-    room_name = input("Enter room name: ").strip().replace(" ", "_")
+    # Room name
+    room_name = None
+    if not args.quiet:
+        room_name = input(f"Enter room name (default {defaults['room']}): ").strip().replace(" ", "_")
+
     if not room_name:
-        room_name = "SmallSPb"
+        room_name = defaults['room']
     scenario_parameters["room_name"] = room_name
 
-    try:
-        scenario_number = (input("Enter scenario number: ").strip())
-    except ValueError:
-        print("Invalid scenario number, using 1")
-        scenario_number = "0.1"
+    # Scenario number
+    if not args.scenario_number:
+        if not args.quiet:
+            scenario_number = input("Enter scenario number: ").strip()
+            if not scenario_number:
+                scenario_number = "1"
+        else:
+            scenario_number = "1"
+    else:
+        scenario_number = args.scenario_number
     scenario_parameters["scenario_number"] = scenario_number
 
-    description = input("Enter scenario description: ").strip()
-    if not description:
-        description = f"Room response measurement scenario {scenario_number}"
+    # Description
+    if not args.description:
+        if not args.quiet:
+            description = input("Enter scenario description: ").strip()
+            if not description:
+                description = f"Room response measurement scenario {scenario_number}"
+        else:
+            description = f"Room response measurement scenario {scenario_number}"
+    else:
+        description = args.description
     scenario_parameters["description"] = description
 
-    try:
-        num_measurements = int(input(f"Number of measurements (default 100): ").strip() or "100")
-    except ValueError:
-        num_measurements = 100
+    # Number of measurements
+    if not args.quiet:
+        try:
+            num_measurements = int(input(f"Number of measurements (default {args.num_measurements}): ").strip() or str(args.num_measurements))
+        except ValueError:
+            num_measurements = args.num_measurements
+    else:
+        num_measurements = args.num_measurements
     scenario_parameters["num_measurements"] = num_measurements
 
-    try:
-        interval = float(input(f"Interval between measurements in seconds (default 1.0): ").strip() or "1.0")
-    except ValueError:
-        interval = 1.0
+    # Measurement interval
+    if not args.quiet:
+        try:
+            interval = float(input(f"Interval between measurements in seconds (default {args.measurement_interval}): ").strip() or str(args.measurement_interval))
+        except ValueError:
+            interval = args.measurement_interval
+    else:
+        interval = args.measurement_interval
     scenario_parameters["measurement_interval"] = interval
 
-
-
-    # Print configuration
-    print(f"\nRecorder Configuration:")
-    print(f"  Sample rate: {recorder_config['sample_rate']} Hz")
-    print(f"  Pulse duration: {recorder_config['pulse_duration'] * 1000:.1f} ms")
-    print(f"  Cycle duration: {recorder_config['cycle_duration'] * 1000:.1f} ms")
-    print(f"  Number of pulses: {recorder_config['num_pulses']}")
-    print(f"  Volume: {recorder_config['volume']}")
-    print(f"  Pulse shape: {recorder_config['impulse_form']}")
-    print(f"  Output directory: {args.output_dir}")
+    print(f"\nScenario Configuration:")
+    print(f"  Computer: {scenario_parameters['computer_name']}")
+    print(f"  Room: {scenario_parameters['room_name']}")
+    print(f"  Scenario number: {scenario_parameters['scenario_number']}")
+    print(f"  Description: {scenario_parameters['description']}")
+    print(f"  Measurements: {scenario_parameters['num_measurements']}")
+    print(f"  Interval: {scenario_parameters['measurement_interval']}s")
 
     try:
         # Create and run collector
         collector = SingleScenarioCollector(
             base_output_dir=args.output_dir,
-            recorder_config=recorder_config,
+            recorder_config=args.config_file,
             scenario_config=scenario_parameters
         )
 
         collector.collect_scenario(interactive_devices=args.interactive)
+
+        # Save updated defaults to config file
+        if not args.quiet and input("\nSave room and computer names to config? (y/n): ").strip().lower() == 'y':
+            # Update the file_config with new defaults
+            file_config['computer'] = computer_name
+            file_config['room'] = room_name
+
+            try:
+                with open(args.config_file, 'w') as f:
+                    json.dump(file_config, f, indent=2)
+                print(f"Updated defaults saved to {args.config_file}")
+            except Exception as e:
+                print(f"Warning: Could not save defaults to config file: {e}")
 
     except KeyboardInterrupt:
         print("\n⚠️  Collection interrupted by user")

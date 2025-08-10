@@ -1,6 +1,7 @@
 import numpy as np
 import wave
 import time
+import json
 from datetime import datetime
 from pathlib import Path
 import sdl_audio_core
@@ -10,43 +11,61 @@ from typing import Optional, Tuple, Dict, Any
 class RoomResponseRecorder:
     """Clean, refactored room response recorder with unified API"""
 
-    def __init__(self,
-                 sample_rate: int = 48000,
-                 pulse_duration: float = 0.008,
-                 pulse_fade: float = 0.0001,
-                 cycle_duration: float = 0.1,
-                 num_pulses: int = 8,
-                 volume: float = 0.4,
-                 impulse_form: str = "square"):
+    def __init__(self, config_file_path: str = None):
         """
-        Initialize the room response recorder
+        Initialize the room response recorder from a JSON configuration file
 
         Args:
-            sample_rate: Audio sample rate in Hz
-            pulse_duration: Duration of each pulse in seconds
-            pulse_fade: Fade in/out duration for pulses in seconds
-            cycle_duration: Time between pulse starts in seconds
-            num_pulses: Number of pulses in the test signal
-            volume: Playback volume (0.0 to 1.0)
-            impulse_form: Type of pulse - "square" or "sine"
+            config_file_path: Path to JSON configuration file. If None, uses default config.
         """
-        self.sample_rate = sample_rate
-        self.pulse_duration = pulse_duration
-        self.pulse_fade = pulse_fade
-        self.cycle_duration = cycle_duration
-        self.num_pulses = num_pulses
-        self.volume = volume
-        self.impulse_form = impulse_form
+        # Default configuration
+        default_config = {
+            'sample_rate': 48000,
+            'pulse_duration': 0.008,
+            'pulse_fade': 0.0001,
+            'cycle_duration': 0.1,
+            'num_pulses': 8,
+            'volume': 0.4,
+            'pulse_frequency': 1000,
+            'impulse_form': 'sine'
+        }
+
+        # Load configuration from file if provided
+        if config_file_path:
+            try:
+                with open(config_file_path, 'r') as f:
+                    file_config = json.load(f)
+
+                # Extract recorder config if it's nested under 'recorder_config' key
+                if 'recorder_config' in file_config:
+                    loaded_config = file_config['recorder_config']
+                else:
+                    loaded_config = file_config
+
+                # Update defaults with loaded values
+                for key, value in loaded_config.items():
+                    if key in default_config:
+                        default_config[key] = value
+
+            except FileNotFoundError:
+                print(f"Warning: Config file '{config_file_path}' not found. Using default configuration.")
+            except json.JSONDecodeError as e:
+                print(f"Warning: Invalid JSON in config file '{config_file_path}': {e}. Using default configuration.")
+            except Exception as e:
+                print(f"Warning: Error loading config file '{config_file_path}': {e}. Using default configuration.")
+
+        # Set instance variables from final configuration
+        for param, value in default_config.items():
+            setattr(self, param, value)
 
         # Calculated parameters
-        self.pulse_samples = int(pulse_duration * sample_rate)
-        self.fade_samples = int(pulse_fade * sample_rate)
-        self.cycle_samples = int(cycle_duration * sample_rate)
+        self.pulse_samples = int(self.pulse_duration * self.sample_rate)
+        self.fade_samples = int(self.pulse_fade * self.sample_rate)
+        self.cycle_samples = int(self.cycle_duration * self.sample_rate)
         self.gap_samples = self.cycle_samples - self.pulse_samples
-        self.total_duration = cycle_duration * num_pulses
+        self.total_duration = self.cycle_duration * self.num_pulses
 
         # Signal generation
-        self.pulse_frequency = 1000  # Hz for sine wave pulses
         self.playback_signal = self._generate_complete_signal()
 
         # Validate configuration
@@ -549,15 +568,9 @@ def main():
     # Check for interactive flag
     interactive_mode = '--interactive' in sys.argv or '-i' in sys.argv
 
+    recorder_congig_path = "recorderConfig.json"
     # Create recorder with default settings
-    recorder = RoomResponseRecorder(
-        sample_rate=48000,
-        pulse_duration=0.008,
-        cycle_duration=0.1,
-        num_pulses=8,
-        volume=0.4,
-        impulse_form="square"
-    )
+    recorder = RoomResponseRecorder(recorder_congig_path)
 
     # Print signal information
     recorder.print_signal_analysis()

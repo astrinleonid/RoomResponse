@@ -58,7 +58,7 @@ class SingleScenarioCollector:
 
     def __init__(self,
                  base_output_dir: str = "room_response_dataset",
-                 recorder_config: Dict[str, Any] = None,
+                 recorder_config: str = '',
                  scenario_config = False):
         """
         Initialize the single scenario collector
@@ -69,27 +69,13 @@ class SingleScenarioCollector:
         """
         self.base_output_dir = Path(base_output_dir)
 
-        # Default recorder configuration
-        default_config = {
-            'sample_rate': 48000,
-            'pulse_duration': 0.008,
-            'pulse_fade': 0.0001,
-            'cycle_duration': 0.1,
-            'num_pulses': 8,
-            'volume': 0.4,
-            'impulse_form': 'sine'
-        }
-
-        if recorder_config:
-            default_config.update(recorder_config)
-
         if scenario_config:
             self.setup_scenario_from_dict(**scenario_config)
         else:
             # Setup from user input
             self.setup_scenario_from_input(interactive_devices = False)
 
-        self.recorder_config = default_config
+        self.recorder_config = recorder_config
         self.recorder = None
 
         self.measurements: List[MeasurementMetadata] = []
@@ -198,7 +184,7 @@ class SingleScenarioCollector:
         # Set recording method based on interactive mode
         self.recording_method = 1 if self.interactive_mode else 2
 
-        self.recorder = RoomResponseRecorder(**self.recorder_config)
+        self.recorder = RoomResponseRecorder(self.recorder_config)
 
         # Test the recorder setup
         print(f"\nTesting audio device setup...")
@@ -305,9 +291,6 @@ class SingleScenarioCollector:
         successful_measurements = 0
         failed_measurements = 0
 
-        # Wait for user confirmation
-        input(f"\nPrepare the room for this scenario and press Enter to start...")
-        time.sleep(3)
         # Warm-up measurements (discarded)
         if self.scenario.warm_up_measurements > 0:
             print(f"\nPerforming {self.scenario.warm_up_measurements} warm-up measurements...")
@@ -509,7 +492,7 @@ class SingleScenarioCollector:
         # Print to console
         print('\n'.join(report_lines))
 
-    def collect_scenario(self, interactive_devices: bool = False):
+    def collect_scenario(self, interactive_devices: bool = False, confirm_start = False):
         """Run the complete single scenario collection process"""
         try:
 
@@ -537,12 +520,16 @@ class SingleScenarioCollector:
             print(f"  Estimated time: {estimated_time:.1f} minutes")
 
             # Confirm start
-            response = input(f"\nProceed with data collection? (y/n): ").strip().lower()
-            if response != 'y':
-                print("Data collection cancelled.")
-                return
+            if confirm_start:
+                response = input(f"\nProceed with data collection?\n"
+                                 f"After pressing y recording will strt in 5 seconds\n"
+                                 f"(y/n): ").strip().lower()
+                if response != 'y':
+                    print("Data collection cancelled.")
+                    return
+                time.sleep(5)
+                # Collect data
 
-            # Collect data
             start_time = time.time()
 
             scenario_measurements = self.collect_scenario_measurements()

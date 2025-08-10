@@ -1,0 +1,12 @@
+{
+  "sample_rate": 48000,
+  "pulse_duration": 0.008,
+  "pulse_fade": 0.0001,
+  "cycle_duration": 0.1,
+  "num_pulses": 8,
+  "volume": 0.4,
+  "pulse_frequency": 1000,
+  "impulse_form": "sine",
+  "computer": "LeonidWorkstation",
+  "room": "SPbSmall"
+}
