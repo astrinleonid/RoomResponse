@@ -1,320 +1,441 @@
-# SDL Audio Core
+# Room Response Recording Project
 
-A high-performance C++ audio module with Python bindings for simultaneous playback and recording, designed specifically for room impulse response measurement and professional audio applications.
+A Python-based acoustic room response measurement system using custom pulse train signals for precise audio analysis. The system uses a hybrid architecture combining C++ SDL audio core with Python signal processing for high-performance, cross-platform audio recording and analysis.
 
-## Features
+## 🎯 Project Overview
 
-- **Low-latency simultaneous audio I/O** using SDL2
-- **Automatic device compatibility testing** - finds working device pairs
-- **Acoustic coupling detection** - identifies devices that can hear each other
-- **Room impulse response measurement** with advanced signal processing
-- **Professional audio interface support** - optimized for ASIO, professional interfaces
-- **Cross-platform** - Windows, macOS, Linux
-- **Python integration** with NumPy arrays and matplotlib support
+This project enables automated collection of room acoustic response datasets for research, audio analysis, and machine learning applications. It uses carefully designed pulse train signals to measure how rooms respond to audio, capturing characteristics like reverberation, echo, and acoustic signatures under different conditions.
 
-## The Problem This Solves
+## 🏗️ Architecture
 
-Many audio applications struggle with simultaneous playback and recording due to:
+- **C++ SDL Audio Core**: Low-level audio engine with pybind11 Python bindings
+- **Python Interface**: High-level room response recorder with signal processing
+- **Hybrid Approach**: SDL for device management + direct audio I/O for synchronized recording/playback
 
-- **Hardware isolation** between built-in microphones and speakers
-- **Device driver limitations** that prevent full-duplex operation
-- **Acoustic isolation** in modern laptops (anti-feedback systems)
-- **Poor device enumeration** and compatibility testing
+## 📁 Project Structure
 
-SDL Audio Core automatically tests device combinations and finds working pairs, making room impulse response measurement reliable across different hardware configurations.
+```
+RoomResponse/
+├── sdl_audio_core/              # C++ module with Python bindings
+│   ├── src/
+│   │   ├── audio_engine.h/cpp        # Core audio engine
+│   │   ├── device_manager.h/cpp      # Device enumeration
+│   │   └── python_bindings.cpp      # pybind11 interface
+│   └── build system files
+├── RoomResponseRecorder.py      # Main recorder class (refactored)
+├── dataSetCollector.py          # Automated dataset collection
+├── room_response_dataset/       # Output directory (created automatically)
+│   └── session_YYYYMMDD_HHMMSS/
+│       ├── raw_recordings/           # Original recorded audio
+│       ├── impulse_responses/        # Processed impulse responses
+│       ├── room_responses/           # Averaged room responses
+│       ├── metadata/                 # Session and measurement metadata
+│       └── analysis/                 # Analysis outputs
+└── README.md                    # This file
+```
 
-## Installation
+## 🚀 Quick Start
 
 ### Prerequisites
 
-**Windows:**
-```bash
-# Install SDL2 via vcpkg (recommended)
-vcpkg install sdl2:x64-windows
+1. **Python 3.8+** with numpy, wave modules
+2. **SDL2** audio library
+3. **Compiled SDL audio core** (C++ module)
+4. **Audio devices**: Working microphone and speakers
 
-# Or download SDL2 development libraries
-# Extract to C:\SDL2\
-```
-
-**macOS:**
-```bash
-# Install SDL2 via Homebrew
-brew install sdl2
-```
-
-**Linux:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install libsdl2-dev
-
-# CentOS/RHEL  
-sudo yum install SDL2-devel
-```
-
-### Build from Source
-
-1. **Clone and setup:**
-```bash
-git clone <repository>
-cd sdl_audio_core
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# or: source .venv/bin/activate  # macOS/Linux
-```
-
-2. **Detect system configuration:**
-```bash
-python detect_paths.py
-```
-
-3. **Build the module:**
-```bash
-# Windows
-build_sdl_audio.bat
-
-# macOS/Linux  
-python -m pip install -e . --force-reinstall
-```
-
-4. **Test installation:**
-```bash
-python test_audio.py
-```
-
-## Quick Start
-
-### Basic Device Testing
+### Basic Usage
 
 ```python
-import sdl_audio_core
+from RoomResponseRecorder import RoomResponseRecorder
 
-# Check installation
-sdl_audio_core.check_installation()
+# Create recorder with default settings
+recorder = RoomResponseRecorder()
 
-# List all audio devices
-devices = sdl_audio_core.list_all_devices()
-print(f"Found {len(devices['input_devices'])} inputs, {len(devices['output_devices'])} outputs")
-
-# Test a device pair
-result = sdl_audio_core.quick_device_test(input_id=0, output_id=0)
-print(f"Devices can open: {result.can_open_devices}")
-print(f"Acoustic coupling: {result.has_acoustic_coupling}")
+# Record a single measurement
+audio_data = recorder.take_record("recording.wav", "impulse.wav")
 ```
 
-### Automatic Device Discovery
+### Dataset Collection
 
 ```python
-# Find the best device pair automatically
-measurer = sdl_audio_core.RoomResponseMeasurer()
-measurer.initialize()
+from dataSetCollector import RoomResponseDatasetCollector
 
-best_pair = measurer.find_best_device_pair()
-if best_pair.has_acoustic_coupling:
-    print(f"Best devices found:")
-    print(f"  Input: {best_pair.input_device_name}")
-    print(f"  Output: {best_pair.output_device_name}")
-    print(f"  Coupling strength: {best_pair.coupling_strength:.4f}")
+# Create collector
+collector = RoomResponseDatasetCollector()
+
+# Run full dataset collection with default scenarios
+collector.collect_full_dataset(recording_method=2)
 ```
 
-### Room Response Measurement
+## 📚 API Reference
+
+### RoomResponseRecorder Class
+
+The main recording interface with unified API for all recording methods.
+
+#### Constructor
 
 ```python
-import sdl_audio_core
-import numpy as np
+RoomResponseRecorder(
+    sample_rate: int = 48000,
+    pulse_duration: float = 0.008,
+    pulse_fade: float = 0.0001,
+    cycle_duration: float = 0.1,
+    num_pulses: int = 8,
+    volume: float = 0.4,
+    impulse_form: str = "square"
+)
+```
 
-# Configure measurement
-config = sdl_audio_core.RoomResponseConfig()
-config.sample_rate = 48000
-config.num_pulses = 5
-config.pulse_frequency = 1000.0
-config.volume = 0.3
+**Parameters:**
+- `sample_rate`: Audio sample rate in Hz (default: 48000)
+- `pulse_duration`: Duration of each pulse in seconds (default: 0.008)
+- `pulse_fade`: Fade in/out duration to prevent clicks (default: 0.0001)
+- `cycle_duration`: Time between pulse starts in seconds (default: 0.1)
+- `num_pulses`: Number of pulses in test signal (default: 8)
+- `volume`: Playback volume 0.0-1.0 (default: 0.4)
+- `impulse_form`: Pulse type - "square" or "sine" (default: "square")
 
-# Initialize measurer
-measurer = sdl_audio_core.RoomResponseMeasurer()
-measurer.initialize(config)
+#### Main Methods
 
-# Find best device pair
-best_pair = measurer.find_best_device_pair()
+##### `take_record(output_file, impulse_file, method=2, **kwargs)`
 
-# Perform measurement
-result = measurer.measure_room_response_with_devices(
-    best_pair.input_device_id, best_pair.output_device_id
+Primary recording method with unified interface for all recording approaches.
+
+```python
+audio_data = recorder.take_record(
+    output_file="recording.wav",
+    impulse_file="impulse.wav", 
+    method=2,                    # Recording method (1, 2, or 3)
+    interactive=False,           # Interactive device selection (method 1)
+    input_device_id=None,        # Input device ID (method 3)
+    output_device_id=None        # Output device ID (method 3)
+)
+```
+
+**Recording Methods:**
+- **Method 1**: Manual AudioEngine setup with optional interactive device selection
+- **Method 2**: Automatic device selection (recommended)
+- **Method 3**: Specific device IDs
+
+**Returns:** `numpy.ndarray` of recorded audio data, or `None` if failed
+
+##### `list_devices()`
+
+List all available audio input and output devices.
+
+```python
+devices = recorder.list_devices()
+# Returns: {'input_devices': [...], 'output_devices': [...]}
+```
+
+##### `get_signal_info()`
+
+Get detailed information about the generated test signal.
+
+```python
+info = recorder.get_signal_info()
+# Returns: Dict with signal parameters and timing information
+```
+
+##### `print_signal_analysis()`
+
+Print detailed analysis of the test signal configuration.
+
+```python
+recorder.print_signal_analysis()
+```
+
+### RoomResponseDatasetCollector Class
+
+Automated dataset collection across multiple scenarios.
+
+#### Constructor
+
+```python
+RoomResponseDatasetCollector(
+    base_output_dir: str = "room_response_dataset",
+    recorder_config: Dict[str, Any] = None
+)
+```
+
+#### Main Methods
+
+##### `collect_full_dataset(recording_method=2)`
+
+Run complete dataset collection process with all configured scenarios.
+
+```python
+collector.collect_full_dataset(recording_method=2)
+```
+
+##### `add_scenario(scenario)`
+
+Add a custom measurement scenario.
+
+```python
+from dataSetCollector import ScenarioConfig
+
+scenario = ScenarioConfig(
+    name="custom_scenario",
+    description="Custom room configuration",
+    num_measurements=25,
+    measurement_interval=2.0
+)
+collector.add_scenario(scenario)
+```
+
+##### `setup_default_scenarios()`
+
+Configure standard set of measurement scenarios:
+- Empty room (40 measurements)
+- Single person center (35 measurements)  
+- Single person corner (35 measurements)
+- Two people (35 measurements)
+- Furniture added (35 measurements)
+- Doors open (30 measurements)
+- Moving person (25 measurements)
+
+## 🎛️ Configuration Examples
+
+### High-Quality Research Configuration
+
+```python
+recorder = RoomResponseRecorder(
+    sample_rate=96000,          # Higher sample rate
+    pulse_duration=0.005,       # Shorter pulses for better time resolution
+    cycle_duration=0.15,        # Longer cycles for more reverberation capture
+    num_pulses=12,              # More pulses for better averaging
+    volume=0.3,                 # Conservative volume
+    impulse_form="sine"         # Smoother sine wave pulses
+)
+```
+
+### Fast Survey Configuration
+
+```python
+recorder = RoomResponseRecorder(
+    sample_rate=44100,          # Standard sample rate
+    pulse_duration=0.01,        # Longer pulses for robustness
+    cycle_duration=0.08,        # Faster cycles
+    num_pulses=6,               # Fewer pulses for speed
+    volume=0.5,                 # Higher volume for noisy environments
+    impulse_form="square"       # Sharp square wave pulses
+)
+```
+
+### Custom Dataset Collection
+
+```python
+collector = RoomResponseDatasetCollector(
+    base_output_dir="my_room_study",
+    recorder_config={
+        'sample_rate': 48000,
+        'pulse_duration': 0.008,
+        'cycle_duration': 0.1,
+        'num_pulses': 8,
+        'volume': 0.4,
+        'impulse_form': 'square'
+    }
 )
 
-if result.success:
-    print(f"Measurement successful!")
-    print(f"SNR: {result.signal_to_noise_ratio:.1f} dB")
-    print(f"Max amplitude: {result.max_amplitude:.4f}")
-    
-    # Save results
-    sdl_audio_core.RoomResponseMeasurer.save_wav_file(
-        result.impulse_response, result.sample_rate, "impulse_response.wav"
-    )
-    
-    # Convert to numpy for analysis
-    impulse = np.array(result.impulse_response)
-    print(f"Impulse response length: {len(impulse)} samples")
+# Add custom scenarios
+collector.add_scenario(ScenarioConfig(
+    name="curtains_closed",
+    description="Room with heavy curtains closed",
+    num_measurements=30,
+    additional_metadata={"curtains": "closed", "absorption": "high"}
+))
+
+collector.collect_full_dataset(recording_method=2)
 ```
 
-### Signal Processing
+## 📊 Output Files
 
-```python
-import sdl_audio_core.signal_processing as sp
-import numpy as np
+### Generated Files
 
-# Generate test signals
-sine_wave = sp.generate_sine_wave(1000, 1.0, 48000, 0.5)
-white_noise = sp.generate_white_noise(1.0, 48000, 0.1)
+For each measurement, the system creates:
 
-# Apply processing
-windowed = sp.apply_window(sine_wave, "hann")
-rms = sp.calculate_rms(windowed)
-peak = sp.calculate_peak(windowed)
+1. **Raw Recording** (`raw_SCENARIO_XXX_TIMESTAMP.wav`)
+   - Original recorded audio with all pulses
+   - Full duration capture including reverberation
 
-print(f"RMS: {rms:.4f}, Peak: {peak:.4f}")
+2. **Impulse Response** (`impulse_SCENARIO_XXX_TIMESTAMP.wav`)
+   - Processed impulse response with onset correction
+   - Single cycle representing room's acoustic signature
 
-# Cross-correlation
-correlation = sp.cross_correlate(sine_wave[:1000], sine_wave[:1000])
-max_lag = sp.find_max_correlation_lag(correlation)
-print(f"Max correlation at lag: {max_lag}")
+3. **Room Response** (`room_SCENARIO_XXX_TIMESTAMP_room.wav`)
+   - Averaged response from multiple pulse cycles
+   - Noise-reduced representation of room acoustics
+
+### Metadata
+
+Each session generates comprehensive metadata:
+
+```json
+{
+  "session_info": {
+    "timestamp": "20250809_194618",
+    "recorder_config": {...},
+    "device_info": {...},
+    "quality_thresholds": {...}
+  },
+  "scenarios": [...],
+  "measurements": [
+    {
+      "scenario_name": "empty_room",
+      "measurement_index": 0,
+      "timestamp": "20250809_194618_458",
+      "filename_raw": "raw_empty_room_000_20250809_194618_458.wav",
+      "filename_impulse": "impulse_empty_room_000_20250809_194618_458.wav",
+      "quality_metrics": {
+        "snr_db": 18.5,
+        "max_amplitude": 0.23,
+        "rms_level": 0.045,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 28.2
+      }
+    }
+  ]
+}
 ```
 
-## Advanced Usage
-
-### Custom Audio Engine
-
-```python
-# Low-level audio control
-engine = sdl_audio_core.AudioEngine()
-
-config = sdl_audio_core.AudioEngineConfig()
-config.sample_rate = 96000
-config.buffer_size = 512
-config.input_device_id = 1
-config.output_device_id = 2
-
-engine.initialize(config)
-engine.start()
-
-# Real-time audio processing
-input_samples = engine.read_input_samples(1024)
-processed = np.array(input_samples) * 0.5  # Simple gain
-engine.write_output_samples(processed)
-
-stats = engine.get_stats()
-print(f"Processed {stats.input_samples_processed} samples")
-```
-
-### Progress Monitoring
-
-```python
-def progress_callback(progress, status):
-    print(f"Progress: {progress*100:.1f}% - {status}")
-
-result = measurer.measure_room_response_with_progress(progress_callback)
-```
-
-## Architecture
-
-### Core Components
-
-- **AudioEngine**: Low-level SDL2 audio interface
-- **DeviceManager**: Device enumeration and compatibility testing  
-- **RoomResponseMeasurer**: High-level measurement interface
-- **Signal Processing**: Utilities for audio analysis
-
-### Device Compatibility
-
-The system automatically scores device pairs based on:
-
-- ✅ **Hardware compatibility** - can devices be opened simultaneously?
-- ✅ **Acoustic coupling** - can the microphone hear the speakers?
-- ✅ **Professional interfaces** - ASIO, USB audio interfaces get priority
-- ✅ **Same hardware** - input/output from same device work better
-- ❌ **Built-in isolation** - modern laptops often have hardware isolation
-- ❌ **Bluetooth devices** - high latency, connection issues
-
-### Measurement Process
-
-1. **Device Discovery**: Test all input/output combinations
-2. **Acoustic Coupling Test**: Play test tone, measure received level
-3. **Signal Generation**: Create precise pulse sequences with timing
-4. **Synchronized Recording**: Simultaneous playback and recording
-5. **Signal Processing**: Onset detection, averaging, time alignment
-6. **Analysis**: SNR calculation, impulse response extraction
-
-## Troubleshooting
+## 🔧 Troubleshooting
 
 ### Common Issues
 
-**"No suitable device pairs found"**
-- Built-in laptop audio often has hardware isolation
-- Try external USB audio interface
-- Use headphone output to line input with cable
+#### Low SNR (Signal-to-Noise Ratio)
 
-**"Device open failed"**
-- Close other audio applications (Discord, Spotify, etc.)
-- Check exclusive mode settings
-- Restart audio services
+**Symptoms:** Quality warnings about low SNR (< 15dB)
 
-**"No acoustic coupling detected"**  
-- Increase volume (carefully!)
-- Check microphone permissions
-- Ensure speakers/microphone are not muted
-- Try different device combination
+**Solutions:**
+- Increase microphone gain in system settings
+- Move microphone closer to speakers
+- Reduce background noise
+- Check microphone is working properly
 
-### Platform-Specific Notes
+#### Audio Device Issues
 
-**Windows:**
-- Prefers ASIO drivers for professional interfaces
-- Built-in Realtek audio often has isolation
-- Try "Stereo Mix" or "What U Hear" if available
+**Symptoms:** "No suitable devices found" or device selection failures
 
-**macOS:**
-- Built-in devices usually work well together
-- Check System Preferences > Security > Microphone permissions
-- Some USB interfaces need manual driver installation
+**Solutions:**
+```python
+# List available devices
+recorder = RoomResponseRecorder()
+devices = recorder.list_devices()
 
-**Linux:**
-- ALSA/PulseAudio configuration affects device access
-- May need to add user to audio group
-- Professional interfaces may need specific drivers
+# Use interactive device selection
+audio_data = recorder.take_record("test.wav", "impulse.wav", 
+                                 method=1, interactive=True)
+```
 
-## Performance
+#### File Permission Errors
 
-- **Latency**: ~21ms roundtrip (1024 samples @ 48kHz)  
-- **Accuracy**: ±1 sample timing precision
-- **Memory**: ~50MB typical usage
-- **CPU**: <5% during measurement on modern hardware
+**Symptoms:** Cannot save audio files
 
-## Hardware Recommendations
+**Solutions:**
+- Ensure output directory is writable
+- Run with appropriate permissions
+- Check disk space availability
 
-### Professional Audio Interfaces
-✅ **Focusrite Scarlett series** - Excellent compatibility  
-✅ **PreSonus AudioBox** - Good ASIO support  
-✅ **RME Fireface series** - Professional grade  
-✅ **MOTU M series** - High quality, low latency  
+#### Clipping Detection
 
-### Consumer Hardware
-✅ **External USB interfaces** - Usually work well  
-⚠ **Gaming headsets** - Mixed compatibility  
-❌ **Built-in laptop audio** - Often isolated  
-❌ **Bluetooth devices** - High latency  
+**Symptoms:** "Signal may be clipping" warnings
 
-## Contributing
+**Solutions:**
+- Reduce volume parameter in recorder configuration
+- Lower speaker/system volume
+- Check for audio driver gain settings
 
-We welcome contributions! Please see CONTRIBUTING.md for guidelines.
+### Audio Quality Guidelines
 
-## License
+**Optimal Recording Conditions:**
+- Quiet environment (minimal background noise)
+- Moderate volume levels (avoid too loud/quiet)
+- Stable microphone and speaker positions
+- Good acoustic separation between mic and speakers
 
-MIT License - see LICENSE file for details.
+**Quality Thresholds:**
+- SNR: ≥ 15dB (good), ≥ 20dB (excellent)
+- Clipping: < 2% (acceptable), < 1% (good)
+- Dynamic Range: ≥ 25dB (acceptable), ≥ 30dB (good)
 
-## Changelog
+## 🔬 Technical Details
 
-### v0.1.0
-- Initial release
-- SDL2-based audio engine
-- Automatic device compatibility testing
-- Room impulse response measurement
-- Cross-platform support (Windows/macOS/Linux)
-- Python bindings with NumPy integration
+### Signal Processing
+
+The system uses **pulse train signals** with the following characteristics:
+
+- **Pulse Generation**: Square or sine wave pulses with smooth fade-in/out
+- **Timing Precision**: Exact sample-level timing for consistent measurements
+- **Cycle Averaging**: Multiple pulse cycles averaged to reduce noise
+- **Onset Detection**: Automatic detection of signal arrival time
+- **Impulse Extraction**: Signal rotation to align impulse response start
+
+### Audio Engine
+
+**SDL2-Based Core:**
+- Thread-safe audio callbacks with atomic operations
+- Circular buffers for real-time processing
+- Synchronized recording and playback
+- Cross-platform device management
+- Low-latency audio I/O
+
+**Quality Control:**
+- Real-time signal level monitoring
+- Automatic clipping detection
+- SNR estimation and reporting
+- Dynamic range analysis
+
+## 📈 Research Applications
+
+### Acoustic Analysis
+- Room reverberation time measurement
+- Acoustic signature classification
+- Echo and reflection analysis
+- Frequency response characterization
+
+### Machine Learning Datasets
+- Room type classification training data
+- Occupancy detection model training
+- Audio source localization datasets
+- Acoustic scene analysis
+
+### Audio Engineering
+- Room acoustic optimization
+- Speaker placement analysis
+- Acoustic treatment effectiveness
+- Sound system calibration
+
+## 🤝 Contributing
+
+### Development Setup
+
+1. Clone repository with SDL audio core
+2. Build C++ audio engine with pybind11
+3. Install Python dependencies
+4. Test with basic recording
+
+### Code Style
+
+- Follow PEP 8 for Python code
+- Use type hints for all public methods
+- Comprehensive docstrings for classes and methods
+- Error handling with informative messages
+
+## 📄 License
+
+[Specify your license here]
+
+## 🆘 Support
+
+For issues, questions, or contributions:
+
+1. Check troubleshooting section above
+2. Review audio quality guidelines
+3. Test with different recording methods
+4. Verify audio device functionality
+
+---
+
+**Note:** This project requires properly configured audio hardware and the compiled SDL audio core module. Ensure all dependencies are installed and audio devices are functioning before use.

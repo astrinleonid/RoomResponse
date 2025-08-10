@@ -58,7 +58,7 @@ def load_wav_files(file_paths, sample_rate=DEFAULT_SAMPLE_RATE):
     return padded_audio
 
 
-def find_wav_files(folder_path, recording_type="average"):
+def find_wav_files(folder_path, recording_type="any"):
     """
     Find all WAV files in a folder that match the recording type.
     
@@ -90,11 +90,14 @@ def find_wav_files(folder_path, recording_type="average"):
             # For raw recordings: must end with "raw_recording.wav"
             if filename_lower.endswith('raw_recording.wav'):
                 wav_files.append(file_path)
-        else:  # recording_type == "average" (default)
+        elif recording_type == "average":  # recording_type == "average" (default)
             # For average recordings: must end with "recording.wav" but NOT "raw_recording.wav"
             if filename_lower.endswith('recording.wav') and not filename_lower.endswith('raw_recording.wav'):
                 wav_files.append(file_path)
-    
+        else:
+            if filename_lower.endswith('.wav'):
+                wav_files.append(file_path)
+
     return wav_files
 
 
@@ -211,17 +214,19 @@ def collect_files_to_process(root_folder, recording_type, existing_entries, repl
             continue
         
         # Look for diagnostics subfolder
-        diagnostics_path = os.path.join(folder_path, "diagnostics")
-        if not os.path.exists(diagnostics_path):
+        wav_files_path = os.path.join(folder_path, "diagnostics")
+        if not os.path.exists(wav_files_path):
+            wav_files_path = os.path.join(folder_path, "impulse_responses")
+        if not os.path.exists(wav_files_path):
             print(f"Warning: No diagnostics folder in {folder_path}")
             continue
         
         # Find WAV files in diagnostics folder based on recording type
-        wav_files = find_wav_files(diagnostics_path, recording_type)
+        wav_files = find_wav_files(wav_files_path, recording_type)
         total_files_found += len(wav_files)
         
         if not wav_files:
-            print(f"Warning: No {recording_type} WAV files found in {diagnostics_path}")
+            print(f"Warning: No {recording_type} WAV files found in {wav_files_path}")
             continue
         
         print(f"Found {len(wav_files)} {recording_type} WAV files in {os.path.basename(folder_path)}")
@@ -357,7 +362,7 @@ def combine_with_existing_data(new_rows, existing_df, replace_duplicates):
     return final_df
 
 
-def create_mfcc_dataset(root_folder, recording_type="average", sample_rate=DEFAULT_SAMPLE_RATE, 
+def create_mfcc_dataset(root_folder, recording_type="any", sample_rate=DEFAULT_SAMPLE_RATE,
                        n_mfcc=DEFAULT_MFCC_COEFFICIENTS, output_file="mfcc_dataset.csv", 
                        append=True, replace_duplicates=False):
     """
@@ -436,17 +441,17 @@ def main():
         description='Process WAV files from folder structure and create MFCC dataset'
     )
     parser.add_argument('--download_folder', 
-                       default='/Users/leonidastrin/Downloads/SonarVisionAutomation/output',
+                       default='room_response_dataset',
                        help='Source folder containing downloaded data')
     parser.add_argument('--subfolder-name', 
-                       default='diagnostics',
+                       default='impulse_responses',
                        help='Name of subfolder containing WAV files')
     parser.add_argument('--dataset_file', 
                        default='mfcc_dataset_with_metadata.csv',
                        help='Output CSV file name')
     parser.add_argument('--recording_type', 
-                       choices=['average', 'raw'],
-                       default='average',
+                       choices=['average', 'raw', 'any'],
+                       default='any',
                        help='Type of recording to process: "average" for recording.wav files, "raw" for raw_recording.wav files (default: average)')
     parser.add_argument('-z', '--zip', 
                        action='store_true',

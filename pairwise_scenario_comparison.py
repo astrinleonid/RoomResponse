@@ -11,6 +11,7 @@ import itertools
 from testGooey import create_checkbox_interface
 
 
+
 def pairwise_scenario_classification(df):
     """
     Build SVM models to discriminate between each pair of scenarios.
@@ -20,6 +21,7 @@ def pairwise_scenario_classification(df):
 
     Returns:
         dict: Dictionary containing accuracy results for each scenario pair
+
     """
 
 
