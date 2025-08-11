@@ -3,11 +3,6 @@
 
 Write-Host "Room Response Batch Data Collection" -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
-Write-Host "Scenarios: 0.1, 0.2, 0.3, 0.4, 0.5"
-Write-Host "Measurements per scenario: 200"
-Write-Host "Measurement interval: 1.0 seconds"
-Write-Host "Total estimated time: ~100 minutes"
-Write-Host "====================================" -ForegroundColor Cyan
 
 # Confirm start
 $response = Read-Host "Proceed with batch collection? (y/n)"
@@ -17,8 +12,8 @@ if ($response -ne "y" -and $response -ne "Y") {
 }
 
 # Scenario parameters
-$scenarios = @("0.1", "0.2", "0.3", "0.4", "0.5")
-$numMeasurements = 150
+$scenarios = @("1.6", "1.7", "1.8", "1.9", "1.10")
+$numMeasurements = 200
 $measurementInterval = 1.0
 
 # Track results
@@ -68,7 +63,7 @@ for ($i = 0; $i -lt $scenarios.Count; $i++) {
     # Brief pause between scenarios (optional)
     if ($scenarioNum -lt $totalScenarios) {
         Write-Host "Proceeding to next scenario in 3 seconds..." -ForegroundColor Cyan
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 30
     }
 }
 
