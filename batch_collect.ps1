@@ -18,7 +18,7 @@ if ($response -ne "y" -and $response -ne "Y") {
 
 # Scenario parameters
 $scenarios = @("0.1", "0.2", "0.3", "0.4", "0.5")
-$numMeasurements = 2
+$numMeasurements = 150
 $measurementInterval = 1.0
 
 # Track results

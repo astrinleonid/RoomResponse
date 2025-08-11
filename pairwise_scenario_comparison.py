@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import matplotlib.pyplot as plt
 import seaborn as sns
 import itertools
-from testGooey import create_checkbox_interface
+from ScenarioSelector import create_checkbox_interface
 
 
 

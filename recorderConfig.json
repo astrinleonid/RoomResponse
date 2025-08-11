@@ -4,7 +4,7 @@
   "pulse_fade": 0.0001,
   "cycle_duration": 0.1,
   "num_pulses": 8,
-  "volume": 0.4,
+  "volume": 0.1,
   "pulse_frequency": 1000,
   "impulse_form": "sine",
   "computer": "LeonidWorkstation",
