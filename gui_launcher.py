@@ -20,6 +20,7 @@ import streamlit as st
 from ScenarioSelector import ScenarioSelector
 from ScenarioClassifier import ScenarioClassifier
 from FeatureExtractor import AudioFeatureExtractor
+from DatasetCollector import SingleScenarioCollector
 
 # ---------------------------- Page/UI setup ----------------------------
 st.set_page_config(page_title="Room Response Scenario Selector", layout="wide")
@@ -529,6 +530,107 @@ if run_all:
     _run_extraction_for_keys(list(scenarios.keys()))
 
 st.divider()
+
+# ---------------------------- Data Collection (NEW) ----------------------------
+st.header("Data Collection (Create a New Scenario)")
+
+with st.expander("Open data collection panel", expanded=False):
+    cc1, cc2, cc3 = st.columns([1, 1, 1])
+    with cc1:
+        col_computer = st.text_input("Computer name", value="unknownComp").strip()
+    with cc2:
+        col_room = st.text_input("Room name", value="unknownRoom").strip()
+    with cc3:
+        col_scen_no = st.text_input("Scenario number", value="1").strip()
+
+    desc = st.text_input("Description", value="Room response measurement")
+
+    mc1, mc2 = st.columns([1, 1])
+    with mc1:
+        num_meas = st.number_input("Number of measurements", min_value=1, value=30, step=1)
+    with mc2:
+        meas_interval = st.number_input("Interval between measurements (s)", min_value=0.1, value=2.0, step=0.1)
+
+    out_dir = st.text_input("Output directory", value=dataset_path)
+    config_file = st.text_input("Config file (recorderConfig.json)", value="recorderConfig.json")
+
+    interactive_devices = st.checkbox(
+        "Interactive device selection (console prompts)", value=False,
+        help="Streamlit can't handle console prompts. If you need device selection, run the CLI: "
+             "`python collect_dataset.py -i`."
+    )
+    if interactive_devices:
+        st.warning("Interactive prompts may hang the app. Recommended to leave this off in Streamlit.")
+
+    auto_extract = st.checkbox("Extract features after collection (uses extraction settings above)", value=True)
+
+    def _slug(s: str) -> str:
+        return (s or "").strip().replace(" ", "_")
+
+    scenario_key_new = f"{_slug(col_computer)}-Scenario{col_scen_no}-{_slug(col_room)}"
+
+    if st.button("Start collection", type="primary"):
+        if not out_dir:
+            st.error("Please provide an output directory.")
+            st.stop()
+
+        scenario_parameters = {
+            "computer_name": _slug(col_computer) or "unknownComp",
+            "room_name": _slug(col_room) or "unknownRoom",
+            "scenario_number": col_scen_no or "1",
+            "description": desc or f"Room response measurement scenario {col_scen_no}",
+            # IMPORTANT: SingleScenarioCollector expects num_measurements (not num_measures)
+            "num_measurements": int(num_meas),
+            "measurement_interval": float(meas_interval),
+        }
+
+        buf = io.StringIO()
+        try:
+            with st.spinner("Collecting measurements... this may take a while"):
+                with contextlib.redirect_stdout(buf):
+                    collector = SingleScenarioCollector(
+                        base_output_dir=out_dir,
+                        recorder_config=config_file,
+                        scenario_config=scenario_parameters
+                    )
+                    # Avoid console prompts inside Streamlit
+                    collector.collect_scenario(interactive_devices=False)
+            st.success(f"Collection complete: **{scenario_key_new}**")
+        except Exception as e:
+            st.error(f"Collection failed: {e}")
+        finally:
+            log_text = buf.getvalue()
+            if log_text.strip():
+                st.text_area("Collection log", value=log_text, height=240)
+
+        # If we want to extract immediately, do it now, then refresh UI.
+        if auto_extract:
+            try:
+                # Make sure the new scenario is visible in memory
+                selector_ref, scenarios_all_ref, df_all_ref = analyze_dataset_cached(out_dir)
+                st.session_state["selector"] = selector_ref
+                st.session_state["scenarios"] = scenarios_all_ref
+                st.session_state["df_all"] = df_all_ref
+                st.session_state["analyzed"] = True
+
+                if scenario_key_new in scenarios_all_ref:
+                    st.info(f"Extracting features for: {scenario_key_new}")
+                    _run_extraction_for_keys([scenario_key_new])  # this will update state & st.rerun()
+                else:
+                    # If for some reason not found, just force a full refresh
+                    analyze_dataset_cached.clear()
+                    st.session_state["analyzed"] = False
+                    st.rerun()
+            except Exception as ex:
+                st.error(f"Auto-extraction failed: {ex}")
+                analyze_dataset_cached.clear()
+                st.session_state["analyzed"] = False
+                st.rerun()
+        else:
+            # No auto-extraction: just refresh the dataset so the new scenario shows up
+            analyze_dataset_cached.clear()
+            st.session_state["analyzed"] = False
+            st.rerun()
 
 # ---------------------------- Classification ----------------------------
 st.header("Classification")

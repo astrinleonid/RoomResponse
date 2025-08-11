@@ -3,9 +3,9 @@
 Single Scenario Room Response Data Collector
 
 Usage:
-    python collect_scenario.py              # Use default audio devices
-    python collect_scenario.py -i           # Interactive device selection
-    python collect_scenario.py --interactive # Interactive device selection
+    python collect_dataset.py              # Use default audio devices
+    python collect_dataset.py -i           # Interactive device selection
+    python collect_dataset.py --interactive # Interactive device selection
 
 This script collects room response data for a single scenario with the naming convention:
 <computer_name>-Scenario<number>-<room_name>
@@ -24,10 +24,10 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python collect_scenario.py                    # Use default audio devices
-  python collect_scenario.py -i                 # Interactive device selection
-  python collect_scenario.py --interactive      # Interactive device selection
-  python collect_scenario.py --quiet --scenario-number 1 --description "Empty room test"
+  python collect_dataset.py                    # Use default audio devices
+  python collect_dataset.py -i                 # Interactive device selection
+  python collect_dataset.py --interactive      # Interactive device selection
+  python collect_dataset.py --quiet --scenario-number 1 --description "Empty room test"
 
 Dataset naming convention: <computer_name>-Scenario<number>-<room_name>
         """
