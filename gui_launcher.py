@@ -10,6 +10,7 @@ import contextlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List
+import fnmatch
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,8 @@ from ScenarioSelector import ScenarioSelector
 from ScenarioClassifier import ScenarioClassifier
 from FeatureExtractor import AudioFeatureExtractor
 from DatasetCollector import SingleScenarioCollector
+
+from collect_dataset import collect_scenarios_series
 
 # ---------------------------- Page/UI setup ----------------------------
 st.set_page_config(page_title="Room Response Scenario Selector", layout="wide")
@@ -226,17 +229,32 @@ def selected_keys_from_table(edited_df: pd.DataFrame) -> list[str]:
     picked = edited_df[edited_df["select"] == True]
     return picked["key"].tolist() if "key" in picked.columns else picked.index.tolist()
 
-def filter_df(df: pd.DataFrame, computer: str, room: str, feature_filter: str) -> pd.DataFrame:
+def filter_df(df: pd.DataFrame, computer: str, room: str, name_pattern: str) -> pd.DataFrame:
     out = df.copy()
     if computer != "All":
         out = out[out["computer"] == computer]
     if room != "All":
         out = out[out["room"] == room]
-    if feature_filter == "spectrum":
-        out = out[out["spectrum"] == True]
-    elif feature_filter == "mfcc":
-        out = out[out["mfcc"] == True]
+
+    pattern = (name_pattern or "").strip()
+    if pattern:
+        # support comma-separated patterns (e.g., "0.*,*Small")
+        pats = [p.strip().lower() for p in pattern.split(",") if p.strip()]
+
+        def match_row(row):
+            s_num = str(row.get("scenario_number", "")).lower()
+            key = str(row.get("key", "")).lower()
+            desc = str(row.get("description", "")).lower()
+            # match against number, key, or description
+            return any(
+                fnmatch.fnmatch(s_num, p) or fnmatch.fnmatch(key, p) or fnmatch.fnmatch(desc, p)
+                for p in pats
+            )
+
+        out = out[out.apply(match_row, axis=1)]
+
     return out.sort_values(by=["computer", "room", "scenario_number"], na_position="last")
+
 
 def missing_feature_scenarios(keys: list[str], scenarios: dict, feature_type: str) -> list[str]:
     missing = []
@@ -284,6 +302,122 @@ def humanize_feature_labels(feature_names: List[str], feature_type: str, bin_hz:
         k = _suffix_int(fn)
         labels.append(f"{int(round(k * bin_hz))} Hz" if k is not None else fn)
     return labels
+
+def group_bin_hz(keys: list[str], scenarios: dict, dataset_path: str, warn: bool = True) -> float:
+    """Get a representative bin_hz across many scenarios (warn if they differ)."""
+    vals = []
+    for k in keys:
+        folder = scenarios[k].get("full_path") or str(Path(dataset_path) / k)
+        meta = read_features_meta(folder)
+        if meta:
+            if meta.get("bin_hz"):
+                vals.append(float(meta["bin_hz"]))
+            elif meta.get("sample_rate") and meta.get("fft_len"):
+                vals.append(float(meta["sample_rate"]) / float(meta["fft_len"]))
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return 30.0
+    v0 = vals[0]
+    if warn and any(abs(v - v0) > 1e-6 for v in vals[1:]):
+        st.warning(
+            "Frequency bin resolution differs across selected scenarios. "
+            f"Examples: {sorted(set(round(v,3) for v in vals))}. "
+            "Proceeding with the first group's bin size; consider re-extraction for consistency."
+        )
+    return v0
+
+
+def _feature_prefix(feature_type: str) -> str:
+    return "freq_" if feature_type == "spectrum" else "mfcc_"
+
+
+def _read_feature_cols(csv_path: Path, prefix: str) -> list[str]:
+    """Read only the header to determine available feature columns."""
+    df = pd.read_csv(csv_path, nrows=1)
+    return [c for c in df.columns if c.startswith(prefix)]
+
+
+def _load_features_matrix(folder: str, feature_type: str, limit_k: int | None = None) -> np.ndarray:
+    """Load features from a scenario folder, optionally truncating to first K columns."""
+    csv_name = "spectrum.csv" if feature_type == "spectrum" else "features.csv"
+    path = Path(folder) / csv_name
+    if not path.exists():
+        raise FileNotFoundError(f"Feature file not found: {path}")
+    df = pd.read_csv(path)
+    prefix = _feature_prefix(feature_type)
+    cols = [c for c in df.columns if c.startswith(prefix)]
+    if not cols:
+        raise ValueError(f"No {feature_type} columns found in {path}")
+    # sort by numeric suffix just in case
+    cols_sorted = sorted(cols, key=lambda c: _suffix_int(c) or 0)
+    if limit_k is not None:
+        cols_sorted = cols_sorted[:limit_k]
+    return df[cols_sorted].to_numpy(), cols_sorted
+
+
+def prepare_group_dataset(
+    groupA_keys: list[str],
+    groupB_keys: list[str],
+    scenarios: dict,
+    dataset_path: str,
+    feature_type: str,
+    balance: bool = False
+):
+    """
+    Build (X, y, feature_names, labels) from many scenarios per group.
+    Align columns by truncating to common first-K features across all folders.
+    """
+    if not groupA_keys or not groupB_keys:
+        raise ValueError("Both groups must have at least one scenario.")
+
+    # Determine common K across all selected scenarios by counting available columns
+    prefix = _feature_prefix(feature_type)
+    all_keys = groupA_keys + groupB_keys
+    per_folder_cols = []
+    min_k = None
+    for k in all_keys:
+        folder = scenarios[k].get("full_path") or str(Path(dataset_path) / k)
+        csv_name = "spectrum.csv" if feature_type == "spectrum" else "features.csv"
+        cols = _read_feature_cols(Path(folder) / csv_name, prefix)
+        if not cols:
+            raise ValueError(f"No {feature_type} columns in {folder}/{csv_name}")
+        # sort by suffix and count
+        cols_sorted = sorted(cols, key=lambda c: _suffix_int(c) or 0)
+        per_folder_cols.append((k, folder, cols_sorted))
+        count = len(cols_sorted)
+        min_k = count if min_k is None else min(min_k, count)
+
+    if min_k is None or min_k <= 0:
+        raise ValueError("Cannot determine common feature length across scenarios.")
+
+    # Load and stack matrices with the common K columns
+    XA_list, XB_list = [], []
+    for k, folder, _ in per_folder_cols:
+        Xmat, cols_used = _load_features_matrix(folder, feature_type, limit_k=min_k)
+        if k in groupA_keys:
+            XA_list.append(Xmat)
+        else:
+            XB_list.append(Xmat)
+
+    XA = np.vstack(XA_list) if XA_list else np.empty((0, min_k))
+    XB = np.vstack(XB_list) if XB_list else np.empty((0, min_k))
+
+    # Optional balancing by undersampling to min class size
+    if balance and len(XA) > 0 and len(XB) > 0:
+        n = min(len(XA), len(XB))
+        rng = np.random.default_rng(42)
+        if len(XA) > n:
+            XA = XA[rng.choice(len(XA), size=n, replace=False)]
+        if len(XB) > n:
+            XB = XB[rng.choice(len(XB), size=n, replace=False)]
+
+    X = np.vstack([XA, XB])
+    y = np.array([0] * len(XA) + [1] * len(XB))
+    # Feature names: freq_0..K-1 or mfcc_0..K-1
+    feature_names = [f"{prefix}{i}" for i in range(min_k)]
+    return X, y, feature_names
+
+
 
 # ---------- Visualization builders ----------
 def fig_confusion_matrix(cm: np.ndarray, class_names: list[str]) -> plt.Figure:
@@ -356,21 +490,42 @@ m3.metric("With Spectrum", f"{spec_count}")
 m4.metric("With MFCC", f"{mfcc_count}")
 st.divider()
 
+# ---------------------------- Filters + Scenarios table ----------------------------
+# Make sure we have a base table
+df_all = st.session_state.get("df_all", pd.DataFrame())
+if df_all.empty:
+    st.warning("No scenarios found in this dataset directory.")
+    st.stop()
+
+# Filters
 fc1, fc2, fc3 = st.columns([1, 1, 1])
-computers = ["All"] + sorted([c for c in st.session_state["df_all"]["computer"].unique() if c])
-rooms = ["All"] + sorted([r for r in st.session_state["df_all"]["room"].unique() if r])
+computers = ["All"] + sorted([c for c in df_all["computer"].unique() if c])
+rooms = ["All"] + sorted([r for r in df_all["room"].unique() if r])
 
 with fc1:
     computer_filter = st.selectbox("Filter by Computer", options=computers, index=0)
 with fc2:
     room_filter = st.selectbox("Filter by Room", options=rooms, index=0)
 with fc3:
-    feature_filter = st.selectbox("Filter by Feature Type (list view filter)", options=["All", "spectrum", "mfcc"], index=0)
+    name_pattern = st.text_input(
+        "Scenario pattern (glob)",
+        value="",
+        placeholder="e.g., 0.*  or  *Small  or  *Scenario0.*",
+        help="Matches scenario number, folder name (key), or description. "
+             "Supports *, ? and comma-separated patterns."
+    )
 
-df_view = filter_df(st.session_state["df_all"], computer_filter, room_filter, feature_filter)
+# Build filtered view
+df_view = filter_df(df_all, computer_filter, room_filter, name_pattern)
+
+# Ensure 'select' exists and is boolean
+df_view = df_view.copy()
 if "select" not in df_view.columns:
     df_view.insert(0, "select", False)
+else:
+    df_view["select"] = df_view["select"].fillna(False).astype(bool)
 
+# Render table
 column_config = {
     "select": st.column_config.CheckboxColumn("Select", help="Tick to include in classification"),
     "scenario_number": st.column_config.TextColumn("Scenario #"),
@@ -389,145 +544,148 @@ edited = st.data_editor(
     use_container_width=True, hide_index=True,
     column_config=column_config,
     disabled=["scenario_number","description","computer","room","samples","spectrum","mfcc","key"],
-    num_rows="fixed"
+    num_rows="fixed",
 )
+
 selected_keys = selected_keys_from_table(edited)
 st.caption(f"Selected: {len(selected_keys)} scenario(s)")
 st.divider()
 
+
+
 # ---------------------------- Feature Extraction ----------------------------
 st.header("Feature Extraction")
+with st.expander("Open feature extraction panel", expanded=False):
+    ec1, ec2, ec3 = st.columns([1.2, 1, 1])
+    with ec1:
+        wav_subfolder = st.text_input("WAV subfolder", value="impulse_responses")
+    with ec2:
+        recording_type = st.selectbox("Recording type", options=["any", "average", "raw"], index=0)
+    with ec3:
+        max_freq = st.number_input("Max spectrum freq (Hz)", min_value=0, value=0, step=1000,
+                                   help="0 = no limit")
 
-ec1, ec2, ec3 = st.columns([1.2, 1, 1])
-with ec1:
-    wav_subfolder = st.text_input("WAV subfolder", value="impulse_responses")
-with ec2:
-    recording_type = st.selectbox("Recording type", options=["any", "average", "raw"], index=0)
-with ec3:
-    max_freq = st.number_input("Max spectrum freq (Hz)", min_value=0, value=0, step=1000,
-                               help="0 = no limit")
+    fc1, fc2, fc3 = st.columns([1.2, 1, 1])
+    with fc1:
+        mfcc_filename = st.text_input("MFCC filename", value="features.csv")
+    with fc2:
+        spectrum_filename = st.text_input("Spectrum filename", value="spectrum.csv")
+    with fc3:
+        exist_mode = st.radio(
+            "If features already exist",
+            options=["Skip scenario (both files present)", "Keep existing (write missing only)", "Overwrite both files"],
+            horizontal=False,
+        )
 
-fc1, fc2, fc3 = st.columns([1.2, 1, 1])
-with fc1:
-    mfcc_filename = st.text_input("MFCC filename", value="features.csv")
-with fc2:
-    spectrum_filename = st.text_input("Spectrum filename", value="spectrum.csv")
-with fc3:
-    exist_mode = st.radio(
-        "If features already exist",
-        options=["Skip scenario (both files present)", "Keep existing (write missing only)", "Overwrite both files"],
-        horizontal=False,
-    )
+    def _update_state_after_extraction(keys: list[str]):
+        """Update in-memory scenarios/df_all so UI and classification reflect new files immediately."""
+        scenarios_local = st.session_state.get("scenarios", {})
+        df_all_local = st.session_state.get("df_all", pd.DataFrame()).copy()
 
-def _update_state_after_extraction(keys: list[str]):
-    """Update in-memory scenarios/df_all so UI and classification reflect new files immediately."""
-    scenarios_local = st.session_state.get("scenarios", {})
-    df_all_local = st.session_state.get("df_all", pd.DataFrame()).copy()
-
-    for k in keys:
-        s = scenarios_local.get(k)
-        if not s:
-            continue
-        folder = s.get("full_path") or str(Path(dataset_path) / k)
-
-        spec_path = Path(folder) / spectrum_filename
-        mfcc_path = Path(folder) / mfcc_filename
-
-        spec_exists = spec_path.exists()
-        mfcc_exists = mfcc_path.exists()
-
-        # update features_available
-        s.setdefault("features_available", {})
-        s["features_available"]["spectrum"] = bool(spec_exists)
-        s["features_available"]["mfcc"] = bool(mfcc_exists)
-
-        # recompute sample count (prefer CSV rows; fallback keep old)
-        samples = s.get("sample_count", 0)
-        try:
-            if spec_exists:
-                samples = max(samples, len(pd.read_csv(spec_path)))
-            if mfcc_exists:
-                samples = max(samples, len(pd.read_csv(mfcc_path)))
-        except Exception:
-            pass
-        s["sample_count"] = int(samples)
-        scenarios_local[k] = s
-
-        # reflect in df_all
-        if not df_all_local.empty:
-            idx = df_all_local["key"] == k
-            if idx.any():
-                df_all_local.loc[idx, "spectrum"] = spec_exists
-                df_all_local.loc[idx, "mfcc"] = mfcc_exists
-                df_all_local.loc[idx, "samples"] = int(samples)
-
-    st.session_state["scenarios"] = scenarios_local
-    st.session_state["df_all"] = df_all_local
-
-def _run_extraction_for_keys(keys: list[str]):
-    if not keys:
-        st.warning("No scenarios selected.")
-        return
-
-    overwrite_flag = (exist_mode == "Overwrite both files")
-    skip_if_both_exist = (exist_mode == "Skip scenario (both files present)")
-
-    extractor = AudioFeatureExtractor(
-        sample_rate=16000,            # fallback if config missing
-        n_mfcc=13,
-        config_filename="recorderConfig.json",
-        max_spectrum_freq=(None if max_freq <= 0 else float(max_freq)),
-    )
-
-    rows = []
-    prog = st.progress(0)
-    for i, k in enumerate(keys, start=1):
-        s = scenarios[k]
-        folder = s.get("full_path") or str(Path(dataset_path) / k)
-
-        if skip_if_both_exist:
-            mfcc_path = Path(folder) / mfcc_filename
-            spec_path = Path(folder) / spectrum_filename
-            if mfcc_path.exists() and spec_path.exists():
-                rows.append({"scenario": k, "status": "skipped (both files present)"})
-                prog.progress(int(i / len(keys) * 100))
+        for k in keys:
+            s = scenarios_local.get(k)
+            if not s:
                 continue
+            folder = s.get("full_path") or str(Path(dataset_path) / k)
 
-        try:
-            ok = extractor.process_scenario_folder(
-                scenario_folder=folder,
-                wav_subfolder=wav_subfolder,
-                recording_type=recording_type,
-                mfcc_filename=mfcc_filename,
-                spectrum_filename=spectrum_filename,
-                dataset_path_for_config=dataset_path,
-                overwrite_existing_files=overwrite_flag
-            )
-            rows.append({"scenario": k, "status": "ok" if ok else "failed"})
-        except Exception as e:
-            rows.append({"scenario": k, "status": f"error: {e}"})
+            spec_path = Path(folder) / spectrum_filename
+            mfcc_path = Path(folder) / mfcc_filename
 
-        prog.progress(int(i / len(keys) * 100))
+            spec_exists = spec_path.exists()
+            mfcc_exists = mfcc_path.exists()
 
-    st.success("Feature extraction finished.")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            # update features_available
+            s.setdefault("features_available", {})
+            s["features_available"]["spectrum"] = bool(spec_exists)
+            s["features_available"]["mfcc"] = bool(mfcc_exists)
 
-    # 🔄 Immediately refresh in-memory state (no manual button) and re-run the app
-    _update_state_after_extraction(keys)
-    analyze_dataset_cached.clear()       # drop cached 'old' analysis
-    st.session_state["analyzed"] = False # force re-analysis path
-    st.rerun()
+            # recompute sample count (prefer CSV rows; fallback keep old)
+            samples = s.get("sample_count", 0)
+            try:
+                if spec_exists:
+                    samples = max(samples, len(pd.read_csv(spec_path)))
+                if mfcc_exists:
+                    samples = max(samples, len(pd.read_csv(mfcc_path)))
+            except Exception:
+                pass
+            s["sample_count"] = int(samples)
+            scenarios_local[k] = s
 
-c1, c2 = st.columns([1, 1])
-with c1:
-    run_sel = st.button("Extract for SELECTED scenarios", disabled=(len(selected_keys) == 0))
-with c2:
-    run_all = st.button("Extract for ALL scenarios in dataset")
+            # reflect in df_all
+            if not df_all_local.empty:
+                idx = df_all_local["key"] == k
+                if idx.any():
+                    df_all_local.loc[idx, "spectrum"] = spec_exists
+                    df_all_local.loc[idx, "mfcc"] = mfcc_exists
+                    df_all_local.loc[idx, "samples"] = int(samples)
 
-if run_sel:
-    _run_extraction_for_keys(selected_keys)
-if run_all:
-    _run_extraction_for_keys(list(scenarios.keys()))
+        st.session_state["scenarios"] = scenarios_local
+        st.session_state["df_all"] = df_all_local
+
+    def _run_extraction_for_keys(keys: list[str]):
+        if not keys:
+            st.warning("No scenarios selected.")
+            return
+
+        overwrite_flag = (exist_mode == "Overwrite both files")
+        skip_if_both_exist = (exist_mode == "Skip scenario (both files present)")
+
+        extractor = AudioFeatureExtractor(
+            sample_rate=16000,            # fallback if config missing
+            n_mfcc=13,
+            config_filename="recorderConfig.json",
+            max_spectrum_freq=(None if max_freq <= 0 else float(max_freq)),
+        )
+
+        rows = []
+        prog = st.progress(0)
+        for i, k in enumerate(keys, start=1):
+            s = scenarios[k]
+            folder = s.get("full_path") or str(Path(dataset_path) / k)
+
+            if skip_if_both_exist:
+                mfcc_path = Path(folder) / mfcc_filename
+                spec_path = Path(folder) / spectrum_filename
+                if mfcc_path.exists() and spec_path.exists():
+                    rows.append({"scenario": k, "status": "skipped (both files present)"})
+                    prog.progress(int(i / len(keys) * 100))
+                    continue
+
+            try:
+                ok = extractor.process_scenario_folder(
+                    scenario_folder=folder,
+                    wav_subfolder=wav_subfolder,
+                    recording_type=recording_type,
+                    mfcc_filename=mfcc_filename,
+                    spectrum_filename=spectrum_filename,
+                    dataset_path_for_config=dataset_path,
+                    overwrite_existing_files=overwrite_flag
+                )
+                rows.append({"scenario": k, "status": "ok" if ok else "failed"})
+            except Exception as e:
+                rows.append({"scenario": k, "status": f"error: {e}"})
+
+            prog.progress(int(i / len(keys) * 100))
+
+        st.success("Feature extraction finished.")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+        # 🔄 Immediately refresh in-memory state (no manual button) and re-run the app
+        _update_state_after_extraction(keys)
+        analyze_dataset_cached.clear()       # drop cached 'old' analysis
+        st.session_state["analyzed"] = False # force re-analysis path
+        st.rerun()
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        run_sel = st.button("Extract for SELECTED scenarios", disabled=(len(selected_keys) == 0))
+    with c2:
+        run_all = st.button("Extract for ALL scenarios in dataset")
+
+    if run_sel:
+        _run_extraction_for_keys(selected_keys)
+    if run_all:
+        _run_extraction_for_keys(list(scenarios.keys()))
 
 st.divider()
 
@@ -632,31 +790,142 @@ with st.expander("Open data collection panel", expanded=False):
             st.session_state["analyzed"] = False
             st.rerun()
 
+# ---------------------------- Series Collection (Multi-scenario) ----------------------------
+st.header("Series Collection")
+
+with st.expander("Collect multiple scenarios in a series", expanded=False):
+    sc1, sc2 = st.columns([1, 1])
+    with sc1:
+        series_input = st.text_input(
+            "Scenario numbers (comma/range syntax)",
+            value="0.1,0.2,1-3",
+            help="Comma-separated and/or numeric ranges. Examples: 0.1,0.2,1-3,7"
+        )
+        pre_delay = st.number_input("Delay BEFORE first scenario (sec)", min_value=0.0, value=60.0, step=5.0)
+        inter_delay = st.number_input("Delay BETWEEN scenarios (sec)", min_value=0.0, value=60.0, step=5.0)
+        interactive_devices = st.checkbox("Interactive device selection", value=False)
+    with sc2:
+        config_path = st.text_input("Recorder config file", value="recorderConfig.json")
+        num_meas = st.number_input("Measurements per scenario", min_value=1, value=30, step=1)
+        meas_interval = st.number_input("Interval between measurements (sec)", min_value=0.1, value=2.0, step=0.1)
+        desc_tmpl = st.text_input("Description template (use {n})", value="Room response measurement scenario {n}")
+
+    # Load defaults for computer/room from config (for convenience)
+    def _load_defaults(cfg_path: str):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                js = json.load(f)
+            return js.get("computer", "unknownComp"), js.get("room", "unknownRoom")
+        except Exception:
+            return "unknownComp", "unknownRoom"
+
+    d1, d2, d3 = st.columns([1, 1, 1])
+    with d1:
+        default_comp, default_room = _load_defaults(config_path)
+        base_computer = st.text_input("Computer name", value=default_comp)
+    with d2:
+        base_room = st.text_input("Room name", value=default_room)
+    with d3:
+        beep_on = st.checkbox("Beep cues", value=True)
+        beep_freq = st.number_input("Beep freq (Hz)", min_value=100, max_value=4000, value=880, step=10)
+        beep_vol = st.slider("Beep volume", 0.0, 1.0, 0.2, 0.05)
+
+    # Parser mirror (keep in GUI to validate before kicking off work)
+    def _parse_series_expr(expr: str) -> list[str]:
+        out = []
+        if not expr:
+            return out
+        for token in [t.strip() for t in expr.split(',') if t.strip()]:
+            if '-' in token:
+                a, b = token.split('-', 1)
+                if a.replace('.', '', 1).isdigit() and b.replace('.', '', 1).isdigit() and ('.' not in a and '.' not in b):
+                    ai, bi = int(a), int(b)
+                    step = 1 if bi >= ai else -1
+                    out.extend([str(i) for i in range(ai, bi + step, step)])
+                else:
+                    out.append(token)
+            else:
+                out.append(token)
+        seen = set()
+        uniq = []
+        for v in out:
+            if v not in seen:
+                seen.add(v)
+                uniq.append(v)
+        return uniq
+
+    start_series = st.button("Start SERIES collection", type="primary")
+    if start_series:
+        numbers = _parse_series_expr(series_input)
+        if not numbers:
+            st.error("Please provide at least one valid scenario number.")
+        else:
+            st.info(f"Planned scenarios: {numbers}")
+            with st.spinner("Collecting series..."):
+                # Run the series (pre-delay before first + inter-delay between)
+                try:
+                    collect_scenarios_series(
+                        scenario_numbers=numbers,
+                        base_output_dir=dataset_path,   # your current dataset directory
+                        config_file=config_path,
+                        base_computer=base_computer,
+                        base_room=base_room,
+                        description_template=desc_tmpl,
+                        num_measurements=int(num_meas),
+                        measurement_interval=float(meas_interval),
+                        interactive_devices=interactive_devices,
+                        pre_delay=float(pre_delay),
+                        inter_delay=float(inter_delay),
+                        enable_beeps=bool(beep_on),
+                        beep_volume=float(beep_vol),
+                        beep_freq=int(beep_freq),
+                        beep_dur_ms=200,
+                    )
+                except Exception as e:
+                    st.error(f"Series collection failed: {e}")
+                else:
+                    st.success("Series collection finished.")
+
+            # Refresh dataset so new scenarios/samples show up immediately
+            analyze_dataset_cached.clear()
+            st.session_state["analyzed"] = False
+            st.rerun()
+
 # ---------------------------- Classification ----------------------------
+
 st.header("Classification")
 
 feature_type = st.selectbox("Feature type for classification", options=["spectrum", "mfcc"], index=0)
-mode = st.radio("Run mode", options=["Single pair (exactly 2 selected)", "All pairs (across all selected)"], horizontal=True)
+mode = st.radio(
+    "Run mode",
+    options=["Single pair (exactly 2 selected)", "All pairs (across all selected)", "Group vs Group"],
+    horizontal=True
+)
 
-pc1, pc2, pc3 = st.columns([1, 1, 1])
+# Model & CV params
+pc1, pc2, pc3, pc4 = st.columns([1, 1, 1, 1])
 with pc1:
     model_type = st.selectbox("Model", options=["svm", "logistic"], index=0)
 with pc2:
     test_size = st.slider("Test size (holdout)", 0.05, 0.5, 0.3, step=0.05)
 with pc3:
     cv_folds = st.slider("CV folds", 2, 10, 5, step=1)
+with pc4:
+    balance_groups = st.checkbox("Balance groups (undersample to smallest)", value=False,
+                                 help="For Group vs Group mode: randomly undersample the larger class.")
 
+# ---------- Shared: guard for missing features among currently selected ----------
 missing = missing_feature_scenarios(selected_keys, scenarios, feature_type)
-if missing:
+if mode != "Group vs Group" and missing:
     st.error(
         "The following selected scenarios do not have the required features "
         f"for **{feature_type}**:\n\n- " + "\n- ".join(missing) +
-        "\n\nExtract features, change selection, or choose a different feature type."
+        "\n\nPlease adjust selection, choose a different feature type, or extract features."
     )
 
-# Single pair
+# ---------- Single pair ----------
 if mode.startswith("Single"):
-    can_run = len(selected_keys) == 2 and not missing
+    can_run = len(selected_keys) == 2 and not missing_feature_scenarios(selected_keys, st.session_state["scenarios"], feature_type)
     if st.button("Run classification for selected pair", disabled=not can_run):
         k1, k2 = selected_keys
         s1, s2 = scenarios[k1], scenarios[k2]
@@ -689,9 +958,9 @@ if mode.startswith("Single"):
             "report_text": report_text,
         }
 
-# All pairs
-else:
-    can_run_all = len(selected_keys) >= 2 and not missing
+# ---------- All pairs ----------
+elif mode.startswith("All"):
+    can_run_all = len(selected_keys) >= 2 and not missing_feature_scenarios(selected_keys, st.session_state["scenarios"], feature_type)
     if st.button("Run classification for ALL selected pairs", disabled=not can_run_all):
         pairs = list(itertools.combinations(selected_keys, 2))
         prog = st.progress(0)
@@ -703,6 +972,7 @@ else:
             lbl2 = default_label_for_scenario(s2, k2)
             lbl1, lbl2 = ensure_distinct(lbl1, lbl2, s1, s2, k1, k2)
 
+            # Skip incompatible pairs (defensive)
             if not (s1.get("features_available", {}).get(feature_type, False) and
                     s2.get("features_available", {}).get(feature_type, False)):
                 run_results.append({"pair": (k1, k2), "labels": (lbl1, lbl2), "error": "missing features"})
@@ -732,6 +1002,130 @@ else:
             prog.progress(int(i / len(pairs) * 100))
 
         st.session_state["all_last"] = run_results
+
+# ---------- Group vs Group ----------
+else:
+    st.subheader("Assign scenarios to groups")
+
+    # Persistent assignment mapping across reruns
+    if "group_assign" not in st.session_state:
+        st.session_state["group_assign"] = {}
+    assign_map: dict[str, str] = st.session_state["group_assign"]
+
+    st.caption("Tip: narrow with the filters and glob pattern above, then bulk-assign the FILTERED rows.")
+
+    # Bulk assign for the currently FILTERED view
+    ba1, ba2, ba3 = st.columns([1, 1, 1])
+    if ba1.button("Assign FILTERED to Group A"):
+        for k in df_view["key"].tolist():
+            assign_map[k] = "A"
+    if ba2.button("Assign FILTERED to Group B"):
+        for k in df_view["key"].tolist():
+            assign_map[k] = "B"
+    if ba3.button("Clear groups for FILTERED"):
+        for k in df_view["key"].tolist():
+            assign_map.pop(k, None)
+
+    st.session_state["group_assign"] = assign_map  # persist
+
+    # Build table for the current FILTERED view, seeded from the mapping
+    df_assign = df_view.copy()
+    if "group" not in df_assign.columns:
+        df_assign.insert(1, "group", df_assign["key"].map(assign_map).fillna("-"))
+
+    column_config_group = {
+        "group": st.column_config.SelectboxColumn(
+            "Group", options=["-", "A", "B"], help="Assign each scenario to a group"
+        ),
+        "scenario_number": st.column_config.TextColumn("Scenario #"),
+        "description": st.column_config.TextColumn("Description"),
+        "computer": st.column_config.TextColumn("Computer"),
+        "room": st.column_config.TextColumn("Room"),
+        "samples": st.column_config.NumberColumn("Samples"),
+        "spectrum": st.column_config.CheckboxColumn("Spectrum"),
+        "mfcc": st.column_config.CheckboxColumn("MFCC"),
+        "key": st.column_config.TextColumn("key", disabled=True, width="small"),
+    }
+
+    edited_assign = st.data_editor(
+        df_assign[["group","scenario_number","description","computer","room","samples","spectrum","mfcc","key"]],
+        use_container_width=True, hide_index=True,
+        column_config=column_config_group,
+        disabled=["scenario_number","description","computer","room","samples","spectrum","mfcc","key"],
+        num_rows="fixed"
+    )
+
+    # Update mapping from inline edits in the grid
+    for _, row in edited_assign.iterrows():
+        k = row["key"]
+        g = row["group"]
+        if g in ("A", "B"):
+            assign_map[k] = g
+        else:
+            assign_map.pop(k, None)
+
+    st.session_state["group_assign"] = assign_map  # persist edits
+
+    # Final assigned keys from the persistent mapping (across any filters)
+    groupA_keys = [k for k, g in assign_map.items() if g == "A"]
+    groupB_keys = [k for k, g in assign_map.items() if g == "B"]
+
+    st.caption(f"Assigned totals — Group A: {len(groupA_keys)} | Group B: {len(groupB_keys)}")
+
+    # Custom labels for groups
+    gc1, gc2 = st.columns([1, 1])
+    with gc1:
+        groupA_label = st.text_input("Label for Group A", value="Group A")
+    with gc2:
+        groupB_label = st.text_input("Label for Group B", value="Group B")
+
+    # Check missing features among all assigned
+    missing_groups = missing_feature_scenarios(groupA_keys + groupB_keys, scenarios, feature_type)
+    if missing_groups:
+        st.error(
+            "Some assigned scenarios do not have the required features "
+            f"for **{feature_type}**:\n\n- " + "\n- ".join(missing_groups) +
+            "\n\nExtract features or adjust assignments."
+        )
+
+    # Run
+    can_run_groups = (len(groupA_keys) > 0 and len(groupB_keys) > 0 and not missing_groups)
+    if st.button("Run classification for GROUPS", type="primary", disabled=not can_run_groups):
+        # Build dataset from many folders
+        try:
+            X, y, feat_names = prepare_group_dataset(
+                groupA_keys, groupB_keys, scenarios, dataset_path, feature_type, balance=balance_groups
+            )
+        except Exception as e:
+            st.error(f"Failed to build dataset: {e}")
+            st.stop()
+
+        # Train using ScenarioClassifier's pipeline
+        clf = ScenarioClassifier(model_type=model_type, feature_type=feature_type)
+        clf.feature_names = feat_names  # ensure feature names for importance plotting
+
+        with st.spinner("Training & evaluating (group classifier)..."):
+            results = clf.train_and_evaluate(X, y, test_size=test_size, cv_folds=cv_folds)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                clf.print_results(results)
+            report_text = buf.getvalue()
+
+        # Save for visualization block
+        st.session_state["group_last"] = {
+            "groups": (groupA_keys, groupB_keys),
+            "labels": (groupA_label, groupB_label),
+            "clf": clf,
+            "results": results,
+            "feature_names": feat_names,
+            "feature_type": feature_type
+        }
+
+        st.success(
+            f"Group classification complete: **{groupA_label}** (n={np.sum(y==0)}) "
+            f"vs **{groupB_label}** (n={np.sum(y==1)})"
+        )
+
 
 # ---------------------------- Visualizations ----------------------------
 # Single pair block
@@ -821,6 +1215,70 @@ if st.session_state.get("all_last"):
                 st.code(r.get("report_text",""), language="text")
 
 st.divider()
+
+# ---------------------------- Group Visualizations ----------------------------
+if st.session_state.get("group_last"):
+    block = st.session_state["group_last"]
+    (A_keys, B_keys) = block["groups"]
+    (lblA, lblB) = block["labels"]
+    clf = block["clf"]; results = block["results"]
+    feat_type = block.get("feature_type", feature_type)
+
+    # Determine a representative bin size for labels (spectrum)
+    if feat_type == "spectrum":
+        bh = group_bin_hz(A_keys + B_keys, scenarios, dataset_path, warn=True)
+    else:
+        bh = 0.0
+
+    # Headline
+    st.subheader(f"Group Results: {lblA} vs {lblB}")
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Train Acc", f"{results['train_accuracy']:.3f}")
+    mc2.metric("Test Acc", f"{results['test_accuracy']:.3f}")
+    mc3.metric("CV Mean ± Std", f"{results['cv_mean']:.3f} ± {results['cv_std']:.3f}")
+
+    # Charts on demand
+    with st.expander("Show Confusion Matrix", expanded=False):
+        st.pyplot(fig_confusion_matrix(results["confusion_matrix"], list(clf.label_encoder.classes_)))
+
+    with st.expander("Show Cross-Validation Scores", expanded=False):
+        st.pyplot(fig_cv_scores(results["cv_scores"], results["cv_mean"]))
+
+    with st.expander("Show Feature Importance", expanded=False):
+        if feat_type == "spectrum":
+            st.caption(f"Bin resolution (representative): ~{bh:.3f} Hz")
+        imp_df = compute_feature_importance(clf, results)
+        top_k = st.slider("Top K features", 5, 50, 30, step=5, key=f"group_topk_{hash(lblA+lblB)%9999}")
+        st.pyplot(fig_feature_importance(imp_df, feature_type=feat_type, bin_hz=bh, top_k=top_k))
+        st.download_button(
+            "Download feature importance (CSV)",
+            data=imp_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"feature_importance_{lblA}_vs_{lblB}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
+
+    # List which scenarios were included
+    with st.expander("Scenarios included"):
+        def _fmt(keys):
+            rows = []
+            for k in keys:
+                s = scenarios.get(k, {})
+                rows.append({
+                    "key": k,
+                    "scenario_number": s.get("scenario_number"),
+                    "description": s.get("description"),
+                    "computer": s.get("computer_name"),
+                    "room": s.get("room_name"),
+                    "samples": s.get("sample_count"),
+                    "spectrum": s.get("features_available", {}).get("spectrum", False),
+                    "mfcc": s.get("features_available", {}).get("mfcc", False),
+                })
+            return pd.DataFrame(rows)
+        st.write(f"**{lblA}**")
+        st.dataframe(_fmt(A_keys), use_container_width=True)
+        st.write(f"**{lblB}**")
+        st.dataframe(_fmt(B_keys), use_container_width=True)
+
 
 # ---------------------------- Export selection ----------------------------
 st.subheader("Export Selection")
