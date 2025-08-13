@@ -99,7 +99,7 @@ Buttons act as **expandable panels** (only one expanded at a time):
 **Series options**
 - **Pre-delay before the first** scenario (default 60s).
 - **Inter-scenario delay** (default 60s).
-- **Beep cues via SDL**:
+- **Beep cues**:
   - One beep upon completion of **each scenario**.
   - Two beeps at the **end of the series**.
 
@@ -219,7 +219,7 @@ Buttons act as **expandable panels** (only one expanded at a time):
 
 **Files Browser**
 - Lists: raw recordings, impulse responses, room responses.
-- Per-file: **play** (SDL), **download**, (optional) **delete**.
+- Per-file: **play** (SDL), **visualize** (display waveform), (optional) **delete**.
 
 **Feature Viewer**
 - Load `spectrum.csv` / `features.csv`.
