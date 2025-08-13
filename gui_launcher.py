@@ -1126,6 +1126,148 @@ else:
             f"vs **{groupB_label}** (n={np.sum(y==1)})"
         )
 
+# ---------------------------- Model Save & Single-Sample Inference ----------------------------
+from FeatureExtractor import AudioFeatureExtractor
+import tempfile
+from datetime import datetime
+
+try:
+    import librosa  # for safe resampling on uploaded wavs
+except Exception:
+    librosa = None
+
+try:
+    from RoomResponseRecorder import RoomResponseRecorder
+except Exception:
+    RoomResponseRecorder = None
+
+
+def _get_active_classifier_from_session():
+    """
+    Finds the most-recent/most-relevant trained classifier stored in session.
+    Order of preference:
+      1) Last single-pair run
+      2) Best test_accuracy run among 'all pairs'
+      3) Last group-vs-group run
+    Returns (clf, labels) or (None, None)
+    """
+    # 1) Single pair
+    if st.session_state.get("single_last"):
+        blk = st.session_state["single_last"]
+        return blk.get("clf"), blk.get("labels")
+
+    # 2) All pairs -> pick best test acc if available
+    if st.session_state.get("all_last"):
+        runs = [r for r in st.session_state["all_last"] if "results" in r]
+        if runs:
+            best = max(runs, key=lambda r: r["results"].get("test_accuracy", 0.0))
+            return best.get("clf"), best.get("labels")
+
+    # 3) Group vs Group
+    if st.session_state.get("group_last"):
+        blk = st.session_state["group_last"]
+        return blk.get("clf"), blk.get("labels")
+
+    return None, None
+
+
+st.header("Model Save & Inference")
+
+active_clf, active_labels = _get_active_classifier_from_session()
+if active_clf is None:
+    st.info("Train a model first (single pair, all pairs, or group vs group).")
+else:
+    # ------- Download trained model -------
+    meta = {
+        "created_at": datetime.now().isoformat(),
+        "feature_type": active_clf.feature_type,
+        "model_type": active_clf.model_type,
+        "labels": list(active_clf.label_encoder.classes_) if active_clf.label_encoder else list(active_labels or []),
+        "feature_names_count": len(active_clf.feature_names or []),
+    }
+    try:
+        model_bytes = active_clf.dumps_model_bytes(extra_meta=meta)
+        st.download_button(
+            label="Download trained model (.joblib)",
+            data=model_bytes,
+            file_name=f"scenario_classifier_{active_clf.feature_type}_{active_clf.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.joblib",
+            mime="application/octet-stream",
+            help="Save this model to use later for inference."
+        )
+    except Exception as e:
+        st.error(f"Failed to serialize model: {e}")
+
+    st.divider()
+
+    # ------- Single-sample inference -------
+    st.subheader("Single-Sample Inference")
+
+    # Ensure an extractor consistent with training features
+    extractor = AudioFeatureExtractor(
+        sample_rate=16000,            # fallback; will be overridden by config if available
+        n_mfcc=13,
+        config_filename="recorderConfig.json"
+    )
+
+    inf_tab1, inf_tab2 = st.tabs(["Upload WAV", "Record One Sample"])
+
+    # --- Upload WAV path ---
+    with inf_tab1:
+        up = st.file_uploader("Upload a WAV file to classify", type=["wav"])
+        if up is not None:
+            if librosa is None:
+                st.error("librosa is required for WAV resampling. Please install it (pip install librosa).")
+            else:
+                try:
+                    # write to a tmp file so librosa can read it robustly
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+                        tmp.write(up.read())
+                        tmp.flush()
+                        # resample to extractor's SR so FeatureExtractor vector is aligned
+                        target_sr = getattr(extractor, "sample_rate", 16000)
+                        audio, sr = librosa.load(tmp.name, sr=target_sr, mono=True)
+                    pred = active_clf.predict_from_audio(audio, extractor, feature_names=active_clf.feature_names)
+                    st.success(f"Predicted: **{pred['label']}**")
+                    if pred.get("proba"):
+                        st.json({"probabilities": pred["proba"]})
+                except Exception as e:
+                    st.error(f"Inference failed: {e}")
+
+    # --- Record one sample path ---
+    with inf_tab2:
+        st.caption("Capture a single measurement with your SDL recorder and classify it.")
+        rec_col1, rec_col2 = st.columns([1, 2])
+        with rec_col1:
+            interact = st.checkbox("Interactive device selection", value=False,
+                                   help="If on, the recorder may prompt/select devices interactively.")
+        with rec_col2:
+            st.write("")  # spacer
+        rec_btn = st.button("Record 1 sample now", type="primary", disabled=(RoomResponseRecorder is None))
+        if RoomResponseRecorder is None:
+            st.info("RoomResponseRecorder not available to import. Ensure your Python path includes it.")
+        elif rec_btn:
+            try:
+                rr = RoomResponseRecorder("recorderConfig.json")
+                # Save to temp files but we only need the returned audio for inference
+                with tempfile.TemporaryDirectory() as td:
+                    raw_path = os.path.join(td, "raw.wav")
+                    imp_path = os.path.join(td, "impulse.wav")
+                    audio = rr.take_record(
+                        output_file=raw_path,
+                        impulse_file=imp_path,
+                        method=2,
+                        interactive=bool(interact)
+                    )
+                if audio is None or len(audio) == 0:
+                    st.error("Recording returned no audio.")
+                else:
+                    pred = active_clf.predict_from_audio(np.asarray(audio, dtype=float), extractor,
+                                                         feature_names=active_clf.feature_names)
+                    st.success(f"Predicted: **{pred['label']}**")
+                    if pred.get("proba"):
+                        st.json({"probabilities": pred["proba"]})
+            except Exception as e:
+                st.error(f"Recording/inference failed: {e}")
 
 # ---------------------------- Visualizations ----------------------------
 # Single pair block
@@ -1159,10 +1301,11 @@ if st.session_state.get("single_last"):
     with st.expander("Text report", expanded=False):
         st.code(report_text or "(no text output)", language="text")
 
-# All pairs block
+# All pairs visual block
 if st.session_state.get("all_last"):
     runs = st.session_state["all_last"]
 
+    # Overview table (on demand)
     overview_rows = []
     for r in runs:
         (k1, k2) = r["pair"]
@@ -1182,6 +1325,99 @@ if st.session_state.get("all_last"):
     with st.expander("All Pairs Overview", expanded=False):
         st.dataframe(pd.DataFrame(overview_rows), use_container_width=True)
 
+    # ---------------- Accuracy Matrix (on demand) ----------------
+    with st.expander("Show Accuracy Matrix (All Pairs)", expanded=False):
+        # Collect unique scenario keys
+        all_keys = sorted({k for r in runs for k in r["pair"]})
+        if not all_keys:
+            st.info("No successful pair results to visualize.")
+        else:
+            # Controls
+            metric_opt = st.selectbox(
+                "Metric",
+                options=["test_accuracy", "train_accuracy", "cv_mean"],
+                index=0,
+                help="Which metric to plot across scenario pairs"
+            )
+            use_pretty = st.checkbox("Use descriptive labels", value=True,
+                                     help="Show scenario description / S# / room / computer if available")
+            annotate_vals = st.checkbox("Annotate values", value=False)
+
+            # Build label mapping
+            label_map = {}
+            for k in all_keys:
+                s = scenarios.get(k, {})
+                lbl = default_label_for_scenario(s, k) if use_pretty else k
+                label_map[k] = lbl
+
+            # Disambiguate duplicate labels (append key)
+            inv = {}
+            for k, lbl in label_map.items():
+                inv.setdefault(lbl, []).append(k)
+            for lbl, ks in inv.items():
+                if len(ks) > 1:
+                    for dup_k in ks:
+                        label_map[dup_k] = f"{label_map[dup_k]} ({dup_k})"
+
+            n = len(all_keys)
+            M = np.full((n, n), np.nan, dtype=float)
+
+            # Fill matrix from runs
+            idx = {k: i for i, k in enumerate(all_keys)}
+            for r in runs:
+                if "results" not in r:
+                    continue
+                (k1, k2) = r["pair"]
+                if k1 in idx and k2 in idx:
+                    v = r["results"].get(metric_opt, np.nan)
+                    i, j = idx[k1], idx[k2]
+                    M[i, j] = v
+                    M[j, i] = v
+
+            # Diagonal: set to 1.0 for accuracies, np.nan for cv_mean also OK,
+            # but 1.0 reads better visually
+            np.fill_diagonal(M, 1.0 if metric_opt in ("test_accuracy", "train_accuracy") else 1.0)
+
+            # Build DataFrame for CSV download and plotting
+            row_labels = [label_map[k] for k in all_keys]
+            col_labels = [label_map[k] for k in all_keys]
+            mat_df = pd.DataFrame(M, index=row_labels, columns=col_labels)
+
+            # Download CSV
+            st.download_button(
+                "Download matrix as CSV",
+                data=mat_df.to_csv(index=True).encode("utf-8"),
+                file_name=f"accuracy_matrix_{metric_opt}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+            )
+
+            # Plot heatmap
+            fig_size = max(5.0, min(0.35 * n + 1.5, 18.0))
+            fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+            # Mask NaNs so they show as blank
+            mask = np.isnan(M)
+            # Clamp color scale to [0, 1]
+            sns.heatmap(
+                np.clip(M, 0, 1),
+                mask=mask,
+                cmap="viridis",
+                vmin=0.0, vmax=1.0,
+                annot=annotate_vals,
+                fmt=".2f" if annotate_vals else "",
+                xticklabels=col_labels,
+                yticklabels=row_labels,
+                cbar_kws={"label": metric_opt.replace("_", " ").title()},
+                ax=ax
+            )
+            ax.set_title(f"Pairwise {metric_opt.replace('_',' ').title()}")
+            ax.set_xlabel("Scenario")
+            ax.set_ylabel("Scenario")
+            plt.xticks(rotation=45, ha="right")
+            plt.yticks(rotation=0)
+            fig.tight_layout()
+            st.pyplot(fig)
+
+    # ---------------- Detailed blocks per pair ----------------
     for r in runs:
         (k1, k2) = r["pair"]
         lbls = r["labels"]
@@ -1191,15 +1427,19 @@ if st.session_state.get("all_last"):
                 continue
             clf = r["clf"]; results = r["results"]
 
+            # metrics row
             mc1, mc2, mc3 = st.columns(3)
             mc1.metric("Train Acc", f"{results['train_accuracy']:.3f}")
             mc2.metric("Test Acc", f"{results['test_accuracy']:.3f}")
             mc3.metric("CV Mean ± Std", f"{results['cv_mean']:.3f} ± {results['cv_std']:.3f}")
 
+            # Charts on demand
             with st.expander("Show Confusion Matrix", expanded=False):
                 st.pyplot(fig_confusion_matrix(results["confusion_matrix"], list(clf.label_encoder.classes_)))
+
             with st.expander("Show Cross-Validation Scores", expanded=False):
                 st.pyplot(fig_cv_scores(results["cv_scores"], results["cv_mean"]))
+
             with st.expander("Show Feature Importance", expanded=False):
                 bh = pair_bin_hz(k1, k2, scenarios, dataset_path, warn=False)
                 st.caption(f"Bin resolution: ~{bh:.3f} Hz")
@@ -1211,8 +1451,10 @@ if st.session_state.get("all_last"):
                     file_name=f"feature_importance_{k1}_vs_{k2}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
                 )
+
             with st.expander("Text report", expanded=False):
                 st.code(r.get("report_text",""), language="text")
+
 
 st.divider()
 

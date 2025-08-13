@@ -1,14 +1,14 @@
 {
-  "detection_timestamp": "2025-08-10T08:41:14.388557",
+  "detection_timestamp": "2025-08-12T14:07:44.163648",
   "platform": "Windows",
   "architecture": "64bit",
   "python": {
     "version": "3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]",
-    "executable": "D:\\User\\PycharmProjects\\RoomResponse\\.venv\\Scripts\\python.exe",
+    "executable": "D:\\User\\RoomResponse\\.venv\\Scripts\\python.exe",
     "platform": "Windows-10-10.0.19045-SP0",
     "architecture": "64bit",
     "virtual_env": true,
-    "venv_path": "D:\\User\\PycharmProjects\\RoomResponse\\.venv"
+    "venv_path": "D:\\User\\RoomResponse\\.venv"
   },
   "compiler": {
     "compiler": "msvc",
