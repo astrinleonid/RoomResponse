@@ -31,6 +31,13 @@ try:
 except ImportError:
     ClassificationPanel = None
 
+try:
+    from gui_visualize_panel import VisualizationPanel
+except ImportError as e:
+    print(f"Failed to import VisualizationPanel", e)
+    VisualizationPanel = None
+
+
 # ----------------------------
 # Session Keys and Constants
 # ----------------------------
@@ -57,6 +64,7 @@ class RoomResponseGUI:
         self.collection_panel = None
         self.processing_panel = None
         self.classification_panel = None
+        self.visualization_panel = None
         
         # Initialize components
         self._initialize_components()
@@ -74,6 +82,9 @@ class RoomResponseGUI:
         
         if ClassificationPanel is not None and self.scenario_manager is not None:
             self.classification_panel = ClassificationPanel(self.scenario_manager)
+
+        if VisualizationPanel is not None and self.scenario_manager is not None:
+            self.visualization_panel = VisualizationPanel(self.scenario_manager)
     
     def run(self):
         """Run the main GUI application."""
@@ -173,6 +184,8 @@ class RoomResponseGUI:
             self._render_process_panel()
         elif panel == "Classify":
             self._render_classify_panel()
+        elif panel == "Visualize":
+            self._render_visualize_panel()
         else:
             self._render_placeholder_panel(panel)
     
@@ -578,6 +591,14 @@ class RoomResponseGUI:
         else:
             st.error("❌ Classification panel not available. Please ensure gui_classify_panel.py is present.")
             st.info("The gui_classify_panel.py file should be in the same directory as this GUI application.")
+
+    def _render_visualize_panel(self):
+        """Render the visualization panel."""
+        if self.visualization_panel is not None:
+            self.visualization_panel.render()
+        else:
+            st.error("❌ Visualization panel not available. Please ensure gui_visualize_panel.py is present.")
+            st.info("The gui_visualize_panel.py file should be in the same directory as this GUI application.")
     
     def _render_placeholder_panel(self, name: str):
         """Render placeholder for unimplemented panels."""
