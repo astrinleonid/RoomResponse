@@ -54,17 +54,21 @@ class AudioFeatureExtractor:
         self.n_mfcc = int(n_mfcc)
         self.config_filename = config_filename
         self.max_spectrum_freq = max_spectrum_freq
+        self.num_freq_bins = None
 
         # If config file is absolute and exists, apply SR immediately
         if self.config_filename and os.path.isfile(self.config_filename):
             try:
                 with open(self.config_filename, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
+                print(f"Configuration loaded: {cfg}")
                 sr = int(cfg.get("sample_rate", self.sample_rate))
                 if sr > 0:
                     self.sample_rate = sr
+                base_freq = 1 / cfg["cycle_duration"]
+                self.num_freq_bins = int(self.max_spectrum_freq / base_freq)
             except Exception:
-                pass
+                raise RuntimeError("Invalid configuration file")
 
     # ---------------- Internals used by both batch and single-sample paths ----------------
 
@@ -297,7 +301,8 @@ class AudioFeatureExtractor:
             last_spec_len = max(last_spec_len, len(spec))
             spec_row = {"filename": filename}
             for i, v in enumerate(spec):
-                spec_row[f"freq_{i}"] = float(v)
+                if i < self.num_freq_bins:
+                    spec_row[f"freq_{i}"] = float(v)
             spec_rows.append(spec_row)
 
         if not mfcc_rows or not spec_rows:
@@ -322,14 +327,14 @@ class AudioFeatureExtractor:
         # Save Spectrum
         try:
             spec_df = pd.DataFrame(spec_rows)
-            spec_df = self._trim_spectrum_df(spec_df)
+            # spec_df = self._trim_spectrum_df(spec_df)
             spec_output_path = Path(scenario_folder) / spectrum_filename
             if (not overwrite_existing_files) and spec_output_path.exists():
                 print(f"  → Spectrum exists, keeping: {spectrum_filename}")
             else:
                 spec_df.to_csv(spec_output_path, index=False)
                 print(f"  → Saved {len(spec_df)} spectrum features to {spectrum_filename}")
-                print(f"  → Spectrum length: {last_spec_len} frequency bins")
+                print(f"  → Spectrum length: {min(last_spec_len, self.num_freq_bins)} frequency bins")
                 success_count += 1
         except Exception as e:
             print(f"  → Failed to save spectrum features: {e}")
