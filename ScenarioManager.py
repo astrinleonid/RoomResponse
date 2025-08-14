@@ -346,12 +346,22 @@ class ScenarioManager:
     
     @staticmethod
     def apply_filters(df: pd.DataFrame, text: str, computer: str, room: str) -> pd.DataFrame:
-        """Apply filters with regex support. Primary filter targets scenario number first."""
+        """Apply filters with regex support.
+        Primary filter (auto mode) targets scenario *number* first.
+        For number_str we accept glob-like input:
+        - '*' => '.*'
+        - '.' => literal dot
+        If the user provides an advanced regex (anchors, groups, classes, escapes),
+        we respect it as-is.
+        """
+        import re
         filt = df.copy()
         if filt.empty:
             return filt
 
-        # --- Primary filter (number-first with smart fallback) ---
+        def safe_series(s):
+            return s.fillna("").astype(str)
+
         if text:
             raw = text.strip()
             mode = "auto"
@@ -362,32 +372,55 @@ class ScenarioManager:
             else:
                 patt = raw
 
-            try:
-                pattern = re.compile(patt, re.IGNORECASE)
-            except re.error:
-                # Invalid regex -> treat as plain substring
-                pattern = None
-
-            def safe_series(s):
-                return s.fillna("").astype(str)
+            # Helper: compile number_str pattern with glob-like behavior unless it's clearly advanced regex
+            def _compile_num_pattern(p: str):
+                # If pattern contains clear regex constructs, treat as raw regex
+                if re.search(r'[\\\[\]\(\)\{\}\|\+\?\^\$]', p):
+                    try:
+                        return re.compile(p, re.IGNORECASE)
+                    except re.error:
+                        return None
+                # Glob-like: escape everything, then turn '*' into '.*'
+                rx = re.escape(p).replace(r'\*', '.*')
+                try:
+                    return re.compile(rx, re.IGNORECASE)
+                except re.error:
+                    return None
 
             if mode == "name":
-                mask = safe_series(filt["scenario"]).str.contains(pattern or re.escape(patt), regex=bool(pattern), case=False)
+                try:
+                    pattern = re.compile(patt, re.IGNORECASE)
+                    mask = safe_series(filt["scenario"]).str.contains(pattern, regex=True, case=False)
+                except re.error:
+                    mask = safe_series(filt["scenario"]).str.contains(re.escape(patt), regex=True, case=False)
                 filt = filt[mask]
+
             elif mode == "path":
-                mask = safe_series(filt["path"]).str.contains(pattern or re.escape(patt), regex=bool(pattern), case=False)
+                try:
+                    pattern = re.compile(patt, re.IGNORECASE)
+                    mask = safe_series(filt["path"]).str.contains(pattern, regex=True, case=False)
+                except re.error:
+                    mask = safe_series(filt["path"]).str.contains(re.escape(patt), regex=True, case=False)
                 filt = filt[mask]
+
             else:
-                # AUTO: try number_str with .match (start-anchored), then fallback to scenario/path contains
-                num_mask = safe_series(filt.get("number_str", "")).str.match(pattern or re.compile(re.escape(patt), re.IGNORECASE))
+                # AUTO: сначала пробуем number_str с «умным» шаблоном
+                num_pat = _compile_num_pattern(patt) or re.compile(re.escape(patt), re.IGNORECASE)
+                num_mask = safe_series(filt.get("number_str", "")).str.match(num_pat)
                 if num_mask.any():
                     filt = filt[num_mask]
                 else:
-                    name_mask = safe_series(filt["scenario"]).str.contains(pattern or re.escape(patt), regex=bool(pattern), case=False)
-                    path_mask = safe_series(filt["path"]).str.contains(pattern or re.escape(patt), regex=bool(pattern), case=False)
+                    # Фолбэк: обычный contains по scenario/path
+                    try:
+                        pattern = re.compile(patt, re.IGNORECASE)
+                        name_mask = safe_series(filt["scenario"]).str.contains(pattern, regex=True, case=False)
+                        path_mask = safe_series(filt["path"]).str.contains(pattern, regex=True, case=False)
+                    except re.error:
+                        name_mask = safe_series(filt["scenario"]).str.contains(re.escape(patt), regex=True, case=False)
+                        path_mask = safe_series(filt["path"]).str.contains(re.escape(patt), regex=True, case=False)
                     filt = filt[name_mask | path_mask]
 
-        # --- Computer filter (kept as simple contains) ---
+        # Вторичные фильтры (как было)
         if computer:
             c = computer.strip().lower()
             mask = (
@@ -396,7 +429,6 @@ class ScenarioManager:
             )
             filt = filt[filt.index.isin(df[mask].index)]
 
-        # --- Room filter (kept as simple contains) ---
         if room:
             r = room.strip().lower()
             mask = (
@@ -406,6 +438,7 @@ class ScenarioManager:
             filt = filt[filt.index.isin(df[mask].index)]
 
         return filt
+
 
     
     @staticmethod

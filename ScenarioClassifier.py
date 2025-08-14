@@ -1,38 +1,24 @@
 #!/usr/bin/env python3
 """
-ScenarioClassifier (clean version)
+ScenarioClassifier (Refactored & Complete)
 
-- No visualization code
-- Binary classification between two scenarios
-- Works with either 'spectrum.csv' or 'features.csv' (MFCC)
-- Provides model serialization (joblib) and single-sample audio inference
-- Keeps feature alignment consistent via provided FeatureExtractor methods
-
-Public API
-----------
-clf = ScenarioClassifier(model_type='svm', feature_type='spectrum')
-X, y, feature_names, label_names = clf.prepare_dataset(folder1, folder2, "Label1", "Label2")
-results = clf.train_and_evaluate(X, y, test_size=0.3, cv_folds=5)
-clf.print_results(results)
-
-# Serialize model (for download)
-bytes_blob = clf.dumps_model_bytes(extra_meta={...})
-
-# Inference from audio ndarray using AudioFeatureExtractor
-pred = clf.predict_from_audio(audio, extractor, feature_names=None)  # dict with label, proba
-
-# Inference from precomputed feature vector
-pred = clf.predict_from_features(X_row[np.newaxis, :])
+- High-level run_* APIs for modes: single pair, all pairs, group vs group
+- Single-source persistence: save_model, load_model, download_model
+- Backward-compatible aliases: dumps_model_bytes(), loads_model_bytes()
+- Self-contained metadata stored with the model (dataset root, scenarios, labels, params, timestamps, feature names)
+- GUI stays thin; classifier owns domain logic & compatibility
+- No plotting code; returns structured dicts
 """
-
 from __future__ import annotations
 
 import io
 import os
 import re
-import json
+import time
+import tempfile
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 import joblib
 import numpy as np
@@ -44,36 +30,25 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 
-
 # ----------------------------- helpers -----------------------------
 
 def _suffix_int(name: str) -> Optional[int]:
-    """Extract trailing integer or freq_* integer from a feature name."""
     m = re.search(r'(\d+)$', name) or re.search(r'freq[_\-]?(\d+)', name)
     return int(m.group(1)) if m else None
 
 
 def _feature_columns(df: pd.DataFrame, feature_type: str) -> List[str]:
-    """Return sorted feature columns for the given type."""
     if feature_type == "spectrum":
         cols = [c for c in df.columns if c.startswith("freq_")]
-        # sort by numeric suffix
-        cols = sorted(cols, key=lambda c: (_suffix_int(c) is None, _suffix_int(c) if _suffix_int(c) is not None else 10**9))
-        return cols
-    # mfcc
-    cols = [c for c in df.columns if c.startswith("mfcc_")]
+    else:
+        cols = [c for c in df.columns if c.startswith("mfcc_")]
     cols = sorted(cols, key=lambda c: (_suffix_int(c) is None, _suffix_int(c) if _suffix_int(c) is not None else 10**9))
     return cols
 
 
 def _read_feature_csv(scenario_folder: str, feature_type: str) -> pd.DataFrame:
-    """Read the expected CSV for the feature type from a scenario folder."""
     fp = Path(scenario_folder)
-    if feature_type == "spectrum":
-        csv_path = fp / "spectrum.csv"
-    else:
-        csv_path = fp / "features.csv"
-
+    csv_path = fp / ("spectrum.csv" if feature_type == "spectrum" else "features.csv")
     if not csv_path.is_file():
         raise FileNotFoundError(f"Expected feature file not found: {csv_path}")
     try:
@@ -82,159 +57,280 @@ def _read_feature_csv(scenario_folder: str, feature_type: str) -> pd.DataFrame:
         raise RuntimeError(f"Failed to read {csv_path}: {e}")
     return df
 
+# ----------------------------- result types -----------------------------
+
+@dataclass
+class Metrics:
+    train_accuracy: float
+    test_accuracy: float
+    cv_mean: float
+    cv_std: float
+    classification_report: str
+    confusion_matrix: Any  # np.ndarray
+
+@dataclass
+class ModelInfo:
+    model_type: str
+    feature_type: str
+    mode: str
+    dataset_root: Optional[str]
+    scenarios: List[str]
+    labels: List[str]
+    params: Dict[str, Any]
+    trained_at: float
+    feature_names: List[str]
+    metrics: Dict[str, Any]
 
 # ----------------------------- main class -----------------------------
 
 class ScenarioClassifier:
-    """
-    Clean classifier wrapper for two-scenario binary classification and inference.
-    """
-
-    def __init__(self, model_type: str = "svm", feature_type: str = "spectrum"):
-        """
-        model_type: 'svm' or 'logistic'
-        feature_type: 'spectrum' or 'mfcc'
-        """
+    def __init__(self, model_type: str = "svm", feature_type: str = "mfcc"):
         model_type = model_type.lower().strip()
         feature_type = feature_type.lower().strip()
         if model_type not in ("svm", "logistic"):
             raise ValueError("model_type must be 'svm' or 'logistic'")
         if feature_type not in ("spectrum", "mfcc"):
             raise ValueError("feature_type must be 'spectrum' or 'mfcc'")
-
         self.model_type = model_type
         self.feature_type = feature_type
-
-        # will be populated after training/preparation
         self.model = None
         self.scaler: Optional[StandardScaler] = None
         self.label_encoder: Optional[LabelEncoder] = None
         self.feature_names: Optional[List[str]] = None
+        self._last_info: Optional[ModelInfo] = None
 
-    # -------------------------- dataset prep --------------------------
-
-    def _load_and_align(
+    # -------------------------- high-level APIs --------------------------
+    def run_single_pair(
         self,
-        folder: str,
-        feature_type: str
-    ) -> Tuple[pd.DataFrame, List[str]]:
-        """
-        Load the feature CSV for a scenario and return (feature_df, feature_cols).
-        """
-        df = _read_feature_csv(folder, feature_type)
-        cols = _feature_columns(df, feature_type)
+        path_a: str,
+        path_b: str,
+        label_a: str,
+        label_b: str,
+        params: Dict[str, Any],
+        dataset_root: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        X, y, feats, label_names, used = self._prepare_pair(path_a, path_b, label_a, label_b)
+        result = self._train_eval_enhanced(X, y, params)
+        self._finalize_training(
+            mode="single_pair",
+            dataset_root=dataset_root,
+            scenarios=used,
+            labels=[label_a, label_b],
+            params=params,
+            metrics=result,
+        )
+        return {"metrics": result, "feature_names": feats, "label_names": label_names}
+
+    def run_group_vs_group(
+        self,
+        scenarios_a: List[Tuple[str, str]],
+        scenarios_b: List[Tuple[str, str]],
+        label_a: str,
+        label_b: str,
+        params: Dict[str, Any],
+        dataset_root: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        X, y, feats, label_names, used = self._prepare_groups(scenarios_a, scenarios_b, label_a, label_b, params)
+        result = self._train_eval_enhanced(X, y, params)
+        self._finalize_training(
+            mode="group_vs_group",
+            dataset_root=dataset_root,
+            scenarios=used,
+            labels=[label_a, label_b],
+            params=params,
+            metrics=result,
+        )
+        return {"metrics": result, "feature_names": feats, "label_names": label_names}
+
+    def run_all_pairs(
+        self,
+        scenarios: List[Tuple[str, str]],
+        params: Dict[str, Any],
+        dataset_root: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        paths = [p for p, _ in scenarios]
+        names = [n for _, n in scenarios]
+        n = len(paths)
+        total_pairs = n * (n - 1) // 2
+        acc_mat = np.zeros((n, n))
+        pair_results: Dict[str, Any] = {}
+        for i in range(n):
+            for j in range(i + 1, n):
+                X, y, _, _, _ = self._prepare_pair(
+                    paths[i], paths[j], f"Scenario_{i}", f"Scenario_{j}"
+                )
+                ms = params.get("max_samples_per_scenario")
+                if ms:
+                    X, y = self._limit_by_class(X, y, int(ms))
+                metrics = self._train_eval_basic(X, y, params)
+                acc = float(metrics["test_accuracy"])  # ensure plain float
+                acc_mat[i, j] = acc
+                acc_mat[j, i] = acc
+                key = f"{names[i]}_vs_{names[j]}"
+                pair_results[key] = {
+                    "accuracy": acc,
+                    "cv_mean": float(metrics["cv_mean"]),
+                    "cv_std": float(metrics["cv_std"]),
+                    "confusion_matrix": metrics["confusion_matrix"].tolist(),
+                    "scenarios": [names[i], names[j]],
+                }
+        # Do not overwrite the current trained model with grid results
+        self._last_info = ModelInfo(
+            model_type=self.model_type,
+            feature_type=self.feature_type,
+            mode="all_pairs",
+            dataset_root=dataset_root,
+            scenarios=names,
+            labels=names,
+            params=params,
+            trained_at=time.time(),
+            feature_names=[],
+            metrics={"total_pairs": int(total_pairs)},
+        )
+        return {
+            "accuracy_matrix": acc_mat,
+            "pair_results": pair_results,
+            "scenario_names": names,
+            "summary": {"total_pairs": int(total_pairs)},
+        }
+
+    # -------------------------- preparation --------------------------
+    def _load_and_align(self, folder: str) -> Tuple[pd.DataFrame, List[str]]:
+        df = _read_feature_csv(folder, self.feature_type)
+        cols = _feature_columns(df, self.feature_type)
         if not cols:
-            raise ValueError(f"No feature columns found in {folder} for type '{feature_type}'.")
-        # keep only filename + features (filename optional downstream)
+            raise ValueError(
+                f"No feature columns found in {folder} for type '{self.feature_type}'."
+            )
         keep = (["filename"] if "filename" in df.columns else []) + cols
         return df[keep].copy(), cols
 
-    def prepare_dataset(
-        self,
-        scenario1_folder: str,
-        scenario2_folder: str,
-        scenario1_label: str,
-        scenario2_label: str,
-    ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
-        """
-        Build X, y from two scenario folders (binary).
-        Returns:
-            X (float array), y (int array 0/1), feature_names (list), label_names (list)
-        """
-        ftype = self.feature_type
-
-        df1, cols1 = self._load_and_align(scenario1_folder, ftype)
-        df2, cols2 = self._load_and_align(scenario2_folder, ftype)
-
-        # Align columns: use intersection to be safe; if mismatch, warn and intersect
-        if cols1 != cols2:
-            common = sorted(list(set(cols1).intersection(set(cols2))), key=lambda c: _suffix_int(c) if _suffix_int(c) is not None else 10**9)
-            if not common:
-                raise ValueError("Feature columns do not overlap between scenarios.")
-            cols = common
-        else:
-            cols = cols1
-
+    def _prepare_pair(
+        self, path_a: str, path_b: str, label_a: str, label_b: str
+    ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str], List[str]]:
+        df1, c1 = self._load_and_align(path_a)
+        df2, c2 = self._load_and_align(path_b)
+        cols = (
+            c1
+            if c1 == c2
+            else sorted(
+                list(set(c1).intersection(c2)),
+                key=lambda c: _suffix_int(c)
+                if _suffix_int(c) is not None
+                else 10**9,
+            )
+        )
+        if not cols:
+            raise ValueError("Feature columns do not overlap between scenarios.")
         X1 = df1[cols].to_numpy(dtype=float, copy=True)
         X2 = df2[cols].to_numpy(dtype=float, copy=True)
-
-        y1 = np.array([scenario1_label] * len(X1))
-        y2 = np.array([scenario2_label] * len(X2))
-
+        y1 = np.array([label_a] * len(X1))
+        y2 = np.array([label_b] * len(X2))
         X = np.vstack([X1, X2])
         y_str = np.concatenate([y1, y2])
-
-        # Encode labels to ints but keep a LabelEncoder for inverse mapping
         le = LabelEncoder()
         y = le.fit_transform(y_str)
-
         self.label_encoder = le
         self.feature_names = list(cols)
+        used = [os.path.basename(path_a), os.path.basename(path_b)]
+        return X, y, list(cols), list(le.classes_), used
 
-        return X, y, list(cols), list(le.classes_)
+    def _prepare_groups(
+        self,
+        scen_a: List[Tuple[str, str]],
+        scen_b: List[Tuple[str, str]],
+        label_a: str,
+        label_b: str,
+        params: Dict[str, Any],
+    ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str], List[str]]:
+        with tempfile.TemporaryDirectory() as td:
+            da = os.path.join(td, f"group_{label_a}")
+            db = os.path.join(td, f"group_{label_b}")
+            os.makedirs(da, exist_ok=True)
+            os.makedirs(db, exist_ok=True)
+            self._merge_group_features([p for p, _ in scen_a], da, params.get("max_samples_per_scenario"))
+            self._merge_group_features([p for p, _ in scen_b], db, params.get("max_samples_per_scenario"))
+            X, y, feats, labels, _ = self._prepare_pair(da, db, label_a, label_b)
+            if params.get("balance_groups", True):
+                X, y = self._balance_groups(X, y)
+            used = [*(n for _, n in scen_a), *(n for _, n in scen_b)]
+            return X, y, feats, labels, used
 
-    # -------------------------- training/eval --------------------------
+    def _merge_group_features(
+        self, scenario_paths: List[str], out_dir: str, max_per: Optional[int]
+    ) -> None:
+        fname = "spectrum.csv" if self.feature_type == "spectrum" else "features.csv"
+        rows = []
+        for sp in scenario_paths:
+            fp = os.path.join(sp, fname)
+            if os.path.exists(fp):
+                try:
+                    df = pd.read_csv(fp)
+                    if max_per and len(df) > int(max_per):
+                        df = df.sample(n=int(max_per), random_state=42)
+                    scen_name = os.path.basename(sp)
+                    if "filename" in df.columns:
+                        df["filename"] = df["filename"].apply(lambda x: f"{scen_name}_{x}")
+                    rows.append(df)
+                except Exception as e:
+                    print(f"Warning: failed to read {fp}: {e}")
+        if not rows:
+            raise ValueError(f"No valid feature files found for {self.feature_type}")
+        pd.concat(rows, ignore_index=True).to_csv(os.path.join(out_dir, fname), index=False)
 
+    def _limit_by_class(self, X: np.ndarray, y: np.ndarray, max_per: int) -> Tuple[np.ndarray, np.ndarray]:
+        idx0 = np.where(y == 0)[0]
+        idx1 = np.where(y == 1)[0]
+        k = min(len(idx0), len(idx1), max_per)
+        return (
+            np.vstack([X[idx0[:k]], X[idx1[:k]]]),
+            np.hstack([y[idx0[:k]], y[idx1[:k]]]),
+        )
+
+    def _balance_groups(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        uniq, cnt = np.unique(y, return_counts=True)
+        m = int(cnt.min())
+        out_idx: List[int] = []
+        for val in uniq:
+            idx = np.where(y == val)[0]
+            if len(idx) > m:
+                idx = np.random.choice(idx, m, replace=False)
+            out_idx.extend(idx.tolist())
+        out_idx = np.array(out_idx)
+        return X[out_idx], y[out_idx]
+
+    # -------------------------- training --------------------------
     def _make_model(self):
         if self.model_type == "svm":
             return SVC(kernel="rbf", probability=True, gamma="scale", C=1.0)
-        # logistic
-        return LogisticRegression(max_iter=5000, n_jobs=None)
+        return LogisticRegression(max_iter=5000)
 
-    def train_and_evaluate(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        test_size: float = 0.3,
-        cv_folds: int = 5,
-        random_state: int = 42,
-    ) -> dict:
-        """
-        Split, scale, train, evaluate, and compute CV scores.
-
-        Returns a dict containing:
-          - train_accuracy
-          - test_accuracy
-          - confusion_matrix
-          - classification_report (str)
-          - cv_scores (np.ndarray)
-          - cv_mean, cv_std
-          - X_train, X_test, y_train, y_test  (scaled X matrices for downstream analysis)
-        """
+    def _train_eval_basic(self, X: np.ndarray, y: np.ndarray, params: Dict[str, Any]) -> Dict[str, Any]:
+        # fallback if prepare_* not called
         if self.label_encoder is None:
-            # If user calls this without prepare_dataset, allow numeric labels (fallback)
             le = LabelEncoder()
             y = le.fit_transform(y)
             self.label_encoder = le
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=float(test_size), stratify=y, random_state=random_state
+        test_size = float(params.get("test_size", 0.2))
+        cv_folds = int(params.get("cv_folds", 5))
+        Xtr, Xte, ytr, yte = train_test_split(
+            X, y, test_size=test_size, stratify=y, random_state=42
         )
-
         self.scaler = StandardScaler()
-        X_train_s = self.scaler.fit_transform(X_train)
-        X_test_s = self.scaler.transform(X_test)
-
+        Xtr_s = self.scaler.fit_transform(Xtr)
+        Xte_s = self.scaler.transform(Xte)
         self.model = self._make_model()
-        self.model.fit(X_train_s, y_train)
-
-        # Predictions
-        y_pred_train = self.model.predict(X_train_s)
-        y_pred_test = self.model.predict(X_test_s)
-
-        train_acc = float(accuracy_score(y_train, y_pred_train))
-        test_acc = float(accuracy_score(y_test, y_pred_test))
-        cm = confusion_matrix(y_test, y_pred_test)
-
-        # Human-readable report with string class names
+        self.model.fit(Xtr_s, ytr)
+        yhat_tr = self.model.predict(Xtr_s)
+        yhat_te = self.model.predict(Xte_s)
+        train_acc = float(accuracy_score(ytr, yhat_tr))
+        test_acc = float(accuracy_score(yte, yhat_te))
+        cm = confusion_matrix(yte, yhat_te)
         inv = self.label_encoder.inverse_transform
-        target_names = [str(c) for c in sorted(set(y), key=lambda v: v)]  # numeric sorted
-        # Map numeric order to string names
-        target_names = [str(inv([k])[0]) for k in range(len(target_names))]
-        report = classification_report(y_test, y_pred_test, target_names=target_names, digits=3)
+        target_names = [str(inv([k])[0]) for k in range(len(set(y)))]
+        report = classification_report(yte, yhat_te, target_names=target_names, digits=3)
 
-        # Cross-validation on full X/y using same scaler+model
-        # Build a tiny closure estimator that scales inside each CV split
+        # Cross‑validation on full X/y (scales inside each split)
         from sklearn.base import BaseEstimator, ClassifierMixin, clone
 
         class _ScaledEstimator(BaseEstimator, ClassifierMixin):
@@ -259,8 +355,7 @@ class ScenarioClassifier:
 
         cv_est = _ScaledEstimator(self._make_model())
         cv_scores = cross_val_score(cv_est, X, y, cv=cv_folds, scoring="accuracy")
-
-        results = {
+        return {
             "train_accuracy": train_acc,
             "test_accuracy": test_acc,
             "confusion_matrix": cm,
@@ -268,34 +363,129 @@ class ScenarioClassifier:
             "cv_scores": np.asarray(cv_scores),
             "cv_mean": float(np.mean(cv_scores)),
             "cv_std": float(np.std(cv_scores)),
-            # Expose scaled matrices for downstream feature-importance proxies
-            "X_train": X_train_s,
-            "X_test": X_test_s,
-            "y_train": y_train,
-            "y_test": y_test,
+            "X_train": Xtr_s,
+            "X_test": Xte_s,
+            "y_train": ytr,
+            "y_test": yte,
         }
-        return results
 
-    def print_results(self, results: dict):
-        """Pretty-print high-level results (kept for backward compatibility with your GUI capture)."""
-        print("=== Classification Results ===")
-        print(f"Model: {self.model_type.upper()} | Features: {self.feature_type}")
-        print(f"Train Accuracy: {results['train_accuracy']:.3f}")
-        print(f"Test  Accuracy: {results['test_accuracy']:.3f}")
-        print(f"CV Mean ± Std: {results['cv_mean']:.3f} ± {results['cv_std']:.3f}")
-        print("\nConfusion Matrix:")
-        print(results["confusion_matrix"])
-        print("\nClassification Report:")
-        print(results["classification_report"])
+    def _feature_importance(self) -> Optional[np.ndarray]:
+        if self.model is None:
+            return None
+        try:
+            if hasattr(self.model, "feature_importances_"):
+                return self.model.feature_importances_
+            if hasattr(self.model, "coef_"):
+                coef = (
+                    self.model.coef_[0]
+                    if len(self.model.coef_.shape) > 1
+                    else self.model.coef_
+                )
+                imp = np.abs(coef)
+                s = np.sum(imp)
+                return (imp / s) if s > 0 else imp
+        except Exception:
+            return None
+        return None
 
-    # -------------------------- serialization --------------------------
+    def _composition(self, res: Dict[str, Any]) -> Dict[str, Any]:
+        if self.label_encoder is None:
+            return {}
+        names = list(self.label_encoder.classes_)
+        ytr, yte = res["y_train"], res["y_test"]
+        tr = [int(np.sum(ytr == i)) for i in range(len(names))]
+        te = [int(np.sum(yte == i)) for i in range(len(names))]
+        return {
+            "label_names": names,
+            "train_counts": tr,
+            "test_counts": te,
+            "total_train": int(len(ytr)),
+            "total_test": int(len(yte)),
+            "total_samples": int(len(ytr) + len(yte)),
+            "feature_count": int(
+                res["X_train"].shape[1] if res["X_train"].ndim > 1 else 0
+            ),
+        }
 
-    def dumps_model_bytes(self, extra_meta: Optional[dict] = None) -> bytes:
-        """
-        Serialize model + scaler + encoder + feature_names + config metadata into a joblib blob.
-        """
-        if self.model is None or self.scaler is None or self.label_encoder is None:
-            raise RuntimeError("Model is not trained yet.")
+    def _train_eval_enhanced(self, X: np.ndarray, y: np.ndarray, params: Dict[str, Any]) -> Dict[str, Any]:
+        res = self._train_eval_basic(X, y, params)
+        imp = self._feature_importance()
+        if imp is not None:
+            res["feature_importance"] = imp.tolist()
+        res.update(self._composition(res))
+        return res
+
+    # -------------------------- persistence --------------------------
+    def is_trained(self) -> bool:
+        return (
+            self.model is not None
+            and self.scaler is not None
+            and self.label_encoder is not None
+        )
+
+    def get_model_info(self) -> Dict[str, Any]:
+        if not self._last_info:
+            return {
+                "model_type": self.model_type,
+                "feature_type": self.feature_type,
+                "mode": "—",
+                "metrics": {},
+            }
+        d = asdict(self._last_info)
+        # Ensure numpy types are serializable
+        if isinstance(d.get("metrics"), dict):
+            m = d["metrics"]
+            if "confusion_matrix" in m and hasattr(m["confusion_matrix"], "tolist"):
+                m["confusion_matrix"] = m["confusion_matrix"].tolist()
+        return d
+
+    def _finalize_training(
+        self,
+        mode: str,
+        dataset_root: Optional[str],
+        scenarios: List[str],
+        labels: List[str],
+        params: Dict[str, Any],
+        metrics: Dict[str, Any],
+    ) -> None:
+        self._last_info = ModelInfo(
+            model_type=self.model_type,
+            feature_type=self.feature_type,
+            mode=mode,
+            dataset_root=dataset_root,
+            scenarios=scenarios,
+            labels=labels,
+            params=params,
+            trained_at=time.time(),
+            feature_names=self.feature_names or [],
+            metrics={
+                k: (v.tolist() if hasattr(v, "tolist") else v)
+                for k, v in metrics.items()
+                if k
+                in (
+                    "train_accuracy",
+                    "test_accuracy",
+                    "cv_mean",
+                    "cv_std",
+                    "classification_report",
+                    "confusion_matrix",
+                )
+            },
+        )
+
+    def save_model(self, path: Optional[str] = None, dataset_root: Optional[str] = None) -> str:
+        if not self.is_trained():
+            raise RuntimeError("Model is not trained.")
+        info = self.get_model_info()
+        # Default path in dataset_root
+        if path is None:
+            root = dataset_root or info.get("dataset_root") or os.getcwd()
+            os.makedirs(root, exist_ok=True)
+            stamp = time.strftime(
+                "%Y%m%d_%H%M%S", time.localtime(info.get("trained_at", time.time()))
+            )
+            fname = f"room_response_model_{self.model_type}_{self.feature_type}_{stamp}.joblib"
+            path = os.path.join(root, fname)
         pack = {
             "model_type": self.model_type,
             "feature_type": self.feature_type,
@@ -303,36 +493,96 @@ class ScenarioClassifier:
             "scaler": self.scaler,
             "label_encoder": self.label_encoder,
             "feature_names": self.feature_names,
-            "meta": extra_meta or {},
+            "meta": self.get_model_info(),
         }
+        joblib.dump(pack, path, compress=3)
+        return path
+
+    def download_model(self) -> Tuple[str, bytes]:
+        if not self.is_trained():
+            raise RuntimeError("Model is not trained.")
+        info = self.get_model_info()
+        stamp = time.strftime(
+            "%Y%m%d_%H%M%S", time.localtime(info.get("trained_at", time.time()))
+        )
+        fname = (
+            f"room_response_model_{self.model_type}_{self.feature_type}_{stamp}.joblib"
+        )
         buf = io.BytesIO()
-        joblib.dump(pack, buf, compress=3)
+        joblib.dump(
+            {
+                "model_type": self.model_type,
+                "feature_type": self.feature_type,
+                "model": self.model,
+                "scaler": self.scaler,
+                "label_encoder": self.label_encoder,
+                "feature_names": self.feature_names,
+                "meta": self.get_model_info(),
+            },
+            buf,
+            compress=3,
+        )
+        return fname, buf.getvalue()
+
+    # ---- Backward-compatible aliases (for older GUI code) ----
+    def dumps_model_bytes(self, extra_meta: Optional[dict] = None) -> bytes:
+        """Return a joblib bytes blob of the trained model (legacy API)."""
+        if not self.is_trained():
+            raise RuntimeError("Model is not trained.")
+        meta = self.get_model_info()
+        if extra_meta:
+            # shallow merge; do not drop existing keys
+            if isinstance(meta, dict):
+                meta = {**meta, **extra_meta}
+        buf = io.BytesIO()
+        joblib.dump(
+            {
+                "model_type": self.model_type,
+                "feature_type": self.feature_type,
+                "model": self.model,
+                "scaler": self.scaler,
+                "label_encoder": self.label_encoder,
+                "feature_names": self.feature_names,
+                "meta": meta,
+            },
+            buf,
+            compress=3,
+        )
         return buf.getvalue()
 
     @staticmethod
     def loads_model_bytes(blob: bytes) -> "ScenarioClassifier":
-        """
-        Restore a ScenarioClassifier from joblib bytes.
-        """
-        pack = joblib.load(io.BytesIO(blob))
+        """Rehydrate classifier from bytes (legacy API)."""
+        return ScenarioClassifier.load_model(file_bytes=blob)
+
+    @staticmethod
+    def load_model(
+        path: Optional[str] = None, file_bytes: Optional[bytes] = None
+    ) -> "ScenarioClassifier":
+        if not path and file_bytes is None:
+            raise ValueError("Provide either a file path or bytes to load the model.")
+        pack = joblib.load(path) if path else joblib.load(io.BytesIO(file_bytes))
         clf = ScenarioClassifier(
             model_type=pack.get("model_type", "svm"),
-            feature_type=pack.get("feature_type", "spectrum"),
+            feature_type=pack.get("feature_type", "mfcc"),
         )
         clf.model = pack["model"]
         clf.scaler = pack["scaler"]
         clf.label_encoder = pack["label_encoder"]
         clf.feature_names = pack.get("feature_names")
+        meta = pack.get("meta")
+        if isinstance(meta, dict):
+            try:
+                clf._last_info = ModelInfo(**meta)
+            except Exception:
+                clf._last_info = None
+        elif isinstance(meta, ModelInfo):
+            clf._last_info = meta
         return clf
 
     # -------------------------- inference --------------------------
-
-    def predict_from_features(self, X: np.ndarray) -> dict:
-        """
-        Predict label and probabilities from precomputed features.
-        X must be 2D (n_samples x n_features). For single sample, pass X[np.newaxis, :].
-        """
-        if self.model is None or self.scaler is None or self.label_encoder is None:
+    def predict_from_features(self, X: np.ndarray) -> Dict[str, Any]:
+        if not self.is_trained():
             raise RuntimeError("Model is not trained/loaded.")
         Z = self.scaler.transform(X)
         yhat = self.model.predict(Z)
@@ -340,19 +590,15 @@ class ScenarioClassifier:
         proba = None
         if hasattr(self.model, "predict_proba"):
             p = self.model.predict_proba(Z)[0]
-            proba = dict(zip(list(self.label_encoder.classes_), [float(v) for v in p]))
-        return {"label": label, "proba": proba}
+            proba = {cls: float(v) for cls, v in zip(self.label_encoder.classes_, p)}
+        return {"label": str(label), "proba": proba}
 
     def predict_from_audio(
         self,
         audio: np.ndarray,
         extractor,
-        feature_names: Optional[List[str]] = None
-    ) -> dict:
-        """
-        Build an aligned feature vector from raw `audio` using AudioFeatureExtractor
-        and predict with the trained model.
-        """
+        feature_names: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         if feature_names is None:
             feature_names = self.feature_names
         if not feature_names:
