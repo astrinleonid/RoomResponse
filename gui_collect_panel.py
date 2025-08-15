@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-GUI Collection Panel — DROP-IN REPLACEMENT (v4)
+GUI Collection Panel — DROP-IN REPLACEMENT (v5)
 
-What’s new in v4:
-- **Interval mode selector**: choose **End→Start (minimum rest)** or **Start→Start (fixed cadence)**.
-  - End→Start guarantees the time *after each measurement* is at least the interval (fix for “intervals less than indicated”).
-- Passes `interval_mode` down to the background worker.
-- Keeps v3 features: Pause/Resume/Stop buttons, Beeps (one per scenario, double at end), watchdog timeout, 1 Hz safe auto-refresh.
+What’s new in v5 (addresses your two issues):
+- **Warm‑up control**: default 0 (prevents the initial burst you heard). If you set >0, you can choose
+  **Burst** (very fast) or **Respect interval** (adds the configured interval between warm‑ups).
+- **Pause responsiveness**: the worker now checks pause **before starting each measurement** (pre‑measurement gate),
+  so pressing Pause prevents the next recording from starting even if you’re between cool‑downs.
+- Keeps v4 fixes: End→Start vs Start→Start interval modes, one‑time SDL beeper, watchdog timeout, 1 Hz safe auto‑refresh.
 
-Depends on: gui_series_worker.py (v4)
+Depends on: gui_series_worker.py (v5)
 """
 from __future__ import annotations
 import os
@@ -188,6 +189,11 @@ class CollectionPanel:
                     index=0,
                     help="End→Start ensures cool‑down ≥ interval after each measurement. Start→Start keeps cadence when possible.")
                 interval_mode = "end_to_start" if interval_mode_label.startswith("End") else "start_to_start"
+                warmup_n = st.number_input("Warm‑up measurements", 0, 10, 0, 1,
+                                           help="Runs before the first real scenario to prime devices. Default 0. If >0, choose spacing below.")
+                warmup_spacing_label = st.selectbox("Warm‑up spacing", ["Burst (fast)", "Respect interval"], index=0,
+                                                    help="Burst = very fast (audible burst). Respect interval = waits the configured interval between warm‑ups.")
+                warmup_spacing = "burst" if warmup_spacing_label.startswith("Burst") else "respect_interval"
 
         parsed = self._preview_series(series_scenarios, common_cfg)
         if parsed:
@@ -218,7 +224,8 @@ class CollectionPanel:
                     num_measurements=common_cfg["num_measurements"],
                     measurement_interval=common_cfg["measurement_interval"],
                     description_template=description_template,
-                    warm_up_measurements=3,
+                    warm_up_measurements=int(warmup_n),
+                    warmup_spacing=warmup_spacing,
                     inter_delay=float(inter_delay),
                     pre_delay=float(pre_delay),
                     event_q=evt_q,
@@ -228,7 +235,7 @@ class CollectionPanel:
                     beep_freq=int(beep_freq),
                     beep_dur_ms=int(beep_dur),
                     record_timeout_s=float(max_record_time),
-                    interval_mode=interval_mode,  # NEW
+                    interval_mode=interval_mode,
                 )
                 st.session_state[SK_SERIES_EVT_Q] = evt_q
                 st.session_state[SK_SERIES_CMD_Q] = cmd_q

@@ -1,4 +1,4 @@
-# gui_series_worker.py — v4
+# gui_series_worker.py — v5
 from __future__ import annotations
 import time, json, queue, threading, math
 from dataclasses import dataclass
@@ -31,14 +31,16 @@ class SeriesWorker(threading.Thread):
         base_computer: str, base_room: str,
         num_measurements: int, measurement_interval: float,
         description_template: str = "Room response measurement scenario {n}",
-        warm_up_measurements: int = 3, inter_delay: float = 60.0, pre_delay: float = 60.0,
+        warm_up_measurements: int = 0,
+        warmup_spacing: str = "burst",  # 'burst' or 'respect_interval'
+        inter_delay: float = 60.0, pre_delay: float = 60.0,
         event_q: Optional[queue.Queue] = None, cmd_q: Optional[queue.Queue] = None,
         rename_wait_s: float = 2.0, metadata_flush_every: int = 10, metadata_flush_seconds: float = 30.0,
         pause_file_name: str = "PAUSE", stop_file_name: str = "STOP",
         record_timeout_factor: float = 6.0,
         record_timeout_s: Optional[float] = None,
         enable_beeps: bool = True, beep_volume: float = 0.2, beep_freq: int = 880, beep_dur_ms: int = 200,
-        interval_mode: str = "end_to_start",  # NEW: 'end_to_start' or 'start_to_start'
+        interval_mode: str = "end_to_start",
     ):
         super().__init__(daemon=True)
         self.scenario_numbers = list(scenario_numbers)
@@ -48,6 +50,7 @@ class SeriesWorker(threading.Thread):
         self.num_measurements = int(num_measurements); self.measurement_interval = float(measurement_interval)
         self.description_template = description_template
         self.warm_up_measurements = int(max(0, warm_up_measurements))
+        self.warmup_spacing = warmup_spacing if warmup_spacing in ("burst", "respect_interval") else "burst"
         self.inter_delay = float(max(0.0, inter_delay)); self.pre_delay = float(max(0.0, pre_delay))
         self.rename_wait_s = float(max(0.0, rename_wait_s))
         self.metadata_flush_every = max(1, int(metadata_flush_every)); self.metadata_flush_seconds = float(max(5.0, metadata_flush_seconds))
@@ -91,7 +94,7 @@ class SeriesWorker(threading.Thread):
         except Exception as e: return self._finalize(ok=False, reason=f"recorder init failed: {e}")
         if self.enable_beeps: self._init_beeper_once()
         if self.warm_up_measurements > 0:
-            self._emit_status("warmup")
+            self._emit_status("warmup", count=self.warm_up_measurements)
             try: self._run_warmup(self.warm_up_measurements)
             except Exception as e: self._emit_error(f"warmup failed: {e}")
         self.state = self.RUNNING; self._emit_status("running", interval_mode=self.interval_mode)
@@ -157,13 +160,23 @@ class SeriesWorker(threading.Thread):
         except Exception as e:
             self._emit_error(f"beep failed: {e}")
 
+    # ---------------- Warm‑up ----------------
     def _run_warmup(self, n: int):
-        for _ in range(n):
+        for i in range(n):
             if self._stop_requested: return
-            try: _ = self._recorder.take_record("/dev/null", "/dev/null", method=2, interactive=False)
-            except Exception: pass
-            time.sleep(0.1)
+            # Allow pausing before each warm‑up shot
+            self._pre_measurement_gate(None)
+            try:
+                _ = self._recorder.take_record("/dev/null", "/dev/null", method=2, interactive=False)
+            except Exception:
+                pass
+            # spacing choice
+            if self.warmup_spacing == "respect_interval" and (i < n - 1):
+                self._wait_with_ticks(self.measurement_interval, allow_pause=True)
+            elif self.warmup_spacing == "burst":
+                time.sleep(0.05)
 
+    # ---------------- Scenario loop ----------------
     def _run_one_scenario(self, scen_no: str, idx: int, total: int) -> bool:
         desc = self.description_template.replace("{n}", str(scen_no))
         sc = SingleScenarioCollector(
@@ -182,7 +195,11 @@ class SeriesWorker(threading.Thread):
         for local_idx in range(self.num_measurements):
             if self._stop_requested: return False
 
-            # ---- Wait strategy before starting next measurement ----
+            # ---- PRE‑MEASUREMENT GATE (reacts to Pause/Stop before recording) ----
+            self._pre_measurement_gate(sc.scenario_dir)
+            if self._stop_requested: return False
+
+            # ---- Wait strategy for start→start cadence ----
             if self.interval_mode == "start_to_start" and last_start is not None:
                 target = last_start + self.measurement_interval
                 wait = max(0.0, target - time.time())
@@ -190,9 +207,7 @@ class SeriesWorker(threading.Thread):
                     self._wait_with_ticks(wait, allow_pause=True, scenario_dir=sc.scenario_dir)
                     if self._stop_requested: return False
 
-            # Start time recorded just before capture
-            start_ts = time.time()
-            last_start = start_ts
+            start_ts = time.time(); last_start = start_ts
 
             # ---- Recording ----
             m_abs_idx = sc._existing_measurements_count + local_idx
@@ -210,7 +225,7 @@ class SeriesWorker(threading.Thread):
                 t_rec_e = time.time()
 
                 expected_room_file = raw_path.parent / f"room_{raw_path.stem}_room.wav"
-                t_io_s = time.time(); self._bounded_wait_for_file(expected_room_file, self.rename_wait_s)
+                t_io_s = time.time(); self._bounded_wait_for_file(expected_room_file, self.rename_wait_s, scenario_dir=sc.scenario_dir)
                 if expected_room_file.exists():
                     try: expected_room_file.rename(room_path)
                     except Exception: pass
@@ -263,11 +278,21 @@ class SeriesWorker(threading.Thread):
             return float(self.record_timeout_s)
         return max(10.0, self.record_timeout_factor * self.measurement_interval)
 
-    def _bounded_wait_for_file(self, path: Path, timeout_s: float):
+    def _bounded_wait_for_file(self, path: Path, timeout_s: float, scenario_dir: Optional[Path] = None):
         if timeout_s <= 0: return
         t0 = time.time()
-        while time.time() - t0 < timeout_s:
-            if path.exists(): return
+        while time.time() - t0 < timeout_s and not self._stop_requested:
+            self._drain_commands()
+            if scenario_dir is not None:
+                if (scenario_dir / self.stop_file_name).exists():
+                    self._stop_requested = True; break
+                if (scenario_dir / self.pause_file_name).exists() and not self._paused:
+                    self._paused = True; self._paused_by_file = True; self.state = self.PAUSED; self._emit_status("paused by PAUSE file")
+            if self._paused:
+                time.sleep(0.1)
+                continue
+            if path.exists():
+                return
             time.sleep(0.02)
 
     def _take_record_with_timeout(self, raw_path: str, impulse_path: str, timeout_s: float):
@@ -290,6 +315,24 @@ class SeriesWorker(threading.Thread):
                 except Exception: pass
             self._init_recorder_once(); return True
         except Exception: return False
+
+    # ---- Pause/Stop helpers ----
+    def _pre_measurement_gate(self, scenario_dir: Optional[Path]):
+        """Block here until not paused and no PAUSE file, reacting to Stop immediately."""
+        while not self._stop_requested:
+            self._drain_commands()
+            if scenario_dir is not None:
+                if (scenario_dir / self.stop_file_name).exists():
+                    self._stop_requested = True; self._emit_status("stop-file detected"); break
+                pause_exists = (scenario_dir / self.pause_file_name).exists()
+                if pause_exists and not self._paused:
+                    self._paused = True; self._paused_by_file = True; self.state = self.PAUSED; self._emit_status("paused by PAUSE file")
+                if (not pause_exists) and self._paused and self._paused_by_file:
+                    self._paused = False; self._paused_by_file = False; self.state = self.RUNNING; self._emit_status("resumed (PAUSE file removed)")
+            if not self._paused:
+                return
+            self._emit_heartbeat()
+            time.sleep(0.1)
 
     def _wait_with_ticks(self, seconds: float, allow_pause: bool, scenario_dir: Optional[Path] = None):
         remaining = float(seconds); tick = 0.1 if seconds > 1.0 else 0.02; t_start = time.time()
