@@ -1,3 +1,5 @@
+#sdl_audio_core setup.py
+
 import json
 import os
 import platform
