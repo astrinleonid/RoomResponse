@@ -118,6 +118,8 @@ class SingleScenarioCollector:
         self._existing_metadata: Dict[str, Any] | None = None
         self._existing_measurements_count: int = 0
 
+        self._external_recorder_injected = False  # reserved for future use if you decide to DI recorder
+
     # -------------------- setup & config --------------------
 
     def setup_scenario_from_dict(self, **parameters):
@@ -162,6 +164,22 @@ class SingleScenarioCollector:
             num_measurements=num_measurements,
             measurement_interval=interval
         )
+
+    def get_scenario_dir(self) -> Path:
+        return self.scenario_dir
+
+    def get_meta_file(self) -> Path:
+        return self.meta_file
+
+    def append_event_jsonl(self, event: dict):
+        """Append a tiny JSON line to analysis/events.jsonl for cheap, frequent checkpoints."""
+        try:
+            events_path = self.scenario_dir / 'analysis' / 'events.jsonl'
+            events_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(events_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     def _normalize_recorder_config(self, cfg: str | Dict[str, Any]) -> tuple[Optional[Path], Dict[str, Any]]:
         """
