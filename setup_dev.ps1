@@ -30,6 +30,21 @@ if ($ForceSDL2) { $ForceSDL = $true }
 
 $ErrorActionPreference = 'Stop'
 
+# Set up logging
+$LogFile = Join-Path (Get-Location) 'build_packages.log'
+function Write-Log {
+    param([string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] $Message"
+    Write-Host $logMessage
+    Add-Content -Path $LogFile -Value $logMessage -Encoding UTF8
+}
+
+# Initialize log file
+"=== PianoidCore Development Environment Setup Log ===" | Set-Content -Path $LogFile -Encoding UTF8
+Write-Log "Script started at $(Get-Date)"
+Write-Log "Log file: $LogFile"
+
 # Default versions (used when config file doesn't exist or values are missing)
 $DefaultVersions = @{
   python = "3.12.0"
@@ -60,7 +75,7 @@ function Load-Configuration {
   }
   
   if (Test-Path $ConfigPath) {
-    Write-Host "Loading configuration from: $ConfigPath"
+    Write-Log "Loading configuration from: $ConfigPath"
     try {
       $configData = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
       
@@ -69,7 +84,7 @@ function Load-Configuration {
         foreach ($key in $configData.versions.PSObject.Properties.Name) {
           if ($configData.versions.$key) {
             $config.versions[$key] = $configData.versions.$key
-            Write-Host "Config: $key = $($configData.versions.$key)"
+            Write-Log "Config: $key = $($configData.versions.$key)"
           }
         }
       }
@@ -96,12 +111,12 @@ function Load-Configuration {
       }
       
     } catch {
-      Write-Warning "Failed to parse config file: $_"
-      Write-Host "Using default values"
+      Write-Log "Failed to parse config file: $_"
+      Write-Log "Using default values"
     }
   } else {
-    Write-Host "Config file not found: $ConfigPath"
-    Write-Host "Using default versions"
+    Write-Log "Config file not found: $ConfigPath"
+    Write-Log "Using default versions"
   }
   
   # Apply command line overrides
@@ -118,8 +133,10 @@ function Assert-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   $p  = [Security.Principal.WindowsPrincipal]$id
   if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Log "ERROR: This script requires Administrator privileges"
     throw "Please run this script in an elevated (Administrator) PowerShell."
   }
+  Write-Log "Administrator privileges confirmed"
 }
 
 function Get-Tool($name) { 
@@ -127,10 +144,16 @@ function Get-Tool($name) {
 }
 
 function Invoke-Download($Url, $OutFile) {
-  Write-Host "Downloading $Url ..."
-  Invoke-WebRequest -Uri $Url -OutFile $OutFile
-  if (-not (Test-Path $OutFile)) { 
-    throw "Download failed: $Url" 
+  Write-Log "Downloading $Url ..."
+  try {
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile
+    if (-not (Test-Path $OutFile)) { 
+      throw "Download failed: $Url" 
+    }
+    Write-Log "Download completed: $OutFile"
+  } catch {
+    Write-Log "Download failed: $_"
+    throw
   }
 }
 
@@ -138,6 +161,7 @@ function Ensure-Python {
   param([string]$Version)
   
   if ($SkipPython) { 
+    Write-Log "Skipping Python installation"
     return $null 
   }
   
@@ -150,37 +174,39 @@ function Ensure-Python {
       $currentVersion = & $python --version 2>&1
       if ($currentVersion -match "Python (\d+\.\d+\.\d+)") {
         $installedVersion = $Matches[1]
-        Write-Host "Python already installed: $currentVersion"
+        Write-Log "Python already installed: $currentVersion"
         if ($installedVersion -eq $Version) {
-          Write-Host "Correct version already installed."
+          Write-Log "Correct version already installed."
           # Also check pip
           $pip = Get-Tool 'pip'
           if ($pip) {
             $pipVersion = & $pip --version
-            Write-Host "pip available: $pipVersion"
+            Write-Log "pip available: $pipVersion"
           }
           return $python.Source
         } else {
-          Write-Host "Different version found, will install Python $Version"
+          Write-Log "Different version found, will install Python $Version"
         }
       }
     } catch {
-      Write-Host "Python found but version check failed, proceeding with installation"
+      Write-Log "Python found but version check failed, proceeding with installation"
     }
   }
   
   if ($forceRequested) {
-    Write-Host "Force reinstall requested for Python"
+    Write-Log "Force reinstall requested for Python"
   }
 
-  Write-Host "`n== Installing Python $Version =="
+  Write-Log ""
+  Write-Log "== Installing Python $Version =="
   
   # Try winget first
   $winget = Get-Tool 'winget'
   if ($winget) {
     try {
-      Write-Host "Attempting to install Python $Version via winget..."
-      & $winget install -e --id Python.Python.3.12 --version $Version --silent --accept-package-agreements --accept-source-agreements
+      Write-Log "Attempting to install Python $Version via winget..."
+      $wingetOutput = & $winget install -e --id Python.Python.3.12 --version $Version --silent --accept-package-agreements --accept-source-agreements 2>&1
+      $wingetOutput | ForEach-Object { Write-Log "winget: $_" }
       Start-Sleep -Seconds 5
       
       # Refresh PATH and test
@@ -189,30 +215,30 @@ function Ensure-Python {
       
       if ($python) { 
         $installedVersion = & $python --version
-        Write-Host "Python installed successfully: $installedVersion"
+        Write-Log "Python installed successfully via winget: $installedVersion"
         return $python.Source
       }
     } catch { 
-      Write-Warning "winget install failed, falling back to direct installer..." 
+      Write-Log "winget install failed, falling back to direct installer: $_"
     }
   }
 
   # Fallback to direct installer
-  Write-Host "Using direct installer method..."
+  Write-Log "Using direct installer method..."
   
   # Determine architecture
   $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "win32" }
-  Write-Host "Detected architecture: $arch"
+  Write-Log "Detected architecture: $arch"
   
   # Construct download URL
   $url = "https://www.python.org/ftp/python/$Version/python-$Version-$arch.exe"
   $tmp = Join-Path $env:TEMP "python-$Version-installer.exe"
   
   try {
-    Write-Host "Downloading Python $Version..."
+    Write-Log "Downloading Python $Version..."
     Invoke-Download $url $tmp
     
-    Write-Host "Running Python installer..."
+    Write-Log "Running Python installer..."
     $installArgs = @(
       '/quiet',
       'InstallAllUsers=0',
@@ -224,7 +250,8 @@ function Ensure-Python {
       'Include_launcher=1'
     )
     
-    Start-Process $tmp -ArgumentList $installArgs -NoNewWindow -Wait
+    $process = Start-Process $tmp -ArgumentList $installArgs -NoNewWindow -Wait -PassThru
+    Write-Log "Python installer exit code: $($process.ExitCode)"
     
     # Cleanup installer
     Remove-Item $tmp -ErrorAction SilentlyContinue
@@ -235,13 +262,13 @@ function Ensure-Python {
     
     if ($python) { 
       $installedVersion = & $python --version
-      Write-Host "Python installed successfully: $installedVersion"
+      Write-Log "Python installed successfully: $installedVersion"
       
       # Verify pip
       $pip = Get-Tool 'pip'
       if ($pip) {
         $pipVersion = & $pip --version
-        Write-Host "pip installed successfully: $pipVersion"
+        Write-Log "pip installed successfully: $pipVersion"
       }
       
       return $python.Source
@@ -249,21 +276,24 @@ function Ensure-Python {
       throw "Python installation failed or not found in PATH"
     }
   } catch {
-    throw "Failed to install Python: $_"
+    Write-Log "Failed to install Python: $_"
+    throw
   }
 }
 
 function Uninstall-CUDA {
-  Write-Host "`n== Uninstalling existing CUDA installations =="
+  Write-Log ""
+  Write-Log "== Uninstalling existing CUDA installations =="
   
   # Try winget uninstall first
   $winget = Get-Tool 'winget'
   if ($winget) {
     try {
-      Write-Host "Attempting to uninstall CUDA via winget..."
-      & $winget uninstall --id Nvidia.CUDA --silent --accept-source-agreements
+      Write-Log "Attempting to uninstall CUDA via winget..."
+      $wingetOutput = & $winget uninstall --id Nvidia.CUDA --silent --accept-source-agreements 2>&1
+      $wingetOutput | ForEach-Object { Write-Log "winget: $_" }
     } catch {
-      Write-Warning "winget uninstall failed, continuing with manual cleanup..."
+      Write-Log "winget uninstall failed, continuing with manual cleanup: $_"
     }
   }
 
@@ -275,11 +305,11 @@ function Uninstall-CUDA {
   
   foreach ($path in $cudaPaths) {
     if (Test-Path $path) {
-      Write-Host "Removing CUDA directory: $path"
+      Write-Log "Removing CUDA directory: $path"
       try {
         Remove-Item -Path $path -Recurse -Force -ErrorAction Continue
       } catch {
-        Write-Warning "Could not fully remove $path - some files may be in use"
+        Write-Log "Could not fully remove $path - some files may be in use: $_"
       }
     }
   }
@@ -289,11 +319,12 @@ function Uninstall-CUDA {
   [Environment]::SetEnvironmentVariable('CUDA_PATH_V13_0', $null, 'Machine')
   [Environment]::SetEnvironmentVariable('CUDA_PATH_V12_6', $null, 'Machine')
   
-  Write-Host "CUDA cleanup completed. A reboot may be required for full cleanup."
+  Write-Log "CUDA cleanup completed. A reboot may be required for full cleanup."
 }
 
 function Ensure-VSBuildTools {
   if ($SkipVS) { 
+    Write-Log "Skipping Visual Studio Build Tools installation"
     return 
   }
   
@@ -305,18 +336,19 @@ function Ensure-VSBuildTools {
   if ((Test-Path $vswhere) -and (-not $forceRequested)) {
     $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if ($instPath) { 
-      Write-Host "VS Build Tools found at: $instPath"
+      Write-Log "VS Build Tools found at: $instPath"
       $needInstall = $false 
     }
   }
   
   if ($forceRequested) {
-    Write-Host "Force reinstall requested for VS Build Tools"
+    Write-Log "Force reinstall requested for VS Build Tools"
     $needInstall = $true
   }
   
   if ($needInstall) {
-    Write-Host "`n== Installing Visual Studio 2022 Build Tools (C++ workload) =="
+    Write-Log ""
+    Write-Log "== Installing Visual Studio 2022 Build Tools (C++ workload) =="
     $tmp = Join-Path $env:TEMP "vs_buildtools.exe"
     Invoke-Download "https://aka.ms/vs/17/release/vs_buildtools.exe" $tmp
     $args = @(
@@ -327,13 +359,16 @@ function Ensure-VSBuildTools {
       '--add','Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
       '--includeRecommended'
     )
-    Start-Process $tmp -ArgumentList $args -NoNewWindow -Wait
+    Write-Log "Running VS Build Tools installer with args: $($args -join ' ')"
+    $process = Start-Process $tmp -ArgumentList $args -NoNewWindow -Wait -PassThru
+    Write-Log "VS Build Tools installer exit code: $($process.ExitCode)"
   } else {
-    Write-Host "VS Build Tools with C++ workload already present."
+    Write-Log "VS Build Tools with C++ workload already present."
   }
 }
 
 function Get-VcBinHostx64x64 {
+  Write-Log "Locating MSVC compiler binary path..."
   $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
   if (Test-Path $vswhere) {
     $inst = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
@@ -342,6 +377,7 @@ function Get-VcBinHostx64x64 {
       $vcVer = (Get-ChildItem -Directory $vcToolsRoot | Sort-Object Name -Descending | Select-Object -First 1).FullName
       $bin = Join-Path $vcVer 'bin\Hostx64\x64'
       if (Test-Path $bin) { 
+        Write-Log "Found MSVC bin path: $bin"
         return $bin 
       }
     }
@@ -354,10 +390,12 @@ function Get-VcBinHostx64x64 {
             Where-Object { $_.FullName -like '*\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe' } |
             Select-Object -First 1
       if ($cl) { 
+        Write-Log "Found MSVC bin path via search: $($cl.Directory.FullName)"
         return $cl.Directory.FullName 
       }
     }
   }
+  Write-Log "ERROR: MSVC bin\Hostx64\x64 not found"
   throw "MSVC bin\Hostx64\x64 not found. Make sure the C++ workload is installed."
 }
 
@@ -365,6 +403,7 @@ function Ensure-NodeJS {
   param([string]$Version)
   
   if ($SkipNode) { 
+    Write-Log "Skipping Node.js installation"
     return $null 
   }
   
@@ -374,25 +413,27 @@ function Ensure-NodeJS {
   
   if ($node -and (-not $forceRequested)) {
     $currentVersion = & $node --version
-    Write-Host "Node.js already installed: $currentVersion"
+    Write-Log "Node.js already installed: $currentVersion"
     if ($currentVersion -like "v$Version*") {
-      Write-Host "Correct version already installed."
+      Write-Log "Correct version already installed."
       return $node.Source
     } else {
-      Write-Host "Different version found, will install Node.js $Version"
+      Write-Log "Different version found, will install Node.js $Version"
     }
   }
   
   if ($forceRequested) {
-    Write-Host "Force reinstall requested for Node.js"
+    Write-Log "Force reinstall requested for Node.js"
   }
 
-  Write-Host "`n== Installing Node.js $Version =="
+  Write-Log ""
+  Write-Log "== Installing Node.js $Version =="
   $winget = Get-Tool 'winget'
   if ($winget) {
     try {
-      Write-Host "Attempting to install Node.js $Version via winget..."
-      & $winget install -e --id OpenJS.NodeJS --version $Version --silent --accept-package-agreements --accept-source-agreements
+      Write-Log "Attempting to install Node.js $Version via winget..."
+      $wingetOutput = & $winget install -e --id OpenJS.NodeJS --version $Version --silent --accept-package-agreements --accept-source-agreements 2>&1
+      $wingetOutput | ForEach-Object { Write-Log "winget: $_" }
       Start-Sleep -Seconds 5
       
       # Refresh PATH and test
@@ -401,23 +442,24 @@ function Ensure-NodeJS {
       
       if ($node) { 
         $installedVersion = & $node --version
-        Write-Host "Node.js installed successfully: $installedVersion"
+        Write-Log "Node.js installed successfully via winget: $installedVersion"
         return $node.Source
       }
     } catch { 
-      Write-Warning "winget install failed, falling back to direct installer..." 
+      Write-Log "winget install failed, falling back to direct installer: $_"
     }
   }
 
   # Fallback to direct installer
-  Write-Host "Downloading Node.js $Version installer..."
+  Write-Log "Downloading Node.js $Version installer..."
   $tmp = Join-Path $env:TEMP "node-v$Version-x64.msi"
   $url = "https://nodejs.org/dist/v$Version/node-v$Version-x64.msi"
   
   try {
     Invoke-Download $url $tmp
-    Write-Host "Running Node.js installer..."
-    Start-Process "msiexec.exe" -ArgumentList @('/i', $tmp, '/quiet', '/norestart') -NoNewWindow -Wait
+    Write-Log "Running Node.js installer..."
+    $process = Start-Process "msiexec.exe" -ArgumentList @('/i', $tmp, '/quiet', '/norestart') -NoNewWindow -Wait -PassThru
+    Write-Log "Node.js installer exit code: $($process.ExitCode)"
     
     # Refresh PATH and test
     $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
@@ -425,13 +467,14 @@ function Ensure-NodeJS {
     
     if ($node) { 
       $installedVersion = & $node --version
-      Write-Host "Node.js installed successfully: $installedVersion"
+      Write-Log "Node.js installed successfully: $installedVersion"
       return $node.Source
     } else {
       throw "Node.js installation failed or not found in PATH"
     }
   } catch {
-    throw "Failed to install Node.js: $_"
+    Write-Log "Failed to install Node.js: $_"
+    throw
   }
 }
 
@@ -439,6 +482,7 @@ function Ensure-SDL2 {
   param([string]$Version, [string]$SdlRoot)
   
   if ($SkipSDL) { 
+    Write-Log "Skipping SDL2 installation"
     return $null 
   }
   
@@ -446,30 +490,33 @@ function Ensure-SDL2 {
   $forceRequested = $ForceReinstall -or $ForceSDL
   
   if ($forceRequested) {
-    Write-Host "Force reinstall requested for SDL2"
+    Write-Log "Force reinstall requested for SDL2"
     if (Test-Path $final) {
-      Write-Host "Removing existing SDL2 installation: $final"
+      Write-Log "Removing existing SDL2 installation: $final"
       Remove-Item -Recurse -Force $final
     }
   }
   
   if ((Test-Path $final) -and (-not $forceRequested)) {
-    Write-Host "SDL2 $Version already installed at: $final"
+    Write-Log "SDL2 $Version already installed at: $final"
     return $final
   }
   
-  Write-Host "`n== Installing SDL2 $Version (VC) to $final =="
+  Write-Log ""
+  Write-Log "== Installing SDL2 $Version (VC) to $final =="
 
   $zip   = Join-Path $env:TEMP "SDL2-devel-$Version-VC.zip"
   $stage = Join-Path $env:TEMP ("sdl2_unpack_" + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
   Invoke-Download "https://www.libsdl.org/release/SDL2-devel-$Version-VC.zip" $zip
+  Write-Log "Extracting SDL2 archive..."
   Expand-Archive -Path $zip -DestinationPath $stage -Force
 
   $src = (Get-ChildItem -Directory $stage | Where-Object { $_.Name -like 'SDL2-*' } |
           Sort-Object Name -Descending | Select-Object -First 1)
   if (-not $src) { 
+    Write-Log "ERROR: SDL2 base folder not found after extraction"
     throw "SDL2 base folder not found after extraction." 
   }
 
@@ -477,10 +524,12 @@ function Ensure-SDL2 {
   if ($parent -and (-not (Test-Path $parent))) {
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
   }
+  Write-Log "Moving SDL2 to final location: $final"
   Move-Item -Path $src.FullName -Destination $final
 
   # Cleanup staging
   Remove-Item -Recurse -Force $stage, $zip -ErrorAction SilentlyContinue
+  Write-Log "SDL2 installation completed successfully"
   return $final
 }
 
@@ -488,13 +537,14 @@ function Ensure-CUDA {
   param([string]$Version)
   
   if ($SkipCUDA) { 
+    Write-Log "Skipping CUDA installation"
     return $env:CUDA_PATH 
   }
   
   # Check if force reinstall is requested
   $forceRequested = $ForceReinstall -or $ForceCUDA
   if ($forceRequested) {
-    Write-Host "Force reinstall requested for CUDA"
+    Write-Log "Force reinstall requested for CUDA"
     Uninstall-CUDA
     # Refresh environment variables after uninstall
     $env:CUDA_PATH = [Environment]::GetEnvironmentVariable('CUDA_PATH','Machine')
@@ -506,16 +556,18 @@ function Ensure-CUDA {
   }
   
   if ($cuda -and (Test-Path $cuda) -and (-not $forceRequested)) { 
-    Write-Host "CUDA already installed at: $cuda"; 
+    Write-Log "CUDA already installed at: $cuda"
     return $cuda 
   }
 
-  Write-Host "`n== Installing CUDA Toolkit $Version =="
+  Write-Log ""
+  Write-Log "== Installing CUDA Toolkit $Version =="
   $winget = Get-Tool 'winget'
   if ($winget) {
     try {
-      Write-Host "Attempting to install CUDA $Version via winget..."
-      & $winget install -e --id Nvidia.CUDA --version $Version --silent --accept-package-agreements --accept-source-agreements
+      Write-Log "Attempting to install CUDA $Version via winget..."
+      $wingetOutput = & $winget install -e --id Nvidia.CUDA --version $Version --silent --accept-package-agreements --accept-source-agreements 2>&1
+      $wingetOutput | ForEach-Object { Write-Log "winget: $_" }
       Start-Sleep -Seconds 10
       
       # Refresh environment variables
@@ -523,15 +575,16 @@ function Ensure-CUDA {
       $cuda = $env:CUDA_PATH
       
       if ($cuda -and (Test-Path $cuda)) { 
+        Write-Log "CUDA installed successfully via winget at: $cuda"
         return $cuda 
       }
     } catch { 
-      Write-Warning "winget install failed, falling back to direct installer..." 
+      Write-Log "winget install failed, falling back to direct installer: $_"
     }
   }
 
   # Fallback to direct installer
-  Write-Host "Downloading CUDA $Version installer..."
+  Write-Log "Downloading CUDA $Version installer..."
   $tmp = Join-Path $env:TEMP "cuda_${Version}_windows_network.exe"
   $url = "https://developer.download.nvidia.com/compute/cuda/$Version/network_installers/cuda_${Version}_windows_network.exe"
   
@@ -541,12 +594,13 @@ function Ensure-CUDA {
     # Try local installer as fallback
     $localUrl = "https://developer.download.nvidia.com/compute/cuda/$Version/local_installers/cuda_${Version}_windows.exe"
     $tmp = Join-Path $env:TEMP "cuda_${Version}_windows.exe"
-    Write-Host "Network installer failed, trying local installer..."
+    Write-Log "Network installer failed, trying local installer..."
     Invoke-Download $localUrl $tmp
   }
   
-  Write-Host "Running CUDA installer (this may take several minutes)..."
-  Start-Process $tmp -ArgumentList @('-s','-n') -NoNewWindow -Wait
+  Write-Log "Running CUDA installer (this may take several minutes)..."
+  $process = Start-Process $tmp -ArgumentList @('-s','-n') -NoNewWindow -Wait -PassThru
+  Write-Log "CUDA installer exit code: $($process.ExitCode)"
 
   # Refresh and find CUDA installation
   $env:CUDA_PATH = [Environment]::GetEnvironmentVariable('CUDA_PATH','Machine')
@@ -557,12 +611,15 @@ function Ensure-CUDA {
     if (Test-Path $guess) {
       $cuda = (Get-ChildItem -Directory $guess | Where-Object { $_.Name -like 'v*' } |
                Sort-Object Name -Descending | Select-Object -First 1).FullName
+      Write-Log "Found CUDA installation at: $cuda"
     }
   }
   
   if (-not ($cuda -and (Test-Path $cuda))) { 
+    Write-Log "ERROR: CUDA Toolkit not found after install"
     throw "CUDA Toolkit not found after install; please verify and rerun." 
   }
+  Write-Log "CUDA installation completed successfully"
   return $cuda
 }
 
@@ -577,25 +634,26 @@ function Write-BuildConfig($CudaHome, $VcBin, $SdlBase, $CudaArchs) {
   }
   $out = Join-Path (Get-Location) 'build_config.json'
   $cfg | ConvertTo-Json -Depth 6 | Set-Content -Path $out -Encoding UTF8
-  Write-Host "`nbuild_config.json written to: $out"
-  Write-Host "  cuda_home  : $CudaHome"
-  Write-Host "  VC bin     : $VcBin"
-  Write-Host "  SDL2 base  : $SdlBase"
+  Write-Log ""
+  Write-Log "build_config.json written to: $out"
+  Write-Log "  cuda_home  : $CudaHome"
+  Write-Log "  VC bin     : $VcBin"
+  Write-Log "  SDL2 base  : $SdlBase"
 }
 
 # --- main ---
-Write-Host "=== PianoidCore Development Environment Setup ==="
+Write-Log "=== PianoidCore Development Environment Setup ==="
 
 # Load configuration
 $config = Load-Configuration $ConfigFile
 
-Write-Host "Python Version: $($config.versions.python)"
-Write-Host "CUDA Version: $($config.versions.cuda)"
-Write-Host "Node.js Version: $($config.versions.nodejs)"
-Write-Host "SDL2 Version: $($config.versions.sdl2)"
+Write-Log "Python Version: $($config.versions.python)"
+Write-Log "CUDA Version: $($config.versions.cuda)"
+Write-Log "Node.js Version: $($config.versions.nodejs)"
+Write-Log "SDL2 Version: $($config.versions.sdl2)"
 
 if ($ForceReinstall) { 
-  Write-Host "Force reinstall: ALL components" 
+  Write-Log "Force reinstall: ALL components" 
 }
 elseif ($ForceVS -or $ForceCUDA -or $ForceSDL -or $ForceNode -or $ForcePython) {
   $components = @()
@@ -604,49 +662,72 @@ elseif ($ForceVS -or $ForceCUDA -or $ForceSDL -or $ForceNode -or $ForcePython) {
   if ($ForceSDL) { $components += 'SDL2' }
   if ($ForceNode) { $components += 'Node.js' }
   if ($ForcePython) { $components += 'Python' }
-  Write-Host "Force reinstall: $($components -join ' ')"
+  Write-Log "Force reinstall: $($components -join ', ')"
 }
 
-Assert-Admin
+try {
+  Assert-Admin
 
-# Handle single component installs (skip others)
-if ($ForcePython -and -not $ForceReinstall) {
-  $SkipVS = $true; $SkipCUDA = $true; $SkipSDL = $true; $SkipNode = $true
-}
-elseif ($ForceCUDA -and -not $ForceReinstall) {
-  $SkipVS = $true; $SkipPython = $true; $SkipSDL = $true; $SkipNode = $true
-}
-elseif ($ForceNode -and -not $ForceReinstall) {
-  $SkipVS = $true; $SkipCUDA = $true; $SkipSDL = $true; $SkipPython = $true
-}
-elseif ($ForceSDL -and -not $ForceReinstall) {
-  $SkipVS = $true; $SkipCUDA = $true; $SkipPython = $true; $SkipNode = $true
-}
+  # Handle single component installs (skip others)
+  if ($ForcePython -and -not $ForceReinstall) {
+    $SkipVS = $true; $SkipCUDA = $true; $SkipSDL = $true; $SkipNode = $true
+    Write-Log "Single component install: Python only"
+  }
+  elseif ($ForceCUDA -and -not $ForceReinstall) {
+    $SkipVS = $true; $SkipPython = $true; $SkipSDL = $true; $SkipNode = $true
+    Write-Log "Single component install: CUDA only"
+  }
+  elseif ($ForceNode -and -not $ForceReinstall) {
+    $SkipVS = $true; $SkipCUDA = $true; $SkipSDL = $true; $SkipPython = $true
+    Write-Log "Single component install: Node.js only"
+  }
+  elseif ($ForceSDL -and -not $ForceReinstall) {
+    $SkipVS = $true; $SkipCUDA = $true; $SkipPython = $true; $SkipNode = $true
+    Write-Log "Single component install: SDL2 only"
+  }
 
-# Install in logical order
-$python   = Ensure-Python -Version $config.versions.python
+  # Install in logical order
+  Write-Log ""
+  Write-Log "Starting component installation..."
+  
+  $python   = Ensure-Python -Version $config.versions.python
 
-if (-not $SkipVS) {
-  Ensure-VSBuildTools
-  $vcBin = Get-VcBinHostx64x64
-  & (Join-Path $vcBin 'cl.exe') /? | Out-Null  # sanity check
-} else {
-  $vcBin = $null
+  if (-not $SkipVS) {
+    Ensure-VSBuildTools
+    $vcBin = Get-VcBinHostx64x64
+    Write-Log "Testing MSVC compiler..."
+    $clOutput = & (Join-Path $vcBin 'cl.exe') /? 2>&1
+    Write-Log "MSVC compiler test successful"
+  } else {
+    $vcBin = $null
+  }
+
+  $sdlBase  = Ensure-SDL2 -Version $config.versions.sdl2 -SdlRoot $config.paths.sdl2_root
+  $nodeJs   = Ensure-NodeJS -Version $config.versions.nodejs
+  $cudaHome = Ensure-CUDA -Version $config.versions.cuda
+
+  # Only write build config if we have all components
+  if ($vcBin -and $cudaHome -and $sdlBase) {
+    Write-BuildConfig -CudaHome $cudaHome -VcBin $vcBin -SdlBase $sdlBase -CudaArchs $config.cuda.architectures
+  } else {
+    Write-Log "Skipping build_config.json creation (some components were skipped)"
+  }
+
+  Write-Log ""
+  Write-Log "=== Setup Complete ==="
+  if ($python) { Write-Log "Python $($config.versions.python) installed at: $python" }
+  if ($cudaHome) { Write-Log "CUDA $($config.versions.cuda) installed at: $cudaHome" }
+  if ($nodeJs) { Write-Log "Node.js installed at: $nodeJs" }
+  if ($sdlBase) { Write-Log "SDL2 installed at: $sdlBase" }
+  Write-Log "Open a NEW terminal so PATH updates are visible, then build with:"
+  Write-Log "  pip install -v ."
+  Write-Log ""
+  Write-Log "Script completed successfully at $(Get-Date)"
+
+} catch {
+  Write-Log "ERROR: Script failed with error: $_"
+  Write-Log "Stack trace:"
+  Write-Log $_.ScriptStackTrace
+  Write-Log "Script failed at $(Get-Date)"
+  throw
 }
-
-$sdlBase  = Ensure-SDL2 -Version $config.versions.sdl2 -SdlRoot $config.paths.sdl2_root
-$nodeJs   = Ensure-NodeJS -Version $config.versions.nodejs
-$cudaHome = Ensure-CUDA -Version $config.versions.cuda
-
-# Only write build config if we have all components
-if ($vcBin -and $cudaHome -and $sdlBase) {
-  Write-BuildConfig -CudaHome $cudaHome -VcBin $vcBin -SdlBase $sdlBase -CudaArchs $config.cuda.architectures
-}
-
-Write-Host "`n=== Setup Complete ==="
-if ($python) { Write-Host "Python $($config.versions.python) installed at: $python" }
-if ($cudaHome) { Write-Host "CUDA $($config.versions.cuda) installed at: $cudaHome" }
-if ($nodeJs) { Write-Host "Node.js installed at: $nodeJs" }
-if ($sdlBase) { Write-Host "SDL2 installed at: $sdlBase" }
-Write-Host "Open a NEW terminal so PATH updates are visible, then build with:"
-Write-Host "  pip install -v ."
