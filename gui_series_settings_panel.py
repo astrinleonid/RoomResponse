@@ -1001,29 +1001,83 @@ class SeriesSettingsPanel:
             if st.button("📁 Export Series Data"):
                 self._export_series_data(export_individual, export_averaged, export_analysis)
         
-        # Configuration import/export
+        # Configuration file management
         st.markdown("---")
-        st.markdown("**Configuration Management**")
+        st.markdown("**Configuration File Management**")
         
+        # File operations
         col1, col2 = st.columns(2)
         
         with col1:
+            st.markdown("**Save Configuration**")
+            
+            # Default config filename
+            default_config_name = st.text_input(
+                "Config filename",
+                value="recorderConfig.json",
+                help="Name for the configuration file"
+            )
+            
+            save_col1, save_col2 = st.columns(2)
+            
+            with save_col1:
+                if st.button("💾 Save Config File", help="Save to project directory"):
+                    self._save_config_to_file(default_config_name)
+            
+            with save_col2:
+                if st.button("💾 Save as Default", help="Save as recorderConfig.json"):
+                    self._save_config_to_file("recorderConfig.json")
+            
+            # Show available config files
+            self._show_available_configs()
+        
+        with col2:
+            st.markdown("**Load Configuration**")
+            
+            # File selector for existing configs
+            config_files = self._get_config_files()
+            
+            if config_files:
+                selected_config = st.selectbox(
+                    "Select config file to load",
+                    config_files,
+                    help="Choose from existing configuration files"
+                )
+                
+                load_col1, load_col2 = st.columns(2)
+                
+                with load_col1:
+                    if st.button("📂 Load Selected"):
+                        self._load_config_from_file(selected_config)
+                        st.success(f"Loaded configuration from {selected_config}")
+                        st.rerun()
+                
+                with load_col2:
+                    if st.button("🗑️ Delete Selected"):
+                        self._delete_config_file(selected_config)
+                        st.success(f"Deleted {selected_config}")
+                        st.rerun()
+            else:
+                st.info("No configuration files found")
+            
+            # File upload as alternative
+            st.markdown("**Upload Config File**")
             uploaded_config = st.file_uploader(
-                "Import Series Config",
+                "Upload configuration",
                 type=['json'],
-                help="Load series configuration from file"
+                help="Upload configuration file from elsewhere"
             )
             
             if uploaded_config:
                 try:
                     config = json.load(uploaded_config)
                     self._import_series_config(config)
-                    st.success("Series configuration imported")
+                    st.success("Configuration imported from upload")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Import failed: {e}")
-        
-        with col2:
+            
+            # Reset option
             if st.button("🔄 Reset to Defaults"):
                 self._reset_series_defaults()
                 st.success("Reset to default settings")
@@ -1097,6 +1151,164 @@ class SeriesSettingsPanel:
                     
         except Exception as e:
             raise ValueError(f"Invalid configuration format: {e}")
+    
+    def _save_config_to_file(self, filename: str):
+        """Save current series configuration to a file in the project directory."""
+        try:
+            # Create the full configuration structure expected by RoomResponseRecorder
+            config = {
+                "sample_rate": st.session_state.get('audio_sample_rate', 48000),
+                "pulse_duration": st.session_state.get('series_pulse_duration', 8.0) / 1000.0,  # Convert to seconds
+                "pulse_fade": st.session_state.get('series_fade_duration', 0.1) / 1000.0,  # Convert to seconds
+                "cycle_duration": st.session_state.get('series_cycle_duration', 100.0) / 1000.0,  # Convert to seconds
+                "num_pulses": st.session_state.get('series_num_pulses', 8),
+                "volume": st.session_state.get('series_pulse_volume', 0.4),
+                "pulse_frequency": st.session_state.get('series_pulse_frequency', 1000.0),
+                "impulse_form": st.session_state.get('series_pulse_form', 'sine'),
+                
+                # Additional metadata for reference
+                "computer": st.session_state.get('audio_selected_input_device', 'Unknown_Computer'),
+                "room": st.session_state.get('audio_selected_output_device', 'Unknown_Room'),
+                
+                # Series-specific settings for future use
+                "series_config": {
+                    "record_extra_time_ms": st.session_state.get('series_record_extra_time', 200.0),
+                    "averaging_start_cycle": st.session_state.get('series_averaging_start_cycle', 2),
+                    "created_timestamp": time.time(),
+                    "created_by": "Series Settings Panel"
+                }
+            }
+            
+            # Save to project directory
+            file_path = Path(filename)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+            
+            st.success(f"Configuration saved to {file_path.absolute()}")
+            
+            # If saving as default, update the collect panel's config reference
+            if filename == "recorderConfig.json":
+                st.info("This configuration will now be used by the Collect panel")
+                
+        except Exception as e:
+            st.error(f"Failed to save configuration: {e}")
+    
+    def _get_config_files(self) -> list:
+        """Get list of available configuration files in the project directory."""
+        try:
+            config_files = []
+            
+            # Look for JSON files in current directory that might be configs
+            for file_path in Path('.').glob('*.json'):
+                try:
+                    # Try to read and validate it's a config file
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    
+                    # Check if it looks like a recorder config
+                    if any(key in config for key in ['sample_rate', 'pulse_duration', 'num_pulses']):
+                        config_files.append(file_path.name)
+                        
+                except:
+                    # Skip files that aren't valid JSON or don't look like configs
+                    continue
+            
+            # Always include recorderConfig.json if it exists
+            if Path('recorderConfig.json').exists() and 'recorderConfig.json' not in config_files:
+                config_files.append('recorderConfig.json')
+            
+            return sorted(config_files)
+            
+        except Exception:
+            return []
+    
+    def _show_available_configs(self):
+        """Show list of available configuration files."""
+        config_files = self._get_config_files()
+        
+        if config_files:
+            st.markdown("**Available Config Files:**")
+            for config_file in config_files:
+                try:
+                    file_path = Path(config_file)
+                    if file_path.exists():
+                        file_size = file_path.stat().st_size
+                        mod_time = file_path.stat().st_mtime
+                        mod_time_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mod_time))
+                        
+                        # Check if it's the current default
+                        indicator = " (default)" if config_file == "recorderConfig.json" else ""
+                        
+                        st.caption(f"📄 {config_file}{indicator} - {file_size} bytes - {mod_time_str}")
+                except:
+                    st.caption(f"📄 {config_file}")
+        else:
+            st.caption("No configuration files found")
+    
+    def _load_config_from_file(self, filename: str):
+        """Load configuration from a file and update session state."""
+        try:
+            file_path = Path(filename)
+            
+            if not file_path.exists():
+                st.error(f"Configuration file {filename} not found")
+                return
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Update session state with loaded values
+            # Handle both flat config and nested recorder_config structures
+            if 'recorder_config' in config:
+                config_data = config['recorder_config']
+            else:
+                config_data = config
+            
+            # Map config values to session state
+            if 'sample_rate' in config_data:
+                st.session_state['audio_sample_rate'] = config_data['sample_rate']
+            if 'pulse_duration' in config_data:
+                st.session_state['series_pulse_duration'] = config_data['pulse_duration'] * 1000.0  # Convert to ms
+            if 'pulse_fade' in config_data:
+                st.session_state['series_fade_duration'] = config_data['pulse_fade'] * 1000.0  # Convert to ms
+            if 'cycle_duration' in config_data:
+                st.session_state['series_cycle_duration'] = config_data['cycle_duration'] * 1000.0  # Convert to ms
+            if 'num_pulses' in config_data:
+                st.session_state['series_num_pulses'] = config_data['num_pulses']
+            if 'volume' in config_data:
+                st.session_state['series_pulse_volume'] = config_data['volume']
+            if 'pulse_frequency' in config_data:
+                st.session_state['series_pulse_frequency'] = config_data['pulse_frequency']
+            if 'impulse_form' in config_data:
+                st.session_state['series_pulse_form'] = config_data['impulse_form']
+            
+            # Load series-specific settings if available
+            series_config = config.get('series_config', {})
+            if 'record_extra_time_ms' in series_config:
+                st.session_state['series_record_extra_time'] = series_config['record_extra_time_ms']
+            if 'averaging_start_cycle' in series_config:
+                st.session_state['series_averaging_start_cycle'] = series_config['averaging_start_cycle']
+                
+        except Exception as e:
+            st.error(f"Failed to load configuration from {filename}: {e}")
+    
+    def _delete_config_file(self, filename: str):
+        """Delete a configuration file."""
+        try:
+            file_path = Path(filename)
+            
+            # Prevent deletion of the default config without confirmation
+            if filename == "recorderConfig.json":
+                st.warning("Cannot delete the default recorderConfig.json file through this interface")
+                return
+            
+            if file_path.exists():
+                file_path.unlink()
+            else:
+                st.warning(f"File {filename} not found")
+                
+        except Exception as e:
+            st.error(f"Failed to delete {filename}: {e}")
     
     def _reset_series_defaults(self):
         """Reset series settings to default values."""

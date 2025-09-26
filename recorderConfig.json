@@ -2,11 +2,17 @@
   "sample_rate": 48000,
   "pulse_duration": 0.008,
   "pulse_fade": 0.0001,
-  "cycle_duration": 0.1,
-  "num_pulses": 8,
-  "volume": 0.2,
-  "pulse_frequency": 1000,
-  "impulse_form": "sine",
-  "computer": "LeonidWorkstation",
-  "room": "SPbSmall"
+  "cycle_duration": 0.2,
+  "num_pulses": 6,
+  "volume": 0.4,
+  "pulse_frequency": 1000.0,
+  "impulse_form": "square",
+  "computer": "System Default",
+  "room": "System Default",
+  "series_config": {
+    "record_extra_time_ms": 200.0,
+    "averaging_start_cycle": 2,
+    "created_timestamp": 1758910613.3098996,
+    "created_by": "Series Settings Panel"
+  }
 }
