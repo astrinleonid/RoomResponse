@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
-GUI Collection Panel — DROP-IN REPLACEMENT (v5)
+GUI Collection Panel — DROP-IN REPLACEMENT (v6)
 
-What’s new in v5 (addresses your two issues):
-- **Warm‑up control**: default 0 (prevents the initial burst you heard). If you set >0, you can choose
-  **Burst** (very fast) or **Respect interval** (adds the configured interval between warm‑ups).
-- **Pause responsiveness**: the worker now checks pause **before starting each measurement** (pre‑measurement gate),
-  so pressing Pause prevents the next recording from starting even if you’re between cool‑downs.
-- Keeps v4 fixes: End→Start vs Start→Start interval modes, one‑time SDL beeper, watchdog timeout, 1 Hz safe auto‑refresh.
-
-Depends on: gui_series_worker.py (v5)
+v6 changes:
+- Removed dependency on collect_dataset
+- Duplicated _parse_series_expr and _load_defaults_from_config as local methods
+- Clean architecture with no cross-module dependencies
 """
 from __future__ import annotations
 import os
 import time
+import json
 import queue
 from typing import List, Dict, Any
 import streamlit as st
@@ -23,11 +20,7 @@ try:
     from DatasetCollector import SingleScenarioCollector
 except ImportError:
     SingleScenarioCollector = None  # type: ignore
-try:
-    from collect_dataset import _parse_series_expr, _load_defaults_from_config
-except ImportError:
-    _parse_series_expr = None  # type: ignore
-    _load_defaults_from_config = None  # type: ignore
+
 try:
     from gui_series_worker import SeriesWorker, WorkerCommand
 except Exception:
@@ -53,7 +46,7 @@ class CollectionPanel:
             return
         root = st.session_state.get(SK_DATASET_ROOT, os.getcwd())
         if not os.path.isdir(root):
-            st.error("❌ Please provide a valid dataset root directory to continue.", icon="📁")
+            st.error("❌ Please provide a valid dataset root directory to continue.", icon="📂")
             return
         config_data = self._load_configuration(root)
         mode = self._render_mode_selection()
@@ -68,24 +61,64 @@ class CollectionPanel:
         ok = True
         if SingleScenarioCollector is None:
             st.error("❌ DatasetCollector.SingleScenarioCollector not found.", icon="🔧"); ok = False
-        if _parse_series_expr is None:
-            st.error("❌ collect_dataset._parse_series_expr not available.", icon="🔧"); ok = False
         if SeriesWorker is None:
             st.error("❌ gui_series_worker.SeriesWorker not available. Add gui_series_worker.py.", icon="🔧"); ok = False
         if not ok:
-            st.info("Ensure DatasetCollector.py, collect_dataset.py, gui_series_worker.py are importable.")
+            st.info("Ensure DatasetCollector.py and gui_series_worker.py are importable.")
         return ok
+
+    def _parse_series_expr(self, expr: str) -> List[str]:
+        """
+        Parse series string like "0.1,0.2,1-3,7a".
+        - Numeric ranges (e.g., 1-3) expand to ['1','2','3']
+        - Non-numeric tokens pass through as-is (e.g., '0.1','7a')
+        """
+        out: List[str] = []
+        if not expr:
+            return out
+        for token in [t.strip() for t in expr.split(',') if t.strip()]:
+            if '-' in token:
+                a, b = token.split('-', 1)
+                if a.replace('.', '', 1).isdigit() and b.replace('.', '', 1).isdigit():
+                    # numeric range only
+                    if '.' in a or '.' in b:
+                        # float ranges are ambiguous; keep literal token
+                        out.append(token)
+                    else:
+                        ai, bi = int(a), int(b)
+                        step = 1 if bi >= ai else -1
+                        out.extend([str(i) for i in range(ai, bi + step, step)])
+                else:
+                    out.append(token)
+            else:
+                out.append(token)
+        # keep order, remove dups preserving first occurrence
+        seen = set()
+        uniq = []
+        for v in out:
+            if v not in seen:
+                seen.add(v)
+                uniq.append(v)
+        return uniq
+
+    def _load_defaults_from_config(self, cfg_path: str) -> dict:
+        """Load computer and room name defaults from recorder config file."""
+        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room"}
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                file_config = json.load(f)
+            for k in defaults:
+                if k in file_config:
+                    defaults[k] = file_config[k]
+            return defaults
+        except Exception:
+            return defaults
 
     def _load_configuration(self, root: str) -> Dict[str, Any]:
         cfg_path = os.path.join(root, "recorderConfig.json")
         if not os.path.exists(cfg_path):
             cfg_path = "recorderConfig.json"
-        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room"}
-        if _load_defaults_from_config is not None:
-            try:
-                defaults = _load_defaults_from_config(cfg_path)
-            except Exception:
-                pass
+        defaults = self._load_defaults_from_config(cfg_path)
         return {"defaults": defaults, "config_file": cfg_path}
 
     def _render_mode_selection(self) -> str:
@@ -122,16 +155,16 @@ class CollectionPanel:
             try:
                 resolved = os.path.abspath(output_dir)
                 if os.path.isdir(resolved):
-                    st.success(f"✓ Output directory: {resolved}", icon="📁")
+                    st.success(f"✓ Output directory: {resolved}", icon="📂")
                 elif os.path.exists(resolved):
-                    st.error("⚠️ Path exists but is not a directory", icon="📁")
+                    st.error("⚠️ Path exists but is not a directory", icon="📂")
                 else:
-                    st.warning(f"⚠️ Directory will be created: {resolved}", icon="📁")
+                    st.warning(f"⚠️ Directory will be created: {resolved}", icon="📂")
             except Exception as e:
                 st.error(f"Invalid path: {e}"); resolved = default_output
         with oc2:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("📁 Use Dataset Root"):
+            if st.button("📂 Use Dataset Root"):
                 st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = st.session_state.get(SK_DATASET_ROOT, os.getcwd()); st.rerun()
         st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = resolved
 
@@ -155,7 +188,7 @@ class CollectionPanel:
         if common_cfg["computer_name"] and common_cfg["room_name"] and scenario_number:
             scenario_name = f"{common_cfg['computer_name']}-Scenario{scenario_number}-{common_cfg['room_name']}"
             scenario_path = os.path.join(common_cfg["output_dir"], scenario_name)
-            st.info(f"📁 Scenario will be saved as: `{scenario_name}`"); st.caption(f"📍 Full path: `{scenario_path}`")
+            st.info(f"📁 Scenario will be saved as: `{scenario_name}`"); st.caption(f"📂 Full path: `{scenario_path}`")
         st.markdown("### Execute Collection")
         if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True):
             SingleScenarioExecutor(self.scenario_manager).execute(common_config=common_cfg, scenario_number=scenario_number, description=description)
@@ -187,7 +220,7 @@ class CollectionPanel:
                     "Interval mode",
                     ["End→Start (minimum rest)", "Start→Start (fixed cadence)"],
                     index=0,
-                    help="End→Start ensures cool‑down ≥ interval after each measurement. Start→Start keeps cadence when possible.")
+                    help="End→Start ensures cooldown ≥ interval after each measurement. Start→Start keeps cadence when possible.")
                 interval_mode = "end_to_start" if interval_mode_label.startswith("End") else "start_to_start"
                 warmup_n = st.number_input("Warm‑up measurements", 0, 10, 0, 1,
                                            help="Runs before the first real scenario to prime devices. Default 0. If >0, choose spacing below.")
@@ -197,7 +230,7 @@ class CollectionPanel:
 
         parsed = self._preview_series(series_scenarios, common_cfg)
         if parsed:
-            st.caption(f"📍 All scenarios will be saved to: `{common_cfg['output_dir']}`")
+            st.caption(f"📁 All scenarios will be saved to: `{common_cfg['output_dir']}`")
 
         st.markdown("### Execute Series (Background)")
         btn_cols = st.columns([2, 2, 2, 2])
@@ -253,10 +286,10 @@ class CollectionPanel:
         self._render_series_status()
 
     def _preview_series(self, expr: str, common_cfg: Dict[str, Any]) -> List[str]:
-        if not expr or _parse_series_expr is None:
+        if not expr:
             return []
         try:
-            parsed = _parse_series_expr(expr)
+            parsed = self._parse_series_expr(expr)
         except Exception as e:
             st.error(f"❌ Error parsing series: {e}"); return []
         if parsed:
@@ -350,7 +383,7 @@ class SingleScenarioExecutor:
             st.info("🎵 Collection started (blocking). Monitor the console for progress.")
             collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
             st.success(f"🎉 Successfully collected scenario: {scenario_name}")
-            st.info(f"📁 Data saved to: {collector.scenario_dir}")
+            st.info(f"📂 Data saved to: {collector.scenario_dir}")
         except Exception as e:
             st.error(f"❌ Collection failed: {e}")
             st.info("Check the terminal/console for detailed error information.")

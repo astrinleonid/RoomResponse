@@ -8,6 +8,8 @@
 # Build directories
 build/
 dist/
+piano/
+/piano/
 *.egg-info/
 sdl_audio_core/build/
 

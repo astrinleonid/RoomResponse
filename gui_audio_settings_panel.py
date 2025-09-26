@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-Audio Settings Panel - Device Configuration and Diagnostics (Corrected)
+Audio Settings Panel - Device Configuration and Diagnostics
 
-Updated to work with actual SDL audio core function names.
-This version gracefully handles missing functions and uses available alternatives.
+This version is corrected to work with the actual SDL audio core bindings
+as defined in python_bindings.cpp. Uses the correct function names and
+return formats from your compiled SDL module.
+
+Includes integration with SinglePulseRecorder component for extended functionality.
+
+Save this file as: gui_audio_settings_panel.py
 """
 
 import os
 import sys
 import time
 import json
-import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import streamlit as st
-import numpy as np
 
 # Audio core imports
 try:
@@ -31,6 +34,20 @@ except ImportError:
     RECORDER_AVAILABLE = False
     RoomResponseRecorder = None
 
+# Import the single pulse recorder component
+try:
+    from gui_single_pulse_recorder import SinglePulseRecorder
+    PULSE_RECORDER_AVAILABLE = True
+except ImportError:
+    PULSE_RECORDER_AVAILABLE = False
+    SinglePulseRecorder = None
+
+try:
+    from gui_series_settings_panel import SeriesSettingsPanel
+    SERIES_SETTINGS_AVAILABLE = True
+except ImportError:
+    SERIES_SETTINGS_AVAILABLE = False
+    SeriesSettingsPanel = None
 
 class AudioSettingsPanel:
     """Audio device configuration and diagnostics panel."""
@@ -40,52 +57,6 @@ class AudioSettingsPanel:
         self.recorder = None
         self._audio_test_active = False
         self._test_results = {}
-        self._available_functions = self._detect_available_functions()
-        
-    def _detect_available_functions(self) -> Dict[str, str]:
-        """Detect which SDL functions are actually available."""
-        function_map = {}
-        
-        if not SDL_AVAILABLE:
-            return function_map
-        
-        # Check for version info functions
-        for version_func in ['get_sdl_version', 'get_version', 'SDL_VERSION', '__version__']:
-            if hasattr(sdl, version_func):
-                function_map['version'] = version_func
-                break
-        
-        # Check for build info functions
-        for build_func in ['get_build_info', 'build_info', 'get_info']:
-            if hasattr(sdl, build_func):
-                function_map['build_info'] = build_func
-                break
-        
-        # Check for driver functions
-        for driver_func in ['get_audio_drivers', 'get_drivers', 'list_drivers']:
-            if hasattr(sdl, driver_func):
-                function_map['drivers'] = driver_func
-                break
-        
-        # Check for device listing functions
-        for device_func in ['list_all_devices', 'get_devices', 'enumerate_devices']:
-            if hasattr(sdl, device_func):
-                function_map['devices'] = device_func
-                break
-        
-        # Check for input device functions
-        for input_func in ['get_input_devices', 'list_input_devices']:
-            if hasattr(sdl, input_func):
-                function_map['input_devices'] = input_func
-                break
-        
-        # Check for output device functions
-        for output_func in ['get_output_devices', 'list_output_devices']:
-            if hasattr(sdl, output_func):
-                function_map['output_devices'] = output_func
-                break
-        
-        return function_map
         
     def render(self):
         """Main panel rendering method."""
@@ -95,10 +66,10 @@ class AudioSettingsPanel:
             st.error("SDL Audio Core not available. Please build and install sdl_audio_core.")
             self._render_build_instructions()
             return
-            
-        # Show available functions for debugging
-        if st.checkbox("Show Debug Info", value=False):
-            self._render_debug_info()
+        
+        # Show debug info about available SDL functions
+        with st.expander("SDL Debug Info"):
+            self._render_sdl_debug_info()
             
         # Initialize session state
         self._init_session_state()
@@ -107,13 +78,22 @@ class AudioSettingsPanel:
         self._render_audio_status_bar()
         
         # Main tabs
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "System Info", 
-            "Device Selection", 
-            "Parameters", 
-            "Diagnostics"
-        ])
-        
+        if SERIES_SETTINGS_AVAILABLE:
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "System Info", 
+                "Device Selection", 
+                "Parameters",
+                "Testing",
+                "Series Settings"
+            ])
+        else:
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "System Info", 
+                "Device Selection", 
+                "Parameters",
+                "Testing"
+            ])
+
         with tab1:
             self._render_system_info()
             
@@ -124,34 +104,69 @@ class AudioSettingsPanel:
             self._render_audio_parameters()
             
         with tab4:
-            self._render_diagnostics_and_test()
+            self._render_testing_panel()
+
+        # Add the new Series Settings tab
+        if SERIES_SETTINGS_AVAILABLE:
+            with tab5:
+                if not hasattr(self, '_series_settings_panel'):
+                    self._series_settings_panel = SeriesSettingsPanel(audio_settings_panel=self)
+                self._series_settings_panel.render()
     
-    def _render_debug_info(self):
-        """Show debug information about available SDL functions."""
-        st.markdown("**SDL Module Debug Info:**")
+    def _render_sdl_debug_info(self):
+        """Show available SDL functions for debugging."""
+        st.markdown("**Available SDL Functions:**")
         
-        # Show all available attributes
-        all_attrs = [attr for attr in dir(sdl) if not attr.startswith('_')]
-        st.write(f"Available attributes: {', '.join(all_attrs)}")
-        
-        # Show detected function mappings
-        st.write("Function mappings:", self._available_functions)
-        
-        # Try to call each function safely
-        st.markdown("**Function Test Results:**")
-        for func_type, func_name in self._available_functions.items():
+        if SDL_AVAILABLE:
+            all_funcs = [attr for attr in dir(sdl) if not attr.startswith('_')]
+            st.code('\n'.join(all_funcs))
+            
+            # Test the actual functions from your bindings
+            st.markdown("**Function Tests:**")
+            
+            # Test list_all_devices (this should work)
             try:
-                func = getattr(sdl, func_name)
-                result = func()
-                st.success(f"{func_type} ({func_name}): {str(result)[:100]}")
+                devices = sdl.list_all_devices()
+                st.success(f"list_all_devices(): Works - found {len(devices.get('input_devices', []))} input, {len(devices.get('output_devices', []))} output devices")
             except Exception as e:
-                st.error(f"{func_type} ({func_name}): Error - {e}")
+                st.error(f"list_all_devices(): Error - {e}")
+            
+            # Test get_version (this should work)
+            try:
+                version = sdl.get_version()
+                st.success(f"get_version(): Works - {version}")
+            except Exception as e:
+                st.error(f"get_version(): Error - {e}")
+            
+            # Test get_build_info (this should work)
+            try:
+                build_info = sdl.get_build_info()
+                st.success(f"get_build_info(): Works - {type(build_info)}")
+            except Exception as e:
+                st.error(f"get_build_info(): Error - {e}")
+            
+            # Test AudioEngine static methods
+            try:
+                engine_class = getattr(sdl, 'AudioEngine')
+                drivers = engine_class.get_audio_drivers()
+                st.success(f"AudioEngine.get_audio_drivers(): Works - {len(drivers)} drivers")
+            except Exception as e:
+                st.error(f"AudioEngine.get_audio_drivers(): Error - {e}")
+            
+            try:
+                engine_class = getattr(sdl, 'AudioEngine')
+                sdl_version = engine_class.get_sdl_version()
+                st.success(f"AudioEngine.get_sdl_version(): Works - {sdl_version}")
+            except Exception as e:
+                st.error(f"AudioEngine.get_sdl_version(): Error - {e}")
+        else:
+            st.error("SDL not available")
     
     def _init_session_state(self):
         """Initialize session state variables."""
         defaults = {
-            'selected_input_device': None,
-            'selected_output_device': None,
+            'selected_input_device': 'System Default',
+            'selected_output_device': 'System Default',
             'sample_rate': 48000,
             'buffer_size': 512,
             'input_channels': 1,
@@ -159,7 +174,6 @@ class AudioSettingsPanel:
             'test_frequency': 1000.0,
             'test_duration': 2.0,
             'test_volume': 0.3,
-            'audio_driver': 'default',
             'last_device_scan': 0,
             'device_cache': {}
         }
@@ -170,144 +184,139 @@ class AudioSettingsPanel:
     
     def _render_audio_status_bar(self):
         """Render quick status overview."""
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if SDL_AVAILABLE:
-                st.success("SDL Ready")
-            else:
-                st.error("SDL Missing")
+            st.success("SDL Ready" if SDL_AVAILABLE else "SDL Missing")
         
         with col2:
             input_dev = st.session_state.get('audio_selected_input_device', 'None')
-            display_input = (input_dev[:15] + "...") if input_dev and len(input_dev) > 15 else (input_dev or "None")
-            st.info(f"Input: {display_input}")
+            display_input = (input_dev[:15] + "...") if len(str(input_dev)) > 15 else str(input_dev)
+            st.info(f"In: {display_input}")
         
         with col3:
             output_dev = st.session_state.get('audio_selected_output_device', 'None') 
-            display_output = (output_dev[:15] + "...") if output_dev and len(output_dev) > 15 else (output_dev or "None")
-            st.info(f"Output: {display_output}")
+            display_output = (output_dev[:15] + "...") if len(str(output_dev)) > 15 else str(output_dev)
+            st.info(f"Out: {display_output}")
         
         with col4:
             sample_rate = st.session_state.get('audio_sample_rate', 48000)
             buffer_size = st.session_state.get('audio_buffer_size', 512)
             latency_ms = (buffer_size / sample_rate) * 1000
-            st.info(f"{sample_rate//1000}kHz | {latency_ms:.1f}ms")
+            st.info(f"{sample_rate//1000}kHz/{latency_ms:.0f}ms")
     
     def _render_build_instructions(self):
         """Show build instructions when SDL is not available."""
         st.markdown("""
         ### SDL Audio Core Required
         
-        The audio functionality requires the compiled SDL audio core module.
+        Run the build script to compile the audio module:
         
-        **Build Instructions:**
+        ```bash
+        # From project root
+        build_sdl_audio.bat
+        ```
         
-        1. **Windows (using build script):**
-           ```bash
-           # Run from project root directory
-           build_sdl_audio.bat
-           ```
-        
-        2. **Manual build:**
-           ```bash
-           cd sdl_audio_core
-           python setup.py build_ext --inplace
-           pip install -e .
-           ```
-        
-        3. **Verify installation:**
-           ```python
-           import sdl_audio_core as sdl
-           print("Available functions:", dir(sdl))
-           ```
+        Or manually:
+        ```bash
+        cd sdl_audio_core
+        python setup.py build_ext --inplace
+        pip install -e .
+        ```
         """)
-    
-    def _safe_call(self, func_type: str, default_return=None):
-        """Safely call an SDL function with error handling."""
-        if func_type not in self._available_functions:
-            return default_return
-        
-        try:
-            func_name = self._available_functions[func_type]
-            func = getattr(sdl, func_name)
-            return func()
-        except Exception as e:
-            st.warning(f"Error calling {func_type}: {e}")
-            return default_return
     
     def _render_system_info(self):
         """Render audio system information."""
-        st.subheader("Audio System Information")
+        st.subheader("SDL Audio Core Status")
+        
+        if not SDL_AVAILABLE:
+            st.error("SDL Audio Core not loaded")
+            return
+        
+        # Basic SDL info using actual functions
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**SDL Module Info**")
+            st.success("SDL Audio Core: Available")
+            
+            # Get version using actual function
+            try:
+                version = sdl.get_version()
+                st.info(f"Version: {version}")
+            except Exception as e:
+                st.warning(f"Version unavailable: {e}")
+            
+            # Get SDL version through AudioEngine
+            try:
+                sdl_version = sdl.AudioEngine.get_sdl_version()
+                st.info(f"SDL Version: {sdl_version}")
+            except Exception as e:
+                st.warning(f"SDL version unavailable: {e}")
+        
+        with col2:
+            st.markdown("**Build Information**")
+            
+            # Get build info using actual function
+            try:
+                build_info = sdl.get_build_info()
+                if isinstance(build_info, dict):
+                    for key, value in build_info.items():
+                        if key != 'python_version':  # Skip long python version
+                            st.write(f"**{key}:** {value}")
+                else:
+                    st.info(f"Build info: {build_info}")
+            except Exception as e:
+                st.warning(f"Build info unavailable: {e}")
+        
+        # Driver information
+        st.markdown("---")
+        st.markdown("**Audio Drivers**")
         
         try:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**SDL Audio Core**")
-                
-                # Try to get version info
-                version_info = self._safe_call('version', 'Unknown')
-                if version_info != 'Unknown':
-                    st.success(f"SDL Version: {version_info}")
-                else:
-                    st.info("SDL Version: Not available")
-                
-                # Try to get build info
-                build_info = self._safe_call('build_info', 'Unknown')
-                if build_info != 'Unknown':
-                    st.info(f"Build: {build_info}")
-                else:
-                    st.info("Build Info: Not available")
-            
-            with col2:
-                st.markdown("**System Audio**")
-                
-                # Try to get drivers
-                drivers = self._safe_call('drivers', [])
-                if drivers:
-                    st.write(f"Available drivers: {len(drivers)}")
-                    st.caption(", ".join(drivers[:3]) + ("..." if len(drivers) > 3 else ""))
-                else:
-                    st.info("Driver info not available")
-                
-                current_driver = st.session_state.get('audio_audio_driver', 'default')
-                st.write(f"Selected driver: {current_driver}")
-            
-            # Device summary
-            st.markdown("---")
-            self._render_device_summary()
-            
+            drivers = sdl.AudioEngine.get_audio_drivers()
+            st.success(f"Available drivers: {len(drivers)}")
+            st.caption(", ".join(drivers))
         except Exception as e:
-            st.error(f"Error retrieving system information: {e}")
-    
-    def _render_device_summary(self):
-        """Show device count and quick stats."""
-        st.markdown("**Audio Devices Overview**")
+            st.warning(f"Driver info unavailable: {e}")
+        
+        # Device count using actual function
+        st.markdown("---")
+        st.markdown("**Audio Devices**")
         
         try:
-            devices = self._get_audio_devices()
-            input_devices = devices.get('input', [])
-            output_devices = devices.get('output', [])
+            devices = sdl.list_all_devices()
+            input_count = len(devices.get('input_devices', []))
+            output_count = len(devices.get('output_devices', []))
             
             col1, col2, col3 = st.columns(3)
-            
             with col1:
-                st.metric("Input Devices", len(input_devices))
-            
+                st.metric("Input Devices", input_count)
             with col2:
-                st.metric("Output Devices", len(output_devices))
-            
+                st.metric("Output Devices", output_count)
             with col3:
-                total_devices = len(input_devices) + len(output_devices)
-                st.metric("Total Devices", total_devices)
+                st.metric("Total Devices", input_count + output_count)
                 
         except Exception as e:
-            st.error(f"Error getting device summary: {e}")
+            st.error(f"Error getting devices: {e}")
+        
+        # Test installation
+        st.markdown("---")
+        st.markdown("**Installation Test**")
+        
+        if st.button("Run Installation Check"):
+            try:
+                result = sdl.check_installation()
+                if result:
+                    st.success("Installation check passed!")
+                else:
+                    st.error("Installation check failed")
+            except Exception as e:
+                st.error(f"Installation check error: {e}")
     
     def _render_device_selection(self):
         """Render device selection interface."""
-        st.subheader("Audio Device Selection")
+        st.subheader("Audio Device Configuration")
         
         col1, col2 = st.columns([1, 2])
         
@@ -319,31 +328,32 @@ class AudioSettingsPanel:
             last_scan = st.session_state.get('audio_last_device_scan', 0)
             if last_scan > 0:
                 scan_time = time.strftime('%H:%M:%S', time.localtime(last_scan))
-                st.info(f"Last device scan: {scan_time}")
+                st.info(f"Last scan: {scan_time}")
         
-        try:
-            devices = self._get_audio_devices()
+        # Get devices using the correct SDL function
+        devices = self._get_audio_devices()
+        
+        if devices and (devices.get('input') or devices.get('output')):
+            # Input devices
+            st.markdown("**Input Devices**")
+            input_devices = devices.get('input', [])
+            self._render_device_selector('input', input_devices)
             
-            if not devices.get('input') and not devices.get('output'):
-                st.warning("No audio devices found. Try refreshing or check your audio drivers.")
-                return
-            
-            # Input device selection
             st.markdown("---")
-            self._render_input_device_selection(devices)
             
-            # Output device selection
-            st.markdown("---") 
-            self._render_output_device_selection(devices)
-            
-            # Driver selection (if drivers are available)
-            drivers = self._safe_call('drivers', [])
-            if drivers:
-                st.markdown("---")
-                self._render_driver_selection(drivers)
-            
-        except Exception as e:
-            st.error(f"Error loading devices: {e}")
+            # Output devices  
+            st.markdown("**Output Devices**")
+            output_devices = devices.get('output', [])
+            self._render_device_selector('output', output_devices)
+        else:
+            st.warning("No audio devices found")
+            st.markdown("""
+            **Troubleshooting:**
+            - Check that audio drivers are installed
+            - Restart the application  
+            - Close other audio applications
+            - Check Windows audio settings
+            """)
     
     def _refresh_audio_devices(self):
         """Refresh the audio device list."""
@@ -352,11 +362,16 @@ class AudioSettingsPanel:
             st.session_state['audio_last_device_scan'] = time.time()
             
             try:
-                devices = self._safe_call('devices', {'input': [], 'output': []})
-                st.session_state['audio_device_cache'] = devices
+                devices = sdl.list_all_devices()
+                # Convert to expected format
+                formatted_devices = {
+                    'input': devices.get('input_devices', []),
+                    'output': devices.get('output_devices', [])
+                }
+                st.session_state['audio_device_cache'] = formatted_devices
                 
-                input_count = len(devices.get('input', []))
-                output_count = len(devices.get('output', []))
+                input_count = len(formatted_devices['input'])
+                output_count = len(formatted_devices['output'])
                 st.success(f"Found {input_count} input and {output_count} output devices")
                 
             except Exception as e:
@@ -364,119 +379,108 @@ class AudioSettingsPanel:
                 
         st.rerun()
     
-    def _get_audio_devices(self) -> Dict[str, List[Dict]]:
+    def _get_audio_devices(self) -> Dict[str, List]:
         """Get cached or fresh audio device list."""
         cache_key = 'audio_device_cache'
         
         if not st.session_state.get(cache_key):
             try:
-                devices = self._safe_call('devices', {'input': [], 'output': []})
-                st.session_state[cache_key] = devices
-                st.session_state['audio_last_device_scan'] = time.time()
+                # Use the actual function from your bindings
+                devices = sdl.list_all_devices()
+                
+                # Your bindings return a dict with 'input_devices' and 'output_devices' keys
+                if isinstance(devices, dict):
+                    # Convert to expected format
+                    formatted_devices = {
+                        'input': devices.get('input_devices', []),
+                        'output': devices.get('output_devices', [])
+                    }
+                    st.session_state[cache_key] = formatted_devices
+                    st.session_state['audio_last_device_scan'] = time.time()
+                    return formatted_devices
+                
             except Exception as e:
                 st.error(f"Failed to get devices: {e}")
-                return {'input': [], 'output': []}
         
         return st.session_state.get(cache_key, {'input': [], 'output': []})
     
-    def _render_input_device_selection(self, devices: Dict[str, List]):
-        """Render input device selection."""
-        st.markdown("**Input Device (Microphone)**")
-        
-        input_devices = devices.get('input', [])
-        
-        if not input_devices:
-            st.warning("No input devices found")
+    def _render_device_selector(self, device_type: str, devices: List):
+        """Render device selector for input or output."""
+        if not devices:
+            st.warning(f"No {device_type} devices found")
             return
         
         # Create device options
-        device_options = ["System Default"]
-        for dev in input_devices:
-            name = dev.get('name', 'Unknown Device') if isinstance(dev, dict) else str(dev)
-            device_id = dev.get('id', '?') if isinstance(dev, dict) else '?'
-            option_text = f"{name} (ID: {device_id})"
-            device_options.append(option_text)
+        options = ["System Default"]
+        
+        for i, device in enumerate(devices):
+            if isinstance(device, dict):
+                name = device.get('name', f'Device {i}')
+                device_id = device.get('device_id', i)
+                options.append(f"{name} (ID: {device_id})")
+            else:
+                # Handle case where device is just a string or other format
+                options.append(str(device))
         
         # Current selection
-        current_selection = st.session_state.get('audio_selected_input_device')
+        session_key = f'audio_selected_{device_type}_device'
+        current = st.session_state.get(session_key, 'System Default')
+        
         try:
-            current_idx = device_options.index(current_selection) if current_selection in device_options else 0
+            current_idx = options.index(current) if current in options else 0
         except:
             current_idx = 0
         
+        # Device selector
         selected = st.selectbox(
-            "Select Input Device",
-            device_options,
+            f"Select {device_type.title()} Device",
+            options,
             index=current_idx,
-            key="input_device_selector"
+            key=f"{device_type}_device_selector"
         )
         
-        st.session_state['audio_selected_input_device'] = selected
-    
-    def _render_output_device_selection(self, devices: Dict[str, List]):
-        """Render output device selection."""
-        st.markdown("**Output Device (Speakers/Headphones)**")
+        st.session_state[session_key] = selected
         
-        output_devices = devices.get('output', [])
-        
-        if not output_devices:
-            st.warning("No output devices found")
-            return
-        
-        # Create device options
-        device_options = ["System Default"]
-        for dev in output_devices:
-            name = dev.get('name', 'Unknown Device') if isinstance(dev, dict) else str(dev)
-            device_id = dev.get('id', '?') if isinstance(dev, dict) else '?'
-            option_text = f"{name} (ID: {device_id})"
-            device_options.append(option_text)
-        
-        # Current selection
-        current_selection = st.session_state.get('audio_selected_output_device')
-        try:
-            current_idx = device_options.index(current_selection) if current_selection in device_options else 0
-        except:
-            current_idx = 0
-        
-        selected = st.selectbox(
-            "Select Output Device",
-            device_options,
-            index=current_idx,
-            key="output_device_selector"
-        )
-        
-        st.session_state['audio_selected_output_device'] = selected
-    
-    def _render_driver_selection(self, drivers: List[str]):
-        """Render audio driver selection."""
-        st.markdown("**Audio Driver**")
-        
-        driver_options = ["default"] + drivers
-        
-        current_driver = st.session_state.get('audio_audio_driver', 'default')
-        try:
-            current_idx = driver_options.index(current_driver)
-        except:
-            current_idx = 0
-        
-        selected_driver = st.selectbox(
-            "Select Audio Driver",
-            driver_options,
-            index=current_idx,
-            help="Audio driver affects latency and compatibility"
-        )
-        
-        st.session_state['audio_audio_driver'] = selected_driver
+        # Show device details if available
+        if selected != "System Default" and len(devices) > 0:
+            try:
+                device_idx = options.index(selected) - 1
+                if 0 <= device_idx < len(devices):
+                    device = devices[device_idx]
+                    if isinstance(device, dict):
+                        with st.expander(f"{device_type.title()} Device Details"):
+                            for key, value in device.items():
+                                st.write(f"**{key.title()}:** {value}")
+            except:
+                pass
     
     def _render_audio_parameters(self):
-        """Render audio parameter configuration."""
+        """Render audio parameter configuration with single pulse recording integration."""
         st.subheader("Audio Parameters")
         
-        # Core parameters
+        # Preset buttons
+        st.markdown("**Quick Presets**")
+        preset_col1, preset_col2, preset_col3 = st.columns(3)
+        
+        with preset_col1:
+            if st.button("Low Latency"):
+                self._apply_preset("low_latency")
+        
+        with preset_col2:
+            if st.button("Balanced"):
+                self._apply_preset("balanced")
+        
+        with preset_col3:
+            if st.button("High Quality"):
+                self._apply_preset("high_quality")
+        
+        st.markdown("---")
+        
+        # Core parameters in columns
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**Core Parameters**")
+            st.markdown("**Core Settings**")
             
             # Sample Rate
             sample_rates = [8000, 16000, 22050, 44100, 48000, 88200, 96000]
@@ -485,14 +489,14 @@ class AudioSettingsPanel:
             try:
                 rate_idx = sample_rates.index(current_rate)
             except:
-                rate_idx = sample_rates.index(48000)
+                rate_idx = 4  # 48000 Hz
             
-            selected_rate = st.selectbox(
+            st.session_state['audio_sample_rate'] = st.selectbox(
                 "Sample Rate (Hz)",
                 sample_rates,
-                index=rate_idx
+                index=rate_idx,
+                help="Audio sample rate - higher is better quality"
             )
-            st.session_state['audio_sample_rate'] = selected_rate
             
             # Buffer Size
             buffer_sizes = [64, 128, 256, 512, 1024, 2048]
@@ -501,18 +505,28 @@ class AudioSettingsPanel:
             try:
                 buffer_idx = buffer_sizes.index(current_buffer)
             except:
-                buffer_idx = buffer_sizes.index(512)
+                buffer_idx = 3  # 512 samples
             
-            selected_buffer = st.selectbox(
+            st.session_state['audio_buffer_size'] = st.selectbox(
                 "Buffer Size (samples)",
                 buffer_sizes,
-                index=buffer_idx
+                index=buffer_idx,
+                help="Audio buffer size - smaller = lower latency"
             )
-            st.session_state['audio_buffer_size'] = selected_buffer
             
-            # Show estimated latency
-            latency_ms = (selected_buffer / selected_rate) * 1000
-            st.info(f"Estimated latency: {latency_ms:.1f} ms")
+            # Calculate and show latency
+            sample_rate = st.session_state['audio_sample_rate']
+            buffer_size = st.session_state['audio_buffer_size']
+            latency_ms = (buffer_size / sample_rate) * 1000
+            
+            if latency_ms < 10:
+                st.success(f"Latency: {latency_ms:.1f} ms (Excellent)")
+            elif latency_ms < 20:
+                st.info(f"Latency: {latency_ms:.1f} ms (Good)")
+            elif latency_ms < 50:
+                st.warning(f"Latency: {latency_ms:.1f} ms (Acceptable)")
+            else:
+                st.error(f"Latency: {latency_ms:.1f} ms (High)")
         
         with col2:
             st.markdown("**Channel Configuration**")
@@ -531,130 +545,371 @@ class AudioSettingsPanel:
                 format_func=lambda x: "Mono" if x == 1 else "Stereo"
             )
         
-        # Test parameters
-        st.markdown("---")
-        st.markdown("**Test Signal Parameters**")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.session_state['audio_test_frequency'] = st.number_input(
-                "Test Frequency (Hz)",
-                min_value=50.0,
-                max_value=20000.0,
-                value=st.session_state.get('audio_test_frequency', 1000.0),
-                step=50.0
-            )
-        
-        with col2:
-            st.session_state['audio_test_duration'] = st.number_input(
-                "Test Duration (seconds)",
-                min_value=0.5,
-                max_value=10.0,
-                value=st.session_state.get('audio_test_duration', 2.0),
-                step=0.1
-            )
-        
-        with col3:
-            st.session_state['audio_test_volume'] = st.slider(
-                "Test Volume",
-                min_value=0.0,
-                max_value=1.0,
-                value=st.session_state.get('audio_test_volume', 0.3),
-                step=0.05
-            )
-    
-    def _render_diagnostics_and_test(self):
-        """Render audio diagnostics and testing interface."""
-        st.subheader("Audio System Diagnostics")
-        
-        # System check
-        if st.button("Run System Check"):
-            self._run_system_check()
-        
+        # Single Pulse Recording Section
         st.markdown("---")
         
-        # Simple audio tests (simulated for now)
-        st.markdown("**Audio Tests**")
-        st.info("Audio testing functionality would be implemented here.")
-        st.info("This requires integration with the actual RoomResponseRecorder.")
+        if PULSE_RECORDER_AVAILABLE:
+            # Create and render the single pulse recorder component
+            if not hasattr(self, '_pulse_recorder'):
+                self._pulse_recorder = SinglePulseRecorder(audio_settings_panel=self)
+            
+            self._pulse_recorder.render()
+        else:
+            st.error("Single Pulse Recorder component not available. Please install gui_single_pulse_recorder.py")
+        
+        # Legacy test signal parameters (kept for compatibility with existing testing functions)
+        st.markdown("---")
+        st.markdown("**Legacy Test Parameters**")
+        
+        with st.expander("Advanced Test Settings", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.session_state['audio_test_frequency'] = st.number_input(
+                    "Test Frequency (Hz)",
+                    min_value=20.0,
+                    max_value=20000.0,
+                    value=st.session_state.get('audio_test_frequency', 1000.0),
+                    step=50.0
+                )
+            
+            with col2:
+                st.session_state['audio_test_duration'] = st.number_input(
+                    "Test Duration (sec)",
+                    min_value=0.1,
+                    max_value=10.0,
+                    value=st.session_state.get('audio_test_duration', 2.0),
+                    step=0.1
+                )
+            
+            with col3:
+                st.session_state['audio_test_volume'] = st.slider(
+                    "Test Volume",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=st.session_state.get('audio_test_volume', 0.3),
+                    step=0.05
+                )
         
         # Configuration management
         st.markdown("---")
         self._render_config_management()
     
-    def _run_system_check(self):
-        """Run a basic system diagnostic."""
-        with st.spinner("Running system diagnostics..."):
-            results = {}
+    def _apply_preset(self, preset_type: str):
+        """Apply audio parameter presets."""
+        presets = {
+            "low_latency": {
+                'audio_sample_rate': 48000,
+                'audio_buffer_size': 128,
+            },
+            "balanced": {
+                'audio_sample_rate': 48000,
+                'audio_buffer_size': 512,
+            },
+            "high_quality": {
+                'audio_sample_rate': 96000,
+                'audio_buffer_size': 1024,
+            }
+        }
+        
+        if preset_type in presets:
+            for key, value in presets[preset_type].items():
+                st.session_state[key] = value
             
-            # Check SDL availability
-            results['SDL Available'] = SDL_AVAILABLE
-            
-            # Check available functions
-            results['Functions Available'] = len(self._available_functions)
-            
-            # Check device availability
-            try:
-                devices = self._get_audio_devices()
-                results['Input Devices'] = len(devices.get('input', []))
-                results['Output Devices'] = len(devices.get('output', []))
-            except:
-                results['Device Scan'] = 'Failed'
-            
-            # Display results
-            st.markdown("**Diagnostic Results:**")
-            for check, result in results.items():
-                if isinstance(result, bool):
-                    icon = "OK" if result else "FAIL"
-                    st.write(f"{icon} {check}")
-                else:
-                    st.write(f"INFO {check}: {result}")
+            st.success(f"Applied {preset_type.replace('_', ' ').title()} preset")
+            st.rerun()
     
-    def _render_config_management(self):
-        """Render configuration management."""
-        st.markdown("**Configuration Management**")
+    def _render_testing_panel(self):
+        """Render audio testing interface using actual SDL functions."""
+        st.subheader("Audio Testing")
+        
+        # Quick device test
+        st.markdown("**Quick Device Test**")
+        
+        # Get current device selections
+        input_dev = st.session_state.get('audio_selected_input_device', 'System Default')
+        output_dev = st.session_state.get('audio_selected_output_device', 'System Default')
+        
+        st.info(f"Current selection: {input_dev} -> {output_dev}")
         
         col1, col2 = st.columns(2)
         
         with col1:
+            if st.button("Test Device Combination"):
+                self._run_device_combination_test()
+        
+        with col2:
+            if st.button("Quick Audio Test"):
+                self._run_quick_audio_test()
+        
+        # Room response measurement
+        st.markdown("---")
+        st.markdown("**Room Response Measurement**")
+        
+        st.info("Test room response measurement with current device settings")
+        
+        if st.button("Measure Room Response"):
+            self._run_room_response_test()
+        
+        # Display test results
+        if hasattr(self, '_test_results') and self._test_results:
+            self._display_test_results()
+    
+    def _run_device_combination_test(self):
+        """Test if current device combination works."""
+        try:
+            with st.spinner("Testing device combination..."):
+                # Try to get device IDs from selections
+                input_id = self._get_device_id_from_selection('input')
+                output_id = self._get_device_id_from_selection('output')
+                
+                # Use the SDL function to test devices
+                result = sdl.AudioEngine().test_device_combination(input_id, output_id)
+                
+                if result:
+                    st.success("Device combination works!")
+                    self._test_results['device_test'] = {
+                        'success': True,
+                        'input_id': input_id,
+                        'output_id': output_id,
+                        'timestamp': time.time()
+                    }
+                else:
+                    st.error("Device combination failed")
+                    self._test_results['device_test'] = {
+                        'success': False,
+                        'error': 'Device combination test failed',
+                        'timestamp': time.time()
+                    }
+                    
+        except Exception as e:
+            st.error(f"Device test error: {e}")
+            self._test_results['device_test'] = {
+                'success': False,
+                'error': str(e),
+                'timestamp': time.time()
+            }
+    
+    def _run_quick_audio_test(self):
+        """Run a quick audio test."""
+        try:
+            with st.spinner("Running quick audio test..."):
+                input_id = self._get_device_id_from_selection('input')
+                output_id = self._get_device_id_from_selection('output')
+                
+                # Generate a simple test signal
+                frequency = st.session_state.get('audio_test_frequency', 1000.0)
+                duration = st.session_state.get('audio_test_duration', 2.0)
+                sample_rate = st.session_state.get('audio_sample_rate', 48000)
+                
+                # Create test signal (simple sine wave)
+                import math
+                test_signal = []
+                for i in range(int(sample_rate * duration)):
+                    t = i / sample_rate
+                    amplitude = st.session_state.get('audio_test_volume', 0.3)
+                    sample = amplitude * math.sin(2 * math.pi * frequency * t)
+                    test_signal.append(sample)
+                
+                # Use SDL quick test function
+                result = sdl.quick_device_test(input_id, output_id, test_signal)
+                
+                if result['success']:
+                    st.success(f"Audio test successful! Recorded {result['samples_recorded']} samples")
+                    self._test_results['audio_test'] = result
+                else:
+                    st.error(f"Audio test failed: {result.get('error_message', 'Unknown error')}")
+                    self._test_results['audio_test'] = result
+                    
+        except Exception as e:
+            st.error(f"Audio test error: {e}")
+            self._test_results['audio_test'] = {
+                'success': False,
+                'error_message': str(e),
+                'timestamp': time.time()
+            }
+    
+    def _run_room_response_test(self):
+        """Test room response measurement."""
+        try:
+            with st.spinner("Measuring room response..."):
+                # Generate test signal
+                frequency = st.session_state.get('audio_test_frequency', 1000.0)
+                duration = st.session_state.get('audio_test_duration', 2.0)
+                sample_rate = st.session_state.get('audio_sample_rate', 48000)
+                volume = st.session_state.get('audio_test_volume', 0.3)
+                
+                # Create test signal
+                import math
+                test_signal = []
+                for i in range(int(sample_rate * duration)):
+                    t = i / sample_rate
+                    sample = volume * math.sin(2 * math.pi * frequency * t)
+                    test_signal.append(sample)
+                
+                # Use SDL room response function
+                result = sdl.measure_room_response_auto(test_signal, volume)
+                
+                if result['success']:
+                    st.success(f"Room response measurement successful!")
+                    st.info(f"Test signal: {result['test_signal_samples']} samples")
+                    st.info(f"Recorded: {result['recorded_samples']} samples")
+                    self._test_results['room_response_test'] = result
+                else:
+                    st.error(f"Room response failed: {result.get('error_message', 'Unknown error')}")
+                    self._test_results['room_response_test'] = result
+                    
+        except Exception as e:
+            st.error(f"Room response test error: {e}")
+            self._test_results['room_response_test'] = {
+                'success': False,
+                'error_message': str(e),
+                'timestamp': time.time()
+            }
+    
+    def _get_device_id_from_selection(self, device_type: str) -> int:
+        """Get device ID from current selection."""
+        session_key = f'audio_selected_{device_type}_device'
+        selection = st.session_state.get(session_key, 'System Default')
+        
+        if selection == 'System Default':
+            return -1  # Use default device
+        
+        # Extract ID from selection string like "Device Name (ID: 1)"
+        try:
+            if '(ID: ' in selection and ')' in selection:
+                id_part = selection.split('(ID: ')[1].split(')')[0]
+                return int(id_part)
+        except:
+            pass
+        
+        return 0  # Fallback to device 0
+    
+    def _display_test_results(self):
+        """Display test results."""
+        st.markdown("---")
+        st.markdown("**Test Results**")
+        
+        for test_name, result in self._test_results.items():
+            with st.expander(f"{test_name.replace('_', ' ').title()} - {'Success' if result.get('success') else 'Failed'}"):
+                
+                if result.get('success'):
+                    st.success("Test passed")
+                    
+                    # Show relevant metrics based on test type
+                    if 'samples_recorded' in result:
+                        st.metric("Samples Recorded", result['samples_recorded'])
+                    if 'input_device_id' in result:
+                        st.write(f"Input Device ID: {result['input_device_id']}")
+                    if 'output_device_id' in result:
+                        st.write(f"Output Device ID: {result['output_device_id']}")
+                    if 'test_signal_samples' in result:
+                        st.metric("Test Signal Length", result['test_signal_samples'])
+                    if 'recorded_samples' in result:
+                        st.metric("Recorded Length", result['recorded_samples'])
+                        
+                else:
+                    st.error(f"Test failed: {result.get('error_message', result.get('error', 'Unknown error'))}")
+                
+                # Timestamp
+                if 'timestamp' in result:
+                    test_time = time.strftime('%H:%M:%S', time.localtime(result['timestamp']))
+                    st.caption(f"Tested at: {test_time}")
+    
+    def _render_config_management(self):
+        """Render configuration management."""
+        st.markdown("**Configuration**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
             if st.button("Export Config"):
-                config = self._build_config()
+                config = self.get_current_config()
                 config_json = json.dumps(config, indent=2)
                 
                 st.download_button(
-                    "Download Configuration",
+                    "Download Config",
                     data=config_json,
-                    file_name="audio_config.json",
+                    file_name=f"audio_config_{int(time.time())}.json",
                     mime="application/json"
                 )
         
         with col2:
-            if st.button("Reset to Defaults"):
+            uploaded = st.file_uploader(
+                "Import Config",
+                type=['json'],
+                key="config_upload"
+            )
+            
+            if uploaded:
+                try:
+                    config = json.load(uploaded)
+                    self._apply_config(config)
+                    st.success("Config imported")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Import failed: {e}")
+        
+        with col3:
+            if st.button("Reset Defaults"):
                 self._reset_to_defaults()
                 st.success("Reset to defaults")
                 st.rerun()
     
-    def _build_config(self) -> Dict[str, Any]:
-        """Build current configuration."""
+    def get_current_config(self) -> Dict[str, Any]:
+        """Get current configuration as dictionary."""
         return {
-            'selected_input_device': st.session_state.get('audio_selected_input_device'),
-            'selected_output_device': st.session_state.get('audio_selected_output_device'),
-            'sample_rate': st.session_state.get('audio_sample_rate', 48000),
-            'buffer_size': st.session_state.get('audio_buffer_size', 512),
-            'input_channels': st.session_state.get('audio_input_channels', 1),
-            'output_channels': st.session_state.get('audio_output_channels', 2),
-            'test_frequency': st.session_state.get('audio_test_frequency', 1000.0),
-            'test_duration': st.session_state.get('audio_test_duration', 2.0),
-            'test_volume': st.session_state.get('audio_test_volume', 0.3),
-            'audio_driver': st.session_state.get('audio_audio_driver', 'default')
+            'audio_settings': {
+                'sample_rate': st.session_state.get('audio_sample_rate', 48000),
+                'buffer_size': st.session_state.get('audio_buffer_size', 512),
+                'input_channels': st.session_state.get('audio_input_channels', 1),
+                'output_channels': st.session_state.get('audio_output_channels', 2),
+                'selected_input_device': st.session_state.get('audio_selected_input_device', 'System Default'),
+                'selected_output_device': st.session_state.get('audio_selected_output_device', 'System Default')
+            },
+            'test_parameters': {
+                'test_frequency': st.session_state.get('audio_test_frequency', 1000.0),
+                'test_duration': st.session_state.get('audio_test_duration', 2.0),
+                'test_volume': st.session_state.get('audio_test_volume', 0.3)
+            },
+            'pulse_parameters': {
+                'pulse_frequency': st.session_state.get('pulse_frequency', 1000.0),
+                'pulse_duration': st.session_state.get('pulse_duration', 8.0),
+                'pulse_volume': st.session_state.get('pulse_volume', 0.4),
+                'pulse_form': st.session_state.get('pulse_form', 'sine'),
+                'record_duration': st.session_state.get('record_duration', 200.0),
+                'fade_duration': st.session_state.get('fade_duration', 0.1)
+            },
+            'export_timestamp': time.time(),
+            'export_version': '1.0'
         }
     
+    def _apply_config(self, config: Dict[str, Any]):
+        """Apply configuration from dictionary."""
+        try:
+            # Apply audio settings
+            audio_settings = config.get('audio_settings', {})
+            for key, value in audio_settings.items():
+                st.session_state[f'audio_{key}'] = value
+            
+            # Apply test parameters
+            test_params = config.get('test_parameters', {})
+            for key, value in test_params.items():
+                st.session_state[f'audio_{key}'] = value
+            
+            # Apply pulse parameters
+            pulse_params = config.get('pulse_parameters', {})
+            for key, value in pulse_params.items():
+                st.session_state[key] = value
+                
+        except Exception as e:
+            raise ValueError(f"Invalid configuration format: {e}")
+    
     def _reset_to_defaults(self):
-        """Reset all settings to defaults."""
+        """Reset all settings to default values."""
         defaults = {
-            'audio_selected_input_device': None,
-            'audio_selected_output_device': None,
+            'audio_selected_input_device': 'System Default',
+            'audio_selected_output_device': 'System Default',
             'audio_sample_rate': 48000,
             'audio_buffer_size': 512,
             'audio_input_channels': 1,
@@ -662,20 +917,13 @@ class AudioSettingsPanel:
             'audio_test_frequency': 1000.0,
             'audio_test_duration': 2.0,
             'audio_test_volume': 0.3,
-            'audio_audio_driver': 'default'
+            'pulse_frequency': 1000.0,
+            'pulse_duration': 8.0,
+            'pulse_volume': 0.4,
+            'pulse_form': 'sine',
+            'record_duration': 200.0,
+            'fade_duration': 0.1
         }
         
         for key, value in defaults.items():
             st.session_state[key] = value
-        
-        # Clear cache
-        st.session_state['audio_device_cache'] = {}
-        st.session_state['audio_last_device_scan'] = 0
-    
-    def get_current_config(self) -> Dict[str, Any]:
-        """Get current configuration for other components."""
-        return self._build_config()
-
-
-# Make the panel available for import
-__all__ = ['AudioSettingsPanel']
