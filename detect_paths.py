@@ -1,372 +1,380 @@
-#!/usr/bin/env python3
-"""
-SDL Audio Core - System Detection Script
-Automatically detects SDL2, compiler, and system configuration
-"""
-
+#!/usr/bin/env python
+# detect_paths.py - environment autodiscovery for PianoidCore build
+# Pure stdlib, ASCII-only output. Python 3.8+
+import argparse
 import json
 import os
-import platform
-import subprocess
+import re
 import sys
 from pathlib import Path
-import shutil
 
 
-def run_command(cmd, capture_output=True, shell=True):
-    """Run a command and return success status and output"""
-    try:
-        if isinstance(cmd, str):
-            result = subprocess.run(cmd, shell=shell, capture_output=capture_output,
-                                    text=True, timeout=30)
+# -------- helpers --------
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def which(p):
+    # like shutil.which but minimal
+    path = os.environ.get("PATH", "")
+    exts = os.environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(";")
+    cand = Path(p)
+    if cand.exists():
+        return str(cand)
+    for d in path.split(os.pathsep):
+        d = d.strip('"')
+        f = Path(d) / p
+        if f.exists():
+            return str(f)
+        # try with PATHEXT
+        for e in exts:
+            f2 = Path(d) / (p + e)
+            if f2.exists():
+                return str(f2)
+    return None
+
+
+def _first_existing(paths):
+    for p in paths:
+        if p and Path(p).exists():
+            return str(Path(p))
+    return None
+
+
+def _glob_latest(root, pattern):
+    root = Path(root)
+    if not root.exists():
+        return None
+    found = sorted(root.glob(pattern), key=lambda p: p.name, reverse=True)
+    return str(found[0]) if found else None
+
+
+def _try_vswhere():
+    # vswhere default locations
+    pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    vswhere = Path(pf86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if vswhere.exists():
+        return str(vswhere)
+    return None
+
+
+def _find_msvc():
+    # Try env first
+    cl = which("cl")
+    if cl:
+        cl = str(Path(cl))
+        # best-effort derive tools root three parents up to \VC\Tools\MSVC\<ver>\bin\Hostx64\x64\cl.exe
+        p = Path(cl)
+        tools_root = None
+        try:
+            idx = p.parts.index("MSVC")
+            tools_root = Path(*p.parts[:idx + 2])  # ...\MSVC\<ver>
+        except Exception:
+            tools_root = p.parent.parent.parent  # rough fallback
+        return {"msvc_cl": cl, "msvc_tools_root": str(tools_root)}
+    # Try env var VCToolsInstallDir
+    vt = os.environ.get("VCToolsInstallDir")
+    if vt:
+        cand = Path(vt) / "bin" / "Hostx64" / "x64" / "cl.exe"
+        if cand.exists():
+            return {"msvc_cl": str(cand), "msvc_tools_root": str(Path(vt))}
+    # Try vswhere
+    vsw = _try_vswhere()
+    if vsw:
+        import subprocess, json as _json
+        try:
+            out = subprocess.check_output(
+                [vsw, "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                 "-latest", "-format", "json"],
+                encoding="utf-8", errors="ignore"
+            )
+            arr = _json.loads(out) if out.strip() else []
+            if arr:
+                inst = arr[0]
+                install_root = inst.get("installationPath")
+                if install_root:
+                    tools_root = _glob_latest(Path(install_root) / "VC" / "Tools" / "MSVC", "*")
+                    if tools_root:
+                        cl = Path(tools_root) / "bin" / "Hostx64" / "x64" / "cl.exe"
+                        if cl.exists():
+                            return {"msvc_cl": str(cl), "msvc_tools_root": str(Path(tools_root))}
+        except Exception:
+            pass
+    # Try well-known default
+    pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    base = Path(pf) / "Microsoft Visual Studio" / "2022" / "Community" / "VC" / "Tools" / "MSVC"
+    tools_root = _glob_latest(base, "*")
+    if tools_root:
+        cl = Path(tools_root) / "bin" / "Hostx64" / "x64" / "cl.exe"
+        if cl.exists():
+            return {"msvc_cl": str(cl), "msvc_tools_root": str(Path(tools_root))}
+    return {}
+
+
+def _find_windows_sdk():
+    # Prefer env
+    wdir = os.environ.get("WindowsSdkDir")
+    if wdir and Path(wdir).exists():
+        # try to extract version if present as ...\Windows Kits\10\
+        inc = Path(wdir) / "Include"
+        ver = None
+        if inc.exists():
+            children = [p.name for p in inc.iterdir() if p.is_dir() and re.match(r"^\d+\.\d+\.\d+\.\d+$", p.name)]
+            ver = sorted(children, reverse=True)[0] if children else None
+        return {"winsdk_root": str(Path(wdir)), "winsdk_version": ver}
+    # Common default
+    pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    kits10 = Path(pf86) / "Windows Kits" / "10"
+    if kits10.exists():
+        inc = kits10 / "Include"
+        ver = None
+        if inc.exists():
+            children = [p.name for p in inc.iterdir() if p.is_dir() and re.match(r"^\d+\.\d+\.\d+\.\d+$", p.name)]
+            ver = sorted(children, reverse=True)[0] if children else None
+        return {"winsdk_root": str(kits10), "winsdk_version": ver}
+    return {}
+
+
+def _find_cuda(user_hint=None):
+    cand = None
+    if user_hint:
+        cand = user_hint
+    if not cand:
+        cand = os.environ.get("CUDA_PATH")
+    if not cand:
+        # scan default
+        pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
+        cand = _glob_latest(Path(pf) / "NVIDIA GPU Computing Toolkit" / "CUDA", "v*")
+    if not cand:
+        return {}
+    cuda_home = Path(cand)
+    nvcc = cuda_home / "bin" / "nvcc.exe"
+    include = cuda_home / "include"
+    lib64 = cuda_home / "lib" / "x64"
+    if nvcc.exists() and include.exists() and lib64.exists():
+        return {
+            "cuda_home": str(cuda_home),
+            "cuda_nvcc": str(nvcc),
+            "cuda_include": str(include),
+            "cuda_libdir": str(lib64),
+        }
+    return {}
+
+
+def _find_sdl2(user_hint=None):
+    root = None
+    if user_hint:
+        root = Path(user_hint)
+        if not root.exists():
+            return {}
+    else:
+        # env hint
+        env = os.environ.get("SDL2_DIR") or os.environ.get("SDL_DIR")
+        if env and Path(env).exists():
+            root = Path(env)
         else:
-            result = subprocess.run(cmd, capture_output=capture_output,
-                                    text=True, timeout=30)
-        return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, "", "Command timed out"
-    except Exception as e:
-        return False, "", str(e)
+            # common defaults
+            # Prefer versioned dir if present, otherwise C:\SDL2
+            bases = []
+            candidates = []
+            sysdrive = os.environ.get("SystemDrive", "C:")
+            bases.append(Path(sysdrive + os.sep))
 
+            # Also check a literal C:\ as a fallback search base
+            bases.append(Path("C:\\"))
 
-def detect_windows_sdl2():
-    """Detect SDL2 on Windows"""
-    print("Detecting SDL2 on Windows...")
+            for base in bases:
+                candidates.extend(base.glob("SDL2-*"))
+                candidates.append(base / "SDL2")
 
-    # Common SDL2 installation paths
-    search_paths = [
-        r"C:\SDL2",
-        r"C:\SDL2-*",
-        r"C:\dev\SDL2",
-        r"C:\lib\SDL2",
-        r"C:\libs\SDL2",
-        r"C:\Program Files\SDL2",
-        r"C:\Program Files (x86)\SDL2",
-        r"C:\Program Files\SDL2-*",           # Add this line
-        r"C:\Program Files\SDL2-2.32.8",
-        r".\SDL2",
-        r"..\SDL2",
-        r"..\..\SDL2"
-    ]
-
-    # Add vcpkg paths
-    vcpkg_paths = [
-        r"C:\vcpkg\installed\x64-windows",
-        r"C:\tools\vcpkg\installed\x64-windows",
-        r".\vcpkg\installed\x64-windows"
-    ]
-
-    sdl2_config = {}
-
-    # Check vcpkg first (preferred method)
-    for vcpkg_path in vcpkg_paths:
-        vcpkg_path = Path(vcpkg_path)
-        if vcpkg_path.exists():
-            include_dir = vcpkg_path / "include"
-            lib_dir = vcpkg_path / "lib"
-
-            if (include_dir / "SDL2" / "SDL.h").exists() and lib_dir.exists():
-                print(f"✓ Found SDL2 via vcpkg at: {vcpkg_path}")
-                sdl2_config["sdl2_include"] = str(include_dir)
-                sdl2_config["sdl2_lib"] = str(lib_dir)
-                sdl2_config["installation_method"] = "vcpkg"
-                return sdl2_config
-
-    # Check manual installations
-    import glob
-    for search_pattern in search_paths:
-        for path in glob.glob(search_pattern):
-            path = Path(path)
-            if path.exists():
-                # Look for include and lib directories
-                include_candidates = [
-                    path / "include",
-                    path / "include" / "SDL2",
-                    path / "SDL2" / "include",
-                ]
-
-                lib_candidates = [
-                    path / "lib",
-                    path / "lib" / "x64",
-                    path / "SDL2" / "lib" / "x64",
-                    path / "lib" / "win32"
-                ]
-
-                include_dir = None
-                lib_dir = None
-
-                # Find include directory
-                for candidate in include_candidates:
-                    if (candidate / "SDL.h").exists() or (candidate / "SDL2" / "SDL.h").exists():
-                        include_dir = candidate
-                        break
-
-                # Find lib directory
-                for candidate in lib_candidates:
-                    if candidate.exists() and any(candidate.glob("SDL2*.lib")):
-                        lib_dir = candidate
-                        break
-
-                if include_dir and lib_dir:
-                    print(f"✓ Found SDL2 manual installation at: {path}")
-                    sdl2_config["sdl2_include"] = str(include_dir)
-                    sdl2_config["sdl2_lib"] = str(lib_dir)
-                    sdl2_config["installation_method"] = "manual"
-                    return sdl2_config
-
-    print("✗ SDL2 not found!")
-    print("\nTo install SDL2 on Windows:")
-    print("Option 1 (Recommended): Use vcpkg")
-    print("  1. Install vcpkg: https://github.com/Microsoft/vcpkg")
-    print("  2. Run: vcpkg install sdl2:x64-windows")
-    print()
-    print("Option 2: Manual installation")
-    print("  1. Download SDL2 development libraries from https://www.libsdl.org/")
-    print("  2. Extract to C:\\SDL2\\")
-    print("  3. Make sure the structure is: C:\\SDL2\\include\\SDL2\\SDL.h")
-    print("                                 C:\\SDL2\\lib\\x64\\SDL2.lib")
-
-    return None
-
-
-def detect_macos_sdl2():
-    """Detect SDL2 on macOS"""
-    print("Detecting SDL2 on macOS...")
-
-    sdl2_config = {}
-
-    # Check homebrew installation
-    success, output, error = run_command("brew --prefix sdl2")
-    if success and output:
-        brew_path = Path(output)
-        include_dir = brew_path / "include"
-        lib_dir = brew_path / "lib"
-
-        if (include_dir / "SDL2" / "SDL.h").exists() and lib_dir.exists():
-            print(f"✓ Found SDL2 via Homebrew at: {brew_path}")
-            sdl2_config["sdl2_include"] = str(include_dir)
-            sdl2_config["sdl2_lib"] = str(lib_dir)
-            sdl2_config["installation_method"] = "homebrew"
-            return sdl2_config
-
-    # Check system frameworks
-    framework_path = Path("/Library/Frameworks/SDL2.framework")
-    if framework_path.exists():
-        headers_path = framework_path / "Headers"
-        if (headers_path / "SDL.h").exists():
-            print(f"✓ Found SDL2 Framework at: {framework_path}")
-            sdl2_config["sdl2_include"] = str(headers_path)
-            sdl2_config["sdl2_framework"] = str(framework_path)
-            sdl2_config["installation_method"] = "framework"
-            return sdl2_config
-
-    # Check MacPorts
-    macports_path = Path("/opt/local")
-    if macports_path.exists():
-        include_dir = macports_path / "include"
-        lib_dir = macports_path / "lib"
-
-        if (include_dir / "SDL2" / "SDL.h").exists() and lib_dir.exists():
-            print(f"✓ Found SDL2 via MacPorts at: {macports_path}")
-            sdl2_config["sdl2_include"] = str(include_dir)
-            sdl2_config["sdl2_lib"] = str(lib_dir)
-            sdl2_config["installation_method"] = "macports"
-            return sdl2_config
-
-    print("✗ SDL2 not found!")
-    print("\nTo install SDL2 on macOS:")
-    print("Option 1 (Recommended): Use Homebrew")
-    print("  1. Install Homebrew: https://brew.sh/")
-    print("  2. Run: brew install sdl2")
-    print()
-    print("Option 2: Use MacPorts")
-    print("  1. Install MacPorts: https://www.macports.org/")
-    print("  2. Run: sudo port install libsdl2")
-
-    return None
-
-
-def detect_linux_sdl2():
-    """Detect SDL2 on Linux"""
-    print("Detecting SDL2 on Linux...")
-
-    sdl2_config = {}
-
-    # Check pkg-config first
-    success, output, error = run_command("pkg-config --cflags --libs sdl2")
-    if success:
-        print("✓ Found SDL2 via pkg-config")
-        sdl2_config["installation_method"] = "pkg-config"
-        # pkg-config handles paths automatically
-        return sdl2_config
-
-    # Check common system paths
-    system_paths = [
-        "/usr/include/SDL2",
-        "/usr/local/include/SDL2",
-        "/opt/local/include/SDL2"
-    ]
-
-    for include_path in system_paths:
-        include_path = Path(include_path)
-        if (include_path / "SDL.h").exists():
-            print(f"✓ Found SDL2 headers at: {include_path}")
-            sdl2_config["sdl2_include"] = str(include_path.parent)
-            sdl2_config["installation_method"] = "system"
-            return sdl2_config
-
-    print("✗ SDL2 not found!")
-    print("\nTo install SDL2 on Linux:")
-    print("Ubuntu/Debian: sudo apt-get install libsdl2-dev")
-    print("CentOS/RHEL:   sudo yum install SDL2-devel")
-    print("Fedora:        sudo dnf install SDL2-devel")
-    print("Arch:          sudo pacman -S sdl2")
-
-    return None
-
-
-def detect_compiler():
-    """Detect available C++ compiler"""
-    print("Detecting C++ compiler...")
-
-    compilers_to_check = []
-
-    if platform.system() == "Windows":
-        # Check for Visual Studio
-        vs_years = ["2022", "2019", "2017"]
-        vs_editions = ["Enterprise", "Professional", "Community", "BuildTools"]
-
-        for year in vs_years:
-            for edition in vs_editions:
-                vs_path = Path(f"C:/Program Files/Microsoft Visual Studio/{year}/{edition}")
-                if vs_path.exists():
-                    print(f"✓ Found Visual Studio {year} {edition}")
-                    return {
-                        "compiler": "msvc",
-                        "version": year,
-                        "edition": edition,
-                        "path": str(vs_path)
-                    }
-
-        # Check for build tools
-        build_tools_path = Path("C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools")
-        if build_tools_path.exists():
-            print("✓ Found Visual Studio Build Tools")
-            return {
-                "compiler": "msvc",
-                "version": "2019",
-                "edition": "BuildTools"
-            }
-
-        compilers_to_check = ["cl", "clang++", "g++"]
-
-    else:
-        compilers_to_check = ["clang++", "g++", "c++"]
-
-    # Check for available compilers
-    for compiler in compilers_to_check:
-        success, output, error = run_command(f"{compiler} --version")
-        if success:
-            print(f"✓ Found compiler: {compiler}")
-            return {
-                "compiler": compiler,
-                "version_output": output.split('\n')[0] if output else "Unknown"
-            }
-
-    print("✗ No suitable C++ compiler found!")
-    if platform.system() == "Windows":
-        print("Please install Visual Studio 2019 or later with C++ tools")
-    else:
-        print("Please install a C++ compiler (g++ or clang++)")
-
-    return None
-
-
-def detect_python_environment():
-    """Detect Python environment details"""
-    print("Detecting Python environment...")
-
-    python_info = {
-        "version": sys.version,
-        "executable": sys.executable,
-        "platform": platform.platform(),
-        "architecture": platform.architecture()[0]
+            root = next((p for p in candidates if p.exists()), None)
+            root = Path(root) if root else None
+    if not root:
+        return {}
+    inc = Path(root) / "include"
+    # Some layouts use include\SDL2 (both are valid to add)
+    inc2 = inc / "SDL2"
+    # lib dir (x64)
+    lib64 = Path(root) / "lib" / "x64"
+    # if unpacked "SDL2-devel-2.x.x-VC", lib dir may be lib\x64
+    if not lib64.exists():
+        # try lib
+        if (Path(root) / "lib").exists():
+            lib64 = Path(root) / "lib"
+    if not inc.exists():
+        return {}
+    return {
+        "sdl2_root": str(Path(root)),
+        "sdl2_include": str(inc),
+        "sdl2_include_sdl2": str(inc2) if inc2.exists() else "",
+        "sdl2_libdir": str(lib64) if lib64.exists() else "",
     }
 
-    # Check if in virtual environment
-    in_venv = hasattr(sys, 'real_prefix') or (
-            hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix
-    )
 
-    python_info["virtual_env"] = in_venv
-    if in_venv:
-        python_info["venv_path"] = sys.prefix
+def _py_info():
+    import sysconfig
+    py_inc = sysconfig.get_paths().get("include")
+    libdir = sysconfig.get_config_var("LIBDIR")
+    if not libdir:
+        # Windows CPython typically keeps libs next to the base prefix
+        libdir = str(Path(sys.base_prefix) / "libs")
+    return {"python_include": str(py_inc), "python_libdir": str(libdir)}
 
-    print(f"✓ Python {sys.version.split()[0]} ({'64-bit' if '64bit' in platform.architecture()[0] else '32-bit'})")
-    print(f"  Virtual environment: {'Yes' if in_venv else 'No'}")
 
-    return python_info
+def _find_pybind11():
+    try:
+        import pybind11  # type: ignore
+        return {"pybind11_include": str(Path(pybind11.get_include()))}
+    except Exception:
+        return {}
+
+
+def _default_arches():
+    # Safe defaults for modern RTX; override via env CUDA_ARCHES="80,86,89"
+    env = os.environ.get("CUDA_ARCHES")
+    if env:
+        parts = [p.strip() for p in env.split(",") if p.strip().isdigit()]
+        if parts:
+            return parts
+    # Try to detect with torch if present
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            cc = torch.cuda.get_device_capability()
+            maj, minr = cc
+            return [str(maj) + str(minr)]
+    except Exception:
+        pass
+    return ["80", "86", "89"]
+
+
+def build_config(args):
+    cfg = {}
+    # collect raw data
+    msvc_info = _find_msvc()
+    winsdk_info = _find_windows_sdk()
+    cuda_info = _find_cuda(args.cuda)
+    sdl2_info = _find_sdl2(args.sdl2)
+    py_info = _py_info()
+    pybind_info = _find_pybind11()
+
+    # Structure the config to match what setup.py expects
+    cfg = {
+        "windows": {
+            "cuda_home": cuda_info.get("cuda_home", ""),
+            "visual_studio": {
+                "vc_tools_bin_hostx64_x64": str(Path(msvc_info.get("msvc_cl", "")).parent) if msvc_info.get(
+                    "msvc_cl") else ""
+            },
+            "sdl2": {
+                "base_path": sdl2_info.get("sdl2_root", "")
+            }
+        },
+        "cuda_arch_list": _default_arches(),
+        "project_root": str(Path(args.project_root).resolve()) if args.project_root else str(Path.cwd().resolve()),
+
+        # Keep flat structure for validation
+        "msvc_cl": msvc_info.get("msvc_cl", ""),
+        "msvc_tools_root": msvc_info.get("msvc_tools_root", ""),
+        "winsdk_root": winsdk_info.get("winsdk_root", ""),
+        "cuda_home": cuda_info.get("cuda_home", ""),
+        "cuda_nvcc": cuda_info.get("cuda_nvcc", ""),
+        "sdl2_root": sdl2_info.get("sdl2_root", ""),
+        "python_include": py_info.get("python_include", ""),
+        "python_libdir": py_info.get("python_libdir", ""),
+        "pybind11_include": pybind_info.get("pybind11_include", ""),
+    }
+
+    # augment derived include/lib search paths for convenience consumers
+    includes = []
+    if cfg.get("pybind11_include"):
+        includes.append(cfg["pybind11_include"])
+    if cuda_info.get("cuda_include"):
+        includes.append(cuda_info["cuda_include"])
+    includes.append(str(Path(cfg["project_root"]) / "pianoid_cuda"))
+    includes.append(cfg["python_include"])
+    sdl_inc = sdl2_info.get("sdl2_include")
+    if sdl_inc:
+        includes.append(sdl_inc)
+    sdl_inc2 = sdl2_info.get("sdl2_include_sdl2")
+    if sdl_inc2:
+        includes.append(sdl_inc2)
+
+    libdirs = []
+    if sdl2_info.get("sdl2_libdir"):
+        libdirs.append(sdl2_info["sdl2_libdir"])
+    if cuda_info.get("cuda_libdir"):
+        libdirs.append(cuda_info["cuda_libdir"])
+    if cfg.get("python_libdir"):
+        libdirs.append(cfg["python_libdir"])
+
+    cfg["include_dirs"] = includes
+    cfg["library_dirs"] = libdirs
+    cfg["libraries"] = ["SDL2", "cudart", "winmm", "ole32", "advapi32"]
+
+    return cfg
+
+
+def validate(cfg):
+    req = [
+        "msvc_cl",
+        "msvc_tools_root",
+        "winsdk_root",
+        "cuda_home",
+        "cuda_nvcc",
+        "sdl2_root",
+        "python_include",
+        "python_libdir",
+    ]
+    missing = [k for k in req if not cfg.get(k)]
+    return missing
 
 
 def main():
-    """Main detection function"""
-    print("=" * 60)
-    print("SDL Audio Core - System Detection")
-    print("=" * 60)
-    print()
+    ap = argparse.ArgumentParser(description="Detect build toolchain for PianoidCore (Windows).")
+    ap.add_argument("--out", default="build_config.json", help="Output JSON path (default: build_config.json)")
+    ap.add_argument("--cuda", default=None,
+                    help="Hint for CUDA root, e.g. C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.x")
+    ap.add_argument("--sdl2", default=None, help="Hint for SDL2 root, e.g. C:\\SDL2-2.30.0")
+    ap.add_argument("--project-root", default=None, help="Root of the project (default: cwd)")
+    ap.add_argument("--quiet", action="store_true", help="Print only the summary line")
+    args = ap.parse_args()
 
-    # Collect all configuration
-    config = {
-        "detection_timestamp": subprocess.check_output(
-            ["python", "-c", "import datetime; print(datetime.datetime.now().isoformat())"],
-            text=True
-        ).strip(),
-        "platform": platform.system(),
-        "architecture": platform.architecture()[0]
-    }
+    if not args.quiet:
+        log("=== PianoidCore System Configuration Detection ===")
+        log("Checking Python environment...")
+        log("  Python version: %s" % sys.version.split()[0])
+        log("  Virtual environment: %s" % ("Yes" if sys.prefix != sys.base_prefix else "No"))
 
-    # Detect Python environment
-    python_info = detect_python_environment()
-    config["python"] = python_info
+    cfg = build_config(args)
+    missing = validate(cfg)
+    out_path = Path(args.out)
 
-    # Detect compiler
-    compiler_info = detect_compiler()
-    if not compiler_info:
-        print("\n❌ No suitable compiler found. Build will fail.")
-        return False
-    config["compiler"] = compiler_info
+    if missing:
+        if not args.quiet:
+            log("")
+            log("Missing required components:")
+            for k in missing:
+                log("  - %s" % k)
+            log("")
+            log("HINTS")
+            log("  Use flags to provide hints, for example:")
+            log("    python detect_paths.py --cuda \"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.9\"")
+            log("    python detect_paths.py --sdl2 \"C:\\SDL2-2.30.0\"")
+        # do not write output on failure
+        return 2
 
-    # Detect SDL2 based on platform
-    if platform.system() == "Windows":
-        sdl2_info = detect_windows_sdl2()
-    elif platform.system() == "Darwin":
-        sdl2_info = detect_macos_sdl2()
-    else:
-        sdl2_info = detect_linux_sdl2()
-
-    if not sdl2_info:
-        print("\n❌ SDL2 not found. Build will fail.")
-        return False
-
-    config.update(sdl2_info)
-
-    # Save configuration
-    config_path = Path("build_config.json")
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-
-    print(f"\n✅ Configuration saved to {config_path}")
-    print("\nDetection Summary:")
-    print(f"  Platform: {config['platform']} ({config['architecture']})")
-    print(f"  Compiler: {compiler_info.get('compiler', 'Unknown')}")
-    print(f"  SDL2: {sdl2_info.get('installation_method', 'Found')}")
-    print(f"  Python: {python_info['virtual_env'] and 'Virtual env' or 'System'}")
-
-    print("\n🚀 Ready to build! Run build_sdl_audio.bat to compile the module.")
-    return True
+    # write JSON
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    if not args.quiet:
+        log("Detection Summary: OK")
+        log("Configuration saved to %s" % str(out_path))
+    return 0
 
 
 if __name__ == "__main__":
-    success = main()
-    if not success:
-        sys.exit(1)
+    code = main()
+    sys.exit(code)

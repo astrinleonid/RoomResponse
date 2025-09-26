@@ -1,0 +1,784 @@
+{
+  "scenario_info": {
+    "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+    "scenario_number": "1",
+    "computer_name": "LeonidWorkstation",
+    "room_name": "SPbSmall",
+    "description": "Room response measurement scenario 1",
+    "collection_timestamp": "2025-09-26T10:10:12.522661"
+  },
+  "recorder_config": {
+    "sample_rate": 48000,
+    "pulse_duration": 0.008,
+    "pulse_fade": 0.0001,
+    "cycle_duration": 0.1,
+    "num_pulses": 8,
+    "volume": 0.2,
+    "pulse_frequency": 1000,
+    "impulse_form": "sine",
+    "computer": "LeonidWorkstation",
+    "room": "SPbSmall"
+  },
+  "device_info": {
+    "input_device": "Microphone (XWF-1080p6 Camera)",
+    "output_device": "AAA (NVIDIA High Definition Audio)",
+    "method": 2,
+    "interactive": false
+  },
+  "quality_thresholds": {
+    "min_snr_db": 15.0,
+    "max_clip_percentage": 2.0,
+    "min_dynamic_range_db": 25.0
+  },
+  "measurements": [
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 0,
+      "timestamp": "20250926_101011_433",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 1.6884839747357692,
+        "max_amplitude": 0.013763427734375,
+        "rms_level": 0.0025309748016297817,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 14.708775708634619
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 0,
+      "timestamp": "20250926_101011_433",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 1.6884839747357692,
+        "max_amplitude": 0.013763427734375,
+        "rms_level": 0.0025309748016297817,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 14.708775708634619
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 1,
+      "timestamp": "20250926_101014_525",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 5.84642803797141,
+        "max_amplitude": 0.013336181640625,
+        "rms_level": 0.0023041025269776583,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.250594032437084
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 0,
+      "timestamp": "20250926_101011_433",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_000_20250926_101011_433.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 1.6884839747357692,
+        "max_amplitude": 0.013763427734375,
+        "rms_level": 0.0025309748016297817,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 14.708775708634619
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 1,
+      "timestamp": "20250926_101014_525",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_001_20250926_101014_525.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 5.84642803797141,
+        "max_amplitude": 0.013336181640625,
+        "rms_level": 0.0023041025269776583,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.250594032437084
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 5,
+      "timestamp": "20250926_103022_271",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 5.048068087753425,
+        "max_amplitude": 0.015838623046875,
+        "rms_level": 0.0026333837304264307,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.58406549345735
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 5,
+      "timestamp": "20250926_103022_271",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 5.048068087753425,
+        "max_amplitude": 0.015838623046875,
+        "rms_level": 0.0026333837304264307,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.58406549345735
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 6,
+      "timestamp": "20250926_103025_391",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 6.419934325487246,
+        "max_amplitude": 0.014190673828125,
+        "rms_level": 0.002451275009661913,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.252219602042317
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 5,
+      "timestamp": "20250926_103022_271",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 5.048068087753425,
+        "max_amplitude": 0.015838623046875,
+        "rms_level": 0.0026333837304264307,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.58406549345735
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 6,
+      "timestamp": "20250926_103025_391",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 6.419934325487246,
+        "max_amplitude": 0.014190673828125,
+        "rms_level": 0.002451275009661913,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.252219602042317
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 7,
+      "timestamp": "20250926_103028_477",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 6.287011714088133,
+        "max_amplitude": 0.0142822265625,
+        "rms_level": 0.0021944642066955566,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.269348327329123
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 5,
+      "timestamp": "20250926_103022_271",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_005_20250926_103022_271.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 5.048068087753425,
+        "max_amplitude": 0.015838623046875,
+        "rms_level": 0.0026333837304264307,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.58406549345735
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 6,
+      "timestamp": "20250926_103025_391",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_006_20250926_103025_391.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 6.419934325487246,
+        "max_amplitude": 0.014190673828125,
+        "rms_level": 0.002451275009661913,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 15.252219602042317
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 7,
+      "timestamp": "20250926_103028_477",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_007_20250926_103028_477.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43200
+      },
+      "quality_metrics": {
+        "snr_db": 6.287011714088133,
+        "max_amplitude": 0.0142822265625,
+        "rms_level": 0.0021944642066955566,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.269348327329123
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 14,
+      "timestamp": "20250926_125553_637",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 15.816444073613509,
+        "max_amplitude": 0.07037353515625,
+        "rms_level": 0.009824221022427082,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 17.102224868495163
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 14,
+      "timestamp": "20250926_125553_637",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 15.816444073613509,
+        "max_amplitude": 0.07037353515625,
+        "rms_level": 0.009824221022427082,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 17.102224868495163
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 15,
+      "timestamp": "20250926_125556_757",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 15.644251962197348,
+        "max_amplitude": 0.06964111328125,
+        "rms_level": 0.010165669955313206,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.714593991067357
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 14,
+      "timestamp": "20250926_125553_637",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_014_20250926_125553_637.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 15.816444073613509,
+        "max_amplitude": 0.07037353515625,
+        "rms_level": 0.009824221022427082,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 17.102224868495163
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 15,
+      "timestamp": "20250926_125556_757",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_015_20250926_125556_757.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 15.644251962197348,
+        "max_amplitude": 0.06964111328125,
+        "rms_level": 0.010165669955313206,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.714593991067357
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 19,
+      "timestamp": "20250926_130216_523",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 14.311160770567458,
+        "max_amplitude": 0.069854736328125,
+        "rms_level": 0.010512893088161945,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.449472196827518
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 19,
+      "timestamp": "20250926_130216_523",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 14.311160770567458,
+        "max_amplitude": 0.069854736328125,
+        "rms_level": 0.010512893088161945,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.449472196827518
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 20,
+      "timestamp": "20250926_130219_643",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 13.869772522563057,
+        "max_amplitude": 0.073272705078125,
+        "rms_level": 0.010552749037742615,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.831532301171016
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 19,
+      "timestamp": "20250926_130216_523",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_019_20250926_130216_523.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 43680
+      },
+      "quality_metrics": {
+        "snr_db": 14.311160770567458,
+        "max_amplitude": 0.069854736328125,
+        "rms_level": 0.010512893088161945,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.449472196827518
+      },
+      "notes": ""
+    },
+    {
+      "scenario_name": "LeonidWorkstation-Scenario1-SPbSmall",
+      "measurement_index": 20,
+      "timestamp": "20250926_130219_643",
+      "filename_raw": "raw_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "filename_impulse": "impulse_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "filename_room_response": "room_LeonidWorkstation-Scenario1-SPbSmall_020_20250926_130219_643.wav",
+      "signal_params": {
+        "sample_rate": 48000,
+        "pulse_duration": 0.008,
+        "pulse_fade": 0.0001,
+        "cycle_duration": 0.1,
+        "num_pulses": 8,
+        "volume": 0.2,
+        "pulse_frequency": 1000,
+        "impulse_form": "sine",
+        "computer": "LeonidWorkstation",
+        "room": "SPbSmall"
+      },
+      "recording_stats": {
+        "samples_recorded": 44160
+      },
+      "quality_metrics": {
+        "snr_db": 13.869772522563057,
+        "max_amplitude": 0.073272705078125,
+        "rms_level": 0.010552749037742615,
+        "clip_percentage": 0.0,
+        "dynamic_range_db": 16.831532301171016
+      },
+      "notes": ""
+    }
+  ],
+  "summary": {
+    "total_measurements": 24,
+    "planned_measurements": 2,
+    "success_rate": 1200.0
+  }
+}

@@ -1,0 +1,37 @@
+/.venv/
+/.idea
+/sdl_audio_core/sdl_audio_core.egg-info/
+/SDL2.dll
+/sdl_audio_core/SDL2.dll
+/sdl_audio_core/sdl_audio_core.egg-info/
+/sdl_audio_core/sdl_audio_core.egg-info/PKG-INFO
+# Build directories
+build/
+dist/
+*.egg-info/
+sdl_audio_core/build/
+
+# Compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.dll
+*.lib
+*.exp
+*.obj
+*.wav
+
+# Logs and temp
+*.log
+*.csv
+
+# Virtual environments
+.env/
+.venv/
+venv/
+ENV/
+
+# OS junk
+.DS_Store
+Thumbs.db

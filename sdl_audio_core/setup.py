@@ -41,7 +41,7 @@ def get_extension_modules():
         # "src/room_response.cpp"  # Temporarily disabled due to compilation issues
     ]
 
-    # Include directories
+    # Include directories - start with pybind11 and local includes
     include_dirs = [
         pybind11.get_cmake_dir() + "/../include",
         "include",
@@ -54,16 +54,43 @@ def get_extension_modules():
 
     # Platform-specific configuration
     if platform.system() == "Windows":
-        # Windows SDL2 configuration
-        if "sdl2_include" in config:
-            include_dirs.append(config["sdl2_include"])
-        if "sdl2_lib" in config:
-            library_dirs.append(config["sdl2_lib"])
+        # Windows SDL2 configuration - use the actual config structure
+        
+        # Add SDL2 include directories from config
+        if "include_dirs" in config:
+            for inc_dir in config["include_dirs"]:
+                if inc_dir and Path(inc_dir).exists():
+                    include_dirs.append(inc_dir)
+                    print(f"Added include directory: {inc_dir}")
+        
+        # Fallback: if sdl2_root exists, manually add include paths
+        if "sdl2_root" in config and config["sdl2_root"]:
+            sdl2_root = Path(config["sdl2_root"])
+            sdl2_include = sdl2_root / "include"
+            if sdl2_include.exists() and str(sdl2_include) not in include_dirs:
+                include_dirs.append(str(sdl2_include))
+                print(f"Added SDL2 include directory: {sdl2_include}")
+            
+            # Check for SDL2 subdirectory (some installations have include/SDL2/)
+            sdl2_subdir = sdl2_include / "SDL2"
+            if sdl2_subdir.exists() and str(sdl2_subdir) not in include_dirs:
+                include_dirs.append(str(sdl2_subdir))
+                print(f"Added SDL2 subdirectory: {sdl2_subdir}")
+        
+        # Add library directories from config
+        if "library_dirs" in config:
+            for lib_dir in config["library_dirs"]:
+                if lib_dir and Path(lib_dir).exists():
+                    library_dirs.append(lib_dir)
+                    print(f"Added library directory: {lib_dir}")
 
-        libraries.extend(["SDL2", "SDL2main"])
-
-        # Windows-specific libraries
-        libraries.extend(["winmm", "dsound", "dxguid", "ole32", "oleaut32", "uuid"])
+        # Use libraries from config if available, otherwise use defaults
+        if "libraries" in config:
+            libraries.extend(config["libraries"])
+        else:
+            libraries.extend(["SDL2", "SDL2main"])
+            # Windows-specific libraries
+            libraries.extend(["winmm", "dsound", "dxguid", "ole32", "oleaut32", "uuid"])
 
     elif platform.system() == "Darwin":
         # macOS SDL2 configuration
@@ -104,6 +131,42 @@ def get_extension_modules():
             "-std=c++17",
             "-DSDL_MAIN_HANDLED"
         ])
+
+    # Debug output - show final configuration
+    print(f"\n=== FINAL BUILD CONFIGURATION ===")
+    print(f"Source files: {sources}")
+    print(f"Include directories: {include_dirs}")
+    print(f"Library directories: {library_dirs}")
+    print(f"Libraries: {libraries}")
+    print(f"Compile args: {extra_compile_args}")
+    print(f"=" * 40)
+
+    # Verify critical paths exist
+    missing_includes = []
+    for inc_dir in include_dirs:
+        if not Path(inc_dir).exists():
+            missing_includes.append(inc_dir)
+    
+    if missing_includes:
+        print(f"WARNING: Missing include directories:")
+        for missing in missing_includes:
+            print(f"  - {missing}")
+    
+    # Check for SDL.h specifically
+    sdl_h_found = False
+    for inc_dir in include_dirs:
+        sdl_h_path = Path(inc_dir) / "SDL.h"
+        if sdl_h_path.exists():
+            sdl_h_found = True
+            print(f"Found SDL.h at: {sdl_h_path}")
+            break
+    
+    if not sdl_h_found:
+        print(f"ERROR: SDL.h not found in any include directory!")
+        print(f"Checked directories: {include_dirs}")
+        if config.get("sdl2_root"):
+            expected_path = Path(config["sdl2_root"]) / "include" / "SDL.h"
+            print(f"Expected location: {expected_path}")
 
     # Create extension
     ext_modules = [

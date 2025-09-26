@@ -1,0 +1,22 @@
+================================================================================
+ROOM RESPONSE SCENARIO COLLECTION SUMMARY
+================================================================================
+Scenario: LeonidWorkstation-Scenario1-SPbSmall
+Description: Room response measurement scenario 1
+Computer: LeonidWorkstation
+Room: SPbSmall
+Dataset location: D:\repos\RoomResponse\piano\LeonidWorkstation-Scenario1-SPbSmall
+
+COLLECTION RESULTS:
+----------------------------------------
+  Planned measurements (this run): 2
+  Total measurements accumulated: 24
+  Success rate vs planned (this run): 1200.0%
+
+DATASET FILES:
+----------------------------------------
+  Raw recordings: 9
+  Impulse responses: 9
+  Room responses: 9
+
+================================================================================
