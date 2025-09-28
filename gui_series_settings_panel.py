@@ -2,1330 +2,683 @@
 """
 Series Settings Panel - Multi-pulse Recording Configuration and Analysis
 
-This panel manages the pulse series parameters (number of pulses, cycle timing, intervals)
-and provides visualization tools to record and analyze multi-pulse sequences with averaging.
-
-Save this file as: gui_series_settings_panel.py
+- Uses a shared/global RoomResponseRecorder passed in by the parent.
+- Series configuration changes are APPLIED PERMANENTLY to the shared recorder.
+- Includes a "Cycle Consistency Overlay" plot (multiple cycles on the same axes).
 """
 
-import numpy as np
+from __future__ import annotations
+
 import time
-import tempfile
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, List
+
+import numpy as np
 import streamlit as st
 
-# Import dependencies
+# Optional visualizer
 try:
     from gui_audio_visualizer import AudioVisualizer
     VISUALIZER_AVAILABLE = True
 except ImportError:
     VISUALIZER_AVAILABLE = False
-    AudioVisualizer = None
+    AudioVisualizer = None  # type: ignore
 
+# Recorder type (provided by parent; we never instantiate here)
 try:
-    from RoomResponseRecorder import RoomResponseRecorder
+    from RoomResponseRecorder import RoomResponseRecorder  # type: ignore
     RECORDER_AVAILABLE = True
-except ImportError:
+except Exception:
+    RoomResponseRecorder = None  # type: ignore
     RECORDER_AVAILABLE = False
-    RoomResponseRecorder = None
 
+# SDL core (optional; only used for quick preview if available)
 try:
     import sdl_audio_core as sdl
     SDL_AVAILABLE = True
-except ImportError:
+except Exception:
+    sdl = None  # type: ignore
     SDL_AVAILABLE = False
-    sdl = None
 
 
 class SeriesSettingsPanel:
-    """Panel for configuring and testing multi-pulse recording series."""
-    
-    def __init__(self, audio_settings_panel=None):
+    """Panel for configuring and testing multi-pulse recording series (shared recorder)."""
+
+    def __init__(self, recorder: Optional["RoomResponseRecorder"] = None, audio_settings_panel=None):
         """
-        Initialize the series settings panel.
-        
         Args:
-            audio_settings_panel: Reference to parent AudioSettingsPanel for device access
+            recorder: Shared/global RoomResponseRecorder instance (required)
+            audio_settings_panel: Optional parent panel reference
         """
+        self.recorder = recorder
         self.audio_settings_panel = audio_settings_panel
         self.component_id = "series_settings"
-        
-    def render(self):
-        """Render the series settings interface."""
-        st.header("Series Settings - Multi-pulse Configuration")
-        
-        # Show prerequisites
+
+    # ----------------------
+    # Public render entrypoint
+    # ----------------------
+    def render(self) -> None:
+        st.header("Series Settings — Multi-pulse Configuration")
+
+        # Prereq/status row
         self._show_prerequisites()
-        
-        if not (SDL_AVAILABLE and RECORDER_AVAILABLE):
-            st.error("Required components not available. Please install SDL Audio Core and ensure RoomResponseRecorder is available.")
+        if not (RECORDER_AVAILABLE and self.recorder):
+            st.error("No shared RoomResponseRecorder available; connect it in Audio Settings.")
             return
-        
-        # Initialize session state
+
         self._init_session_state()
-        
-        # Main configuration tabs
+
         tab1, tab2, tab3 = st.tabs([
-            "Pulse Series Config", 
-            "Recording & Analysis", 
+            "Pulse Series Config",
+            "Recording & Analysis",
             "Advanced Settings"
         ])
-        
         with tab1:
             self._render_pulse_series_config()
-        
         with tab2:
             self._render_recording_analysis()
-        
         with tab3:
             self._render_advanced_settings()
-    
-    def _init_session_state(self):
-        """Initialize session state for series settings."""
+
+    # ----------------------
+    # Session defaults
+    # ----------------------
+    def _init_session_state(self) -> None:
+        # Ensure correct base types (ints for counts, floats for durations/freqs)
         defaults = {
-            # Core series parameters
-            'series_num_pulses': 8,
-            'series_pulse_duration': 8.0,
-            'series_cycle_duration': 100.0,
-            'series_pulse_frequency': 1000.0,
-            'series_pulse_volume': 0.4,
-            'series_pulse_form': 'sine',
-            'series_fade_duration': 0.1,
-            
+            'series_num_pulses': int(getattr(self.recorder, 'num_pulses', 8)) if self.recorder else 8,
+            'series_pulse_duration': float(1000.0 * getattr(self.recorder, 'pulse_duration', 0.008)) if self.recorder else 8.0,     # ms
+            'series_cycle_duration': float(1000.0 * getattr(self.recorder, 'cycle_duration', 0.1)) if self.recorder else 100.0,     # ms
+            'series_pulse_frequency': float(getattr(self.recorder, 'pulse_frequency', 1000.0)) if self.recorder else 1000.0,        # Hz
+            'series_pulse_volume': float(getattr(self.recorder, 'volume', 0.4)) if self.recorder else 0.4,
+            'series_pulse_form': getattr(self.recorder, 'impulse_form', 'sine') if self.recorder else 'sine',
+            'series_fade_duration': float(1000.0 * getattr(self.recorder, 'pulse_fade', 0.0001)) if self.recorder else 0.1,         # ms
+
             # Analysis parameters
             'series_record_extra_time': 200.0,
             'series_averaging_start_cycle': 2,
             'series_show_individual_cycles': True,
             'series_show_averaged_result': True,
-            
-            # Recording data
+
+            # Recording data cache
             'series_recorded_audio': None,
-            'series_sample_rate': 48000,
-            'series_timestamp': 0,
+            'series_sample_rate': int(getattr(self.recorder, 'sample_rate', 48000)) if self.recorder else 48000,
+            'series_timestamp': 0.0,
             'series_analysis_data': {},
-            
-            # Visualization settings
+
+            # Visualization options
             'series_cycle_overlay_mode': 'all',
             'series_analysis_window_start': 0.0,
-            'series_analysis_window_end': 1.0
+            'series_analysis_window_end': 1.0,
         }
-        
-        for key, value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = value
-    
-    def _show_prerequisites(self):
-        """Show status of required components."""
+        for k, v in defaults.items():
+            st.session_state.setdefault(k, v)
+
+    # ----------------------
+    # Status / prerequisites
+    # ----------------------
+    def _show_prerequisites(self) -> None:
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
-            if SDL_AVAILABLE:
-                st.success("✅ SDL Audio")
-            else:
-                st.error("❌ SDL Audio")
-        
+            st.success("✅ SDL Audio" if SDL_AVAILABLE else "❌ SDL Audio")
         with col2:
-            if RECORDER_AVAILABLE:
-                st.success("✅ Recorder")
-            else:
-                st.error("❌ Recorder")
-        
+            ok = RECORDER_AVAILABLE and (self.recorder is not None)
+            st.success("✅ Recorder" if ok else "❌ Recorder")
         with col3:
-            if VISUALIZER_AVAILABLE:
-                st.success("✅ Visualizer")
-            else:
-                st.error("❌ Visualizer")
-        
+            st.success("✅ Visualizer" if VISUALIZER_AVAILABLE else "❌ Visualizer")
         with col4:
-            # Show current device selection from parent panel
-            if self.audio_settings_panel:
-                input_dev = st.session_state.get('audio_selected_input_device', 'None')
-                output_dev = st.session_state.get('audio_selected_output_device', 'None')
-                
-                if input_dev != 'None' and output_dev != 'None':
-                    st.success("✅ Devices")
-                else:
-                    st.warning("⚠️ Devices")
-                    
-                st.caption(f"In: {str(input_dev)[:8]}...")
-                st.caption(f"Out: {str(output_dev)[:8]}...")
-    
-    def _render_pulse_series_config(self):
-        """Render the main pulse series configuration."""
+            in_dev = st.session_state.get('audio_selected_input_device', 'None')
+            out_dev = st.session_state.get('audio_selected_output_device', 'None')
+            if in_dev != 'None' and out_dev != 'None':
+                st.success("✅ Devices")
+            else:
+                st.warning("⚠️ Devices")
+            st.caption(f"In: {str(in_dev)[:24]}")
+            st.caption(f"Out: {str(out_dev)[:24]}")
+
+    # ----------------------
+    # Config UI (permanent apply to recorder)
+    # ----------------------
+    def _render_pulse_series_config(self) -> None:
         st.markdown("**Multi-pulse Series Configuration**")
-        
-        # Basic pulse parameters
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             st.markdown("**Pulse Properties**")
-            
-            st.session_state['series_num_pulses'] = st.number_input(
+            # ints across the board
+            num_pulses = st.number_input(
                 "Number of pulses",
-                min_value=1,
-                max_value=50,
-                value=st.session_state.get('series_num_pulses', 8),
-                step=1,
-                help="Total number of pulses in the series"
+                min_value=int(1), max_value=int(200),
+                value=int(st.session_state['series_num_pulses']),
+                step=int(1)
             )
-            
-            st.session_state['series_pulse_duration'] = st.number_input(
+            # floats across the board
+            pulse_duration_ms = st.number_input(
                 "Pulse duration (ms)",
-                min_value=1.0,
-                max_value=100.0,
-                value=st.session_state.get('series_pulse_duration', 8.0),
-                step=0.5,
-                help="Duration of each individual pulse"
+                min_value=float(0.5), max_value=float(200.0),
+                value=float(st.session_state['series_pulse_duration']),
+                step=float(0.5)
             )
-            
-            st.session_state['series_pulse_frequency'] = st.number_input(
+            pulse_freq = st.number_input(
                 "Pulse frequency (Hz)",
-                min_value=20.0,
-                max_value=20000.0,
-                value=st.session_state.get('series_pulse_frequency', 1000.0),
-                step=50.0,
-                help="Frequency content of each pulse"
+                min_value=float(20.0), max_value=float(24000.0),
+                value=float(st.session_state['series_pulse_frequency']),
+                step=float(50.0)
             )
-        
+
         with col2:
             st.markdown("**Timing & Volume**")
-            
-            st.session_state['series_cycle_duration'] = st.number_input(
+            cycle_duration_ms = st.number_input(
                 "Cycle duration (ms)",
-                min_value=10.0,
-                max_value=1000.0,
-                value=st.session_state.get('series_cycle_duration', 100.0),
-                step=5.0,
-                help="Time between pulse starts (includes pulse + gap)"
+                min_value=float(5.0), max_value=float(3000.0),
+                value=float(st.session_state['series_cycle_duration']),
+                step=float(5.0)
             )
-            
-            st.session_state['series_pulse_volume'] = st.slider(
+            pulse_vol = st.slider(
                 "Pulse volume",
-                min_value=0.0,
-                max_value=1.0,
-                value=st.session_state.get('series_pulse_volume', 0.4),
-                step=0.05,
-                help="Volume level for all pulses"
+                min_value=float(0.0), max_value=float(1.0),
+                value=float(st.session_state['series_pulse_volume']),
+                step=float(0.05)
             )
-            
-            st.session_state['series_fade_duration'] = st.number_input(
+            fade_ms = st.number_input(
                 "Fade duration (ms)",
-                min_value=0.1,
-                max_value=10.0,
-                value=st.session_state.get('series_fade_duration', 0.1),
-                step=0.1,
-                help="Fade in/out to prevent clicks"
+                min_value=float(0.05), max_value=float(20.0),
+                value=float(st.session_state['series_fade_duration']),
+                step=float(0.05)
             )
-        
+
         with col3:
             st.markdown("**Waveform & Analysis**")
-            
-            st.session_state['series_pulse_form'] = st.selectbox(
+            pulse_form = st.selectbox(
                 "Pulse waveform",
                 ["sine", "square"],
-                index=0 if st.session_state.get('series_pulse_form', 'sine') == 'sine' else 1,
-                help="Waveform shape for each pulse"
+                index=0 if st.session_state['series_pulse_form'] == 'sine' else 1
             )
-            
-            st.session_state['series_record_extra_time'] = st.number_input(
+            extra_ms = st.number_input(
                 "Extra record time (ms)",
-                min_value=50.0,
-                max_value=2000.0,
-                value=st.session_state.get('series_record_extra_time', 200.0),
-                step=25.0,
-                help="Additional recording time after last pulse for reverb analysis"
+                min_value=float(0.0), max_value=float(5000.0),
+                value=float(st.session_state['series_record_extra_time']),
+                step=float(25.0)
             )
-            
-            st.session_state['series_averaging_start_cycle'] = st.number_input(
+            # ints across the board; max depends on num_pulses
+            avg_start = st.number_input(
                 "Averaging start cycle",
-                min_value=1,
-                max_value=st.session_state.get('series_num_pulses', 8),
-                value=min(st.session_state.get('series_averaging_start_cycle', 2), 
-                         st.session_state.get('series_num_pulses', 8)),
-                step=1,
-                help="First cycle to include in averaging (skip initial cycles for settling)"
+                min_value=int(1), max_value=int(max(1, int(num_pulses))),
+                value=int(min(int(st.session_state['series_averaging_start_cycle']), int(num_pulses))),
+                step=int(1)
             )
-        
-        # Calculated parameters display
+
+        # Store in session (correct types)
+        st.session_state['series_num_pulses'] = int(num_pulses)
+        st.session_state['series_pulse_duration'] = float(pulse_duration_ms)
+        st.session_state['series_cycle_duration'] = float(cycle_duration_ms)
+        st.session_state['series_pulse_frequency'] = float(pulse_freq)
+        st.session_state['series_pulse_volume'] = float(pulse_vol)
+        st.session_state['series_fade_duration'] = float(fade_ms)
+        st.session_state['series_pulse_form'] = str(pulse_form)
+        st.session_state['series_record_extra_time'] = float(extra_ms)
+        st.session_state['series_averaging_start_cycle'] = int(avg_start)
+
+        # APPLY PERMANENTLY to the shared recorder (no restore)
+        self._apply_series_settings_to_recorder(self.recorder)
+
         self._show_calculated_parameters()
-        
-        # Series preview and control
         st.markdown("---")
         self._render_series_controls()
-    
-    def _show_calculated_parameters(self):
-        """Display calculated timing parameters."""
+
+    def _show_calculated_parameters(self) -> None:
         st.markdown("**Calculated Parameters**")
-        
-        pulse_duration = st.session_state.get('series_pulse_duration', 8.0)
-        cycle_duration = st.session_state.get('series_cycle_duration', 100.0)
-        num_pulses = st.session_state.get('series_num_pulses', 8)
-        extra_time = st.session_state.get('series_record_extra_time', 200.0)
-        
-        gap_duration = cycle_duration - pulse_duration
-        total_series_time = (num_pulses * cycle_duration) + extra_time
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Gap Duration", f"{gap_duration:.1f} ms")
-        with col2:
-            st.metric("Series Duration", f"{total_series_time:.0f} ms")
-        with col3:
-            duty_cycle = (pulse_duration / cycle_duration) * 100
-            st.metric("Duty Cycle", f"{duty_cycle:.1f}%")
-        with col4:
-            pulse_rate = 1000.0 / cycle_duration  # pulses per second
-            st.metric("Pulse Rate", f"{pulse_rate:.1f} Hz")
-        
-        # Warnings for problematic configurations
-        if gap_duration <= 0:
-            st.error("⚠️ Gap duration is negative! Increase cycle duration or reduce pulse duration.")
-        elif gap_duration < 5.0:
-            st.warning("⚠️ Very short gap duration may cause overlapping echoes.")
-        
-        if duty_cycle > 50:
+        pulse = float(st.session_state['series_pulse_duration'])
+        cycle = float(st.session_state['series_cycle_duration'])
+        num = int(st.session_state['series_num_pulses'])
+        extra = float(st.session_state['series_record_extra_time'])
+
+        gap = cycle - pulse
+        total_ms = (num * cycle) + extra
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Gap Duration", f"{gap:.1f} ms")
+        with c2:
+            st.metric("Series Duration", f"{total_ms:.0f} ms")
+        with c3:
+            duty = (pulse / cycle) * 100.0 if cycle > 0 else 0.0
+            st.metric("Duty Cycle", f"{duty:.1f}%")
+        with c4:
+            st.metric("Pulse Rate", f"{(1000.0 / cycle) if cycle > 0 else 0.0:.1f} Hz")
+
+        if gap <= 0:
+            st.error("⚠️ Gap duration is negative — increase cycle or reduce pulse.")
+        elif gap < 5.0:
+            st.warning("⚠️ Very short gap may cause overlapping echoes.")
+        if cycle > 0 and (pulse / cycle) > 0.5:
             st.warning("⚠️ High duty cycle may cause excessive acoustic energy.")
-    
-    def _render_series_controls(self):
-        """Render recording and preview controls for the series."""
+
+    def _render_series_controls(self) -> None:
         st.markdown("**Series Controls**")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🎵 Record Series", 
-                        disabled=not (SDL_AVAILABLE and RECORDER_AVAILABLE),
-                        help="Record the complete pulse series and analyze results"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("🎵 Record Series",
+                         disabled=not (SDL_AVAILABLE and RECORDER_AVAILABLE and self.recorder)):
                 self._execute_series_recording()
-        
-        with col2:
-            if st.button("🔊 Preview Series", 
-                        disabled=not SDL_AVAILABLE,
-                        help="Play the pulse series without recording"):
+        with c2:
+            if st.button("🔊 Preview Series", disabled=not (SDL_AVAILABLE and self.recorder)):
                 self._preview_series()
-        
-        with col3:
-            if st.button("⚙️ Export Series Config",
-                        help="Export current series configuration"):
+        with c3:
+            if st.button("⚙️ Export Series Config"):
                 self._export_series_config()
-    
-    def _execute_series_recording(self):
-        """Execute multi-pulse series recording and analysis."""
+
+    # ----------------------
+    # Record / Preview (use shared recorder settings as-is)
+    # ----------------------
+    def _execute_series_recording(self) -> None:
+        if not self.recorder:
+            st.error("Recorder unavailable")
+            return
+
         try:
             with st.spinner("Recording pulse series..."):
-                # Create TMP folder
-                tmp_dir = Path("TMP")
-                tmp_dir.mkdir(exist_ok=True)
-                
-                # Generate unique filenames
-                timestamp = int(time.time())
-                temp_raw_path = tmp_dir / f"series_raw_{timestamp}.wav"
-                temp_impulse_path = tmp_dir / f"series_impulse_{timestamp}.wav"
-                
-                # Create and configure recorder
-                recorder = RoomResponseRecorder()
-                
-                # Get current audio settings
-                sample_rate = st.session_state.get('audio_sample_rate', 48000)
-                
-                # Configure recorder for series
-                recorder.sample_rate = sample_rate
-                recorder.pulse_frequency = st.session_state.get('series_pulse_frequency', 1000.0)
-                recorder.pulse_duration = st.session_state.get('series_pulse_duration', 8.0) / 1000.0
-                recorder.pulse_fade = st.session_state.get('series_fade_duration', 0.1) / 1000.0
-                recorder.cycle_duration = st.session_state.get('series_cycle_duration', 100.0) / 1000.0
-                recorder.num_pulses = st.session_state.get('series_num_pulses', 8)
-                recorder.volume = st.session_state.get('series_pulse_volume', 0.4)
-                recorder.impulse_form = st.session_state.get('series_pulse_form', 'sine')
-                
-                # Add extra recording time
-                extra_time = st.session_state.get('series_record_extra_time', 200.0) / 1000.0
-                recorder.total_duration = (recorder.num_pulses * recorder.cycle_duration) + extra_time
-                
-                # Recalculate derived parameters
-                recorder.pulse_samples = int(recorder.pulse_duration * recorder.sample_rate)
-                recorder.fade_samples = int(recorder.pulse_fade * recorder.sample_rate)
-                recorder.cycle_samples = int(recorder.cycle_duration * recorder.sample_rate)
-                recorder.gap_samples = recorder.cycle_samples - recorder.pulse_samples
-                
-                # Regenerate signal with new parameters
-                recorder.playback_signal = recorder._generate_complete_signal()
-                
-                # Execute recording
-                recorded_audio = recorder.take_record(
-                    output_file=str(temp_raw_path),
-                    impulse_file=str(temp_impulse_path),
-                    method=2  # Auto device selection
+                tmp = Path("TMP"); tmp.mkdir(exist_ok=True)
+                ts = int(time.time())
+                raw_path = tmp / f"series_raw_{ts}.wav"
+                imp_path = tmp / f"series_impulse_{ts}.wav"
+
+                recorded_audio = self.recorder.take_record(
+                    output_file=str(raw_path),
+                    impulse_file=str(imp_path),
+                    method=2
                 )
-                
-                if recorded_audio is not None:
-                    # Analyze the series recording
-                    analysis_data = self._analyze_series_recording(recorded_audio, recorder)
-                    
-                    # Store results in session state
-                    st.session_state['series_recorded_audio'] = recorded_audio
-                    st.session_state['series_sample_rate'] = recorder.sample_rate
-                    st.session_state['series_timestamp'] = time.time()
-                    st.session_state['series_analysis_data'] = analysis_data
-                    
-                    st.success(f"Series recording successful! Duration: {len(recorded_audio) / recorder.sample_rate:.3f}s")
-                    st.info(f"Files saved: {temp_raw_path.name}, {temp_impulse_path.name}")
-                    st.rerun()
-                else:
-                    st.error("Recording failed - no audio data captured")
-                    
+
+                if recorded_audio is None:
+                    st.error("Recording failed — no audio captured")
+                    return
+
+                analysis = self._analyze_series_recording(recorded_audio, self.recorder)
+                st.session_state['series_recorded_audio'] = recorded_audio
+                st.session_state['series_sample_rate'] = int(self.recorder.sample_rate)
+                st.session_state['series_timestamp'] = time.time()
+                st.session_state['series_analysis_data'] = analysis
+
+                st.success(f"Series recording OK — {len(recorded_audio)/self.recorder.sample_rate:.3f}s")
+                st.info(f"Files saved: {raw_path.name}, {imp_path.name}")
+                st.rerun()
+
         except Exception as e:
             st.error(f"Recording error: {e}")
-            with st.expander("Error Details"):
+            with st.expander("Details"):
                 st.code(str(e))
-    
-    def _analyze_series_recording(self, audio_data: np.ndarray, recorder: RoomResponseRecorder) -> Dict[str, Any]:
-        """Analyze the recorded pulse series."""
-        analysis = {}
-        
+
+    def _preview_series(self) -> None:
+        if not self.recorder:
+            st.error("Recorder unavailable")
+            return
+
         try:
-            # Basic parameters
-            num_pulses = recorder.num_pulses
-            cycle_samples = recorder.cycle_samples
-            sample_rate = recorder.sample_rate
-            
-            # Expected signal length (may be shorter than actual recording due to extra time)
-            expected_samples = num_pulses * cycle_samples
-            signal_data = audio_data[:expected_samples] if len(audio_data) >= expected_samples else audio_data
-            
-            # Extract individual cycles
-            cycles = []
-            if len(signal_data) >= expected_samples:
-                for i in range(num_pulses):
-                    start_idx = i * cycle_samples
-                    end_idx = start_idx + cycle_samples
-                    if end_idx <= len(signal_data):
-                        cycles.append(signal_data[start_idx:end_idx])
+            with st.spinner("Generating series preview..."):
+                signal = self.recorder._generate_complete_signal()
+                signal_arr = np.asarray(signal, dtype=np.float32)
+
+                try:
+                    if SDL_AVAILABLE and sdl is not None and hasattr(sdl, "quick_device_test"):
+                        inp = getattr(self.recorder, 'input_device_id', -1)
+                        out = getattr(self.recorder, 'output_device_id', -1)
+                        result = sdl.quick_device_test(inp, out, signal)
+                        if isinstance(result, dict) and result.get('success'):
+                            st.success("Series preview played.")
+                        else:
+                            msg = result.get('error_message', 'Unknown error') if isinstance(result, dict) else str(result)
+                            st.warning(f"Preview playback issue: {msg}")
+                except Exception as e:
+                    st.warning(f"Preview playback error (storing for visualization): {e}")
+
+                st.session_state['series_preview_audio'] = signal_arr
+                st.session_state['series_preview_sample_rate'] = int(self.recorder.sample_rate)
+
+        except Exception as e:
+            st.error(f"Series generation error: {e}")
+
+    # ----------------------
+    # APPLY settings permanently to the shared recorder
+    # ----------------------
+    def _apply_series_settings_to_recorder(self, r: Optional["RoomResponseRecorder"]) -> None:
+        if not r:
+            return
+
+        r.sample_rate = int(st.session_state.get('audio_sample_rate', getattr(r, 'sample_rate', 48000)))
+        r.pulse_frequency = float(st.session_state['series_pulse_frequency'])
+        r.pulse_duration = float(st.session_state['series_pulse_duration']) / 1000.0
+        r.pulse_fade = float(st.session_state['series_fade_duration']) / 1000.0
+        r.cycle_duration = float(st.session_state['series_cycle_duration']) / 1000.0
+        r.num_pulses = int(st.session_state['series_num_pulses'])
+        r.volume = float(st.session_state['series_pulse_volume'])
+        r.impulse_form = str(st.session_state['series_pulse_form'])
+
+        extra = float(st.session_state['series_record_extra_time']) / 1000.0
+        r.total_duration = (r.num_pulses * r.cycle_duration) + extra
+
+        # Recompute derived fields on recorder
+        r.pulse_samples = int(r.pulse_duration * r.sample_rate)
+        r.fade_samples = int(r.pulse_fade * r.sample_rate)
+        r.cycle_samples = int(r.cycle_duration * r.sample_rate)
+        r.gap_samples = r.cycle_samples - r.pulse_samples
+
+        r.playback_signal = r._generate_complete_signal()
+
+    # ----------------------
+    # Analysis / Visualization
+    # ----------------------
+    def _analyze_series_recording(self, audio_data: np.ndarray, recorder: "RoomResponseRecorder") -> Dict[str, Any]:
+        analysis: Dict[str, Any] = {}
+        try:
+            num = max(1, int(getattr(recorder, 'num_pulses', 1)))
+            cyc = int(getattr(recorder, 'cycle_samples', 0))
+            sr = int(getattr(recorder, 'sample_rate', 48000))
+
+            expected = num * cyc if cyc > 0 else len(audio_data)
+            signal_data = audio_data[:expected] if expected and len(audio_data) >= expected else audio_data
+
+            # Split cycles
+            cycles: List[np.ndarray] = []
+            if cyc > 0 and num > 0:
+                for i in range(num):
+                    s = i * cyc
+                    e = s + cyc
+                    if e <= len(signal_data):
+                        cycles.append(signal_data[s:e])
                     else:
-                        # Pad incomplete cycle
-                        incomplete_cycle = signal_data[start_idx:]
-                        padded_cycle = np.zeros(cycle_samples)
-                        padded_cycle[:len(incomplete_cycle)] = incomplete_cycle
-                        cycles.append(padded_cycle)
-            
+                        seg = signal_data[s:] if s < len(signal_data) else np.zeros(0, dtype=np.float32)
+                        pad = np.zeros(cyc, dtype=np.float32)
+                        if len(seg) > 0:
+                            pad[:len(seg)] = seg
+                        cycles.append(pad)
+
             analysis['individual_cycles'] = cycles
             analysis['num_cycles_extracted'] = len(cycles)
-            
-            # Calculate averaged response
+
+            # Averaging
             if cycles:
-                start_cycle = st.session_state.get('series_averaging_start_cycle', 2) - 1  # Convert to 0-based
-                start_cycle = max(0, min(start_cycle, len(cycles) - 1))
-                
-                if start_cycle < len(cycles):
-                    cycles_to_average = cycles[start_cycle:]
-                    averaged_cycle = np.mean(cycles_to_average, axis=0)
-                    analysis['averaged_cycle'] = averaged_cycle
-                    analysis['cycles_used_for_averaging'] = len(cycles_to_average)
-                    analysis['averaging_start_cycle'] = start_cycle + 1  # Convert back to 1-based
-                else:
-                    analysis['averaged_cycle'] = cycles[0] if cycles else np.array([])
-                    analysis['cycles_used_for_averaging'] = 1
-                    analysis['averaging_start_cycle'] = 1
-            
-            # Calculate cycle-to-cycle consistency
+                start = max(0, min(int(st.session_state['series_averaging_start_cycle']) - 1, len(cycles) - 1))
+                to_avg = cycles[start:]
+                avg_cycle = np.mean(np.stack(to_avg, axis=0), axis=0) if to_avg else cycles[-1]
+                analysis['averaged_cycle'] = avg_cycle
+                analysis['cycles_used_for_averaging'] = len(to_avg)
+                analysis['averaging_start_cycle'] = start + 1
+
+            # Consistency metric
             if len(cycles) > 1:
-                # RMS differences between consecutive cycles
-                rms_diffs = []
+                diffs = []
                 for i in range(1, len(cycles)):
-                    diff = cycles[i] - cycles[i-1]
-                    rms_diff = np.sqrt(np.mean(diff**2))
-                    rms_diffs.append(rms_diff)
-                
+                    d = cycles[i] - cycles[i - 1]
+                    diffs.append(float(np.sqrt(np.mean(d * d))))
                 analysis['cycle_consistency'] = {
-                    'rms_differences': rms_diffs,
-                    'mean_rms_diff': np.mean(rms_diffs),
-                    'std_rms_diff': np.std(rms_diffs)
+                    'rms_differences': diffs,
+                    'mean_rms_diff': float(np.mean(diffs)),
+                    'std_rms_diff': float(np.std(diffs)),
                 }
-            
-            # Basic quality metrics for the full recording
+
             analysis['full_recording_metrics'] = {
-                'max_amplitude': float(np.max(np.abs(audio_data))),
-                'rms_level': float(np.sqrt(np.mean(audio_data**2))),
-                'total_samples': len(audio_data),
-                'duration_seconds': len(audio_data) / sample_rate
+                'max_amplitude': float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0,
+                'rms_level': float(np.sqrt(np.mean(audio_data ** 2))) if len(audio_data) else 0.0,
+                'total_samples': int(len(audio_data)),
+                'duration_seconds': float(len(audio_data) / sr) if sr > 0 else 0.0
             }
-            
+
         except Exception as e:
             analysis['error'] = str(e)
             st.error(f"Analysis error: {e}")
-        
+
         return analysis
-    
-    def _preview_series(self):
-        """Preview the pulse series without recording."""
-        try:
-            with st.spinner("Generating series preview..."):
-                # Create temporary recorder for signal generation
-                recorder = RoomResponseRecorder()
-                
-                # Configure with current settings
-                sample_rate = st.session_state.get('audio_sample_rate', 48000)
-                recorder.sample_rate = sample_rate
-                recorder.pulse_frequency = st.session_state.get('series_pulse_frequency', 1000.0)
-                recorder.pulse_duration = st.session_state.get('series_pulse_duration', 8.0) / 1000.0
-                recorder.pulse_fade = st.session_state.get('series_fade_duration', 0.1) / 1000.0
-                recorder.cycle_duration = st.session_state.get('series_cycle_duration', 100.0) / 1000.0
-                recorder.num_pulses = st.session_state.get('series_num_pulses', 8)
-                recorder.volume = st.session_state.get('series_pulse_volume', 0.4)
-                recorder.impulse_form = st.session_state.get('series_pulse_form', 'sine')
-                
-                # Calculate derived parameters
-                recorder.pulse_samples = int(recorder.pulse_duration * recorder.sample_rate)
-                recorder.fade_samples = int(recorder.pulse_fade * recorder.sample_rate)
-                recorder.cycle_samples = int(recorder.cycle_duration * recorder.sample_rate)
-                recorder.gap_samples = recorder.cycle_samples - recorder.pulse_samples
-                recorder.total_duration = recorder.cycle_duration * recorder.num_pulses
-                
-                # Generate signal
-                signal = recorder._generate_complete_signal()
-                signal_array = np.array(signal, dtype=np.float32)
-                
-                # Try to play using SDL
-                try:
-                    input_id, output_id = self._get_device_ids()
-                    result = sdl.quick_device_test(input_id, output_id, signal)
-                    
-                    if result['success']:
-                        st.success("Series preview played successfully!")
-                        # Store for visualization
-                        st.session_state['series_preview_audio'] = signal_array
-                        st.session_state['series_preview_sample_rate'] = sample_rate
-                    else:
-                        st.error(f"Preview failed: {result.get('error_message', 'Unknown error')}")
-                        
-                except Exception as e:
-                    st.error(f"Preview playback error: {e}")
-                    # Still store for visualization even if playback failed
-                    st.session_state['series_preview_audio'] = signal_array
-                    st.session_state['series_preview_sample_rate'] = sample_rate
-                    
-        except Exception as e:
-            st.error(f"Series generation error: {e}")
-    
-    def _export_series_config(self):
-        """Export current series configuration."""
-        config = {
-            "series_config": {
-                "num_pulses": st.session_state.get('series_num_pulses', 8),
-                "pulse_duration_ms": st.session_state.get('series_pulse_duration', 8.0),
-                "cycle_duration_ms": st.session_state.get('series_cycle_duration', 100.0),
-                "pulse_frequency": st.session_state.get('series_pulse_frequency', 1000.0),
-                "pulse_volume": st.session_state.get('series_pulse_volume', 0.4),
-                "pulse_form": st.session_state.get('series_pulse_form', 'sine'),
-                "fade_duration_ms": st.session_state.get('series_fade_duration', 0.1),
-                "record_extra_time_ms": st.session_state.get('series_record_extra_time', 200.0),
-                "averaging_start_cycle": st.session_state.get('series_averaging_start_cycle', 2)
-            },
-            "audio_settings": {
-                "sample_rate": st.session_state.get('audio_sample_rate', 48000),
-                "input_channels": st.session_state.get('audio_input_channels', 1),
-                "output_channels": st.session_state.get('audio_output_channels', 2),
-                "buffer_size": st.session_state.get('audio_buffer_size', 512)
-            },
-            "export_timestamp": time.time(),
-            "export_version": "1.0"
-        }
-        
-        config_json = json.dumps(config, indent=2)
-        
-        st.download_button(
-            "Download Series Configuration",
-            data=config_json,
-            file_name=f"series_config_{int(time.time())}.json",
-            mime="application/json"
-        )
-        
-        with st.expander("Configuration Preview"):
-            st.code(config_json, language='json')
-    
-    def _get_device_ids(self):
-        """Get device IDs for recording/playback."""
-        # Try to get device IDs from parent panel
-        if self.audio_settings_panel and hasattr(self.audio_settings_panel, '_get_device_id_from_selection'):
-            try:
-                input_id = self.audio_settings_panel._get_device_id_from_selection('input')
-                output_id = self.audio_settings_panel._get_device_id_from_selection('output')
-                return input_id, output_id
-            except:
-                pass
-        
-        # Fallback to default devices
-        return -1, -1
-    
-    def _render_recording_analysis(self):
-        """Render the recording and analysis interface."""
+
+    def _render_recording_analysis(self) -> None:
         st.markdown("**Series Recording Analysis**")
-        
-        # Check for recorded data
-        recorded_audio = st.session_state.get('series_recorded_audio')
-        sample_rate = st.session_state.get('series_sample_rate', 48000)
-        analysis_data = st.session_state.get('series_analysis_data', {})
-        
-        if recorded_audio is not None and VISUALIZER_AVAILABLE:
-            # Show recording metadata
-            timestamp = st.session_state.get('series_timestamp', 0)
-            if timestamp > 0:
-                record_time = time.strftime('%H:%M:%S', time.localtime(timestamp))
-                st.caption(f"Recorded at: {record_time}")
-            
-            # Show analysis metrics
-            if analysis_data:
-                self._display_analysis_metrics(analysis_data)
-            
-            # Visualization controls
-            self._render_visualization_controls()
-            
-            # Main visualizer for full recording
-            st.markdown("**Full Recording**")
-            visualizer = AudioVisualizer("series_full_recording")
-            visualizer.render(
-                audio_data=recorded_audio,
-                sample_rate=sample_rate,
-                title="Complete Series Recording",
-                show_controls=True,
-                show_analysis=True,
-                height=400
-            )
-            
-            # Individual cycles visualization
-            if analysis_data.get('individual_cycles'):
-                self._render_cycle_analysis(analysis_data, sample_rate)
-            
-            # Averaged result visualization
-            if analysis_data.get('averaged_cycle') is not None:
-                self._render_averaged_analysis(analysis_data, sample_rate)
-        
-        elif recorded_audio is None:
-            st.info("No series recording available. Use 'Record Series' to capture a multi-pulse sequence.")
-            
-            # Show preview if available
-            preview_audio = st.session_state.get('series_preview_audio')
-            preview_sample_rate = st.session_state.get('series_preview_sample_rate', 48000)
-            
-            if preview_audio is not None and VISUALIZER_AVAILABLE:
+
+        audio = st.session_state.get('series_recorded_audio')
+        sr = int(st.session_state.get('series_sample_rate', getattr(self.recorder, 'sample_rate', 48000)))
+        analysis = st.session_state.get('series_analysis_data', {})
+
+        if audio is None:
+            st.info("No series recording yet. Use **Record Series**.")
+            if VISUALIZER_AVAILABLE and st.session_state.get('series_preview_audio') is not None:
                 st.markdown("**Series Preview**")
-                preview_visualizer = AudioVisualizer("series_preview")
-                preview_visualizer.render(
-                    audio_data=preview_audio,
-                    sample_rate=preview_sample_rate,
+                AudioVisualizer("series_preview").render(
+                    audio_data=st.session_state['series_preview_audio'],
+                    sample_rate=int(st.session_state.get('series_preview_sample_rate', sr)),
                     title="Generated Series Signal",
                     show_controls=True,
                     show_analysis=False,
                     height=300
                 )
-        
-        else:
-            st.error("Audio visualizer not available. Please install gui_audio_visualizer.py")
-    
-    def _display_analysis_metrics(self, analysis_data: Dict[str, Any]):
-        """Display analysis metrics from the series recording."""
+            return
+
+        ts = st.session_state.get('series_timestamp', 0)
+        if ts:
+            st.caption(f"Recorded at: {time.strftime('%H:%M:%S', time.localtime(ts))}")
+
+        if analysis:
+            self._display_analysis_metrics(analysis)
+
+        self._render_visualization_controls()
+
+        if VISUALIZER_AVAILABLE:
+            st.markdown("**Full Recording**")
+            AudioVisualizer("series_full_recording").render(
+                audio_data=audio,
+                sample_rate=sr,
+                title="Complete Series Recording",
+                show_controls=True,
+                show_analysis=True,
+                height=400
+            )
+
+        if analysis.get('individual_cycles'):
+            self._render_cycle_analysis(analysis, sr)
+            self._render_cycle_consistency_overlay(analysis, sr)
+
+        if analysis.get('averaged_cycle') is not None:
+            self._render_averaged_analysis(analysis, sr)
+
+    def _display_analysis_metrics(self, analysis: Dict[str, Any]) -> None:
         st.markdown("**Analysis Results**")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            cycles_extracted = analysis_data.get('num_cycles_extracted', 0)
-            st.metric("Cycles Extracted", cycles_extracted)
-        
-        with col2:
-            cycles_averaged = analysis_data.get('cycles_used_for_averaging', 0)
-            st.metric("Cycles Averaged", cycles_averaged)
-        
-        with col3:
-            full_metrics = analysis_data.get('full_recording_metrics', {})
-            max_amp = full_metrics.get('max_amplitude', 0)
-            st.metric("Max Amplitude", f"{max_amp:.4f}")
-        
-        with col4:
-            rms_level = full_metrics.get('rms_level', 0)
-            st.metric("RMS Level", f"{rms_level:.4f}")
-        
-        # Cycle consistency metrics
-        consistency = analysis_data.get('cycle_consistency')
-        if consistency:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Cycles Extracted", analysis.get('num_cycles_extracted', 0))
+        with c2:
+            st.metric("Cycles Averaged", analysis.get('cycles_used_for_averaging', 0))
+        full = analysis.get('full_recording_metrics', {})
+        with c3:
+            st.metric("Max Amplitude", f"{full.get('max_amplitude', 0):.4f}")
+        with c4:
+            st.metric("RMS Level", f"{full.get('rms_level', 0):.4f}")
+
+        cons = analysis.get('cycle_consistency')
+        if cons:
             st.markdown("**Cycle-to-Cycle Consistency**")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                mean_diff = consistency.get('mean_rms_diff', 0)
-                st.metric("Mean RMS Difference", f"{mean_diff:.5f}")
-            
-            with col2:
-                std_diff = consistency.get('std_rms_diff', 0)
-                st.metric("Std RMS Difference", f"{std_diff:.5f}")
-            
-            # Consistency assessment
-            if mean_diff < 0.001:
-                st.success("Excellent cycle consistency")
-            elif mean_diff < 0.01:
-                st.info("Good cycle consistency")
-            elif mean_diff < 0.1:
-                st.warning("Moderate cycle consistency")
-            else:
-                st.error("Poor cycle consistency - check for system instability")
-    
-    def _render_visualization_controls(self):
-        """Render controls for visualization options."""
+            d1, d2 = st.columns(2)
+            with d1:
+                st.metric("Mean RMS Diff", f"{cons.get('mean_rms_diff', 0):.5f}")
+            with d2:
+                st.metric("Std RMS Diff", f"{cons.get('std_rms_diff', 0):.5f}")
+
+    def _render_visualization_controls(self) -> None:
         with st.expander("Visualization Options"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
+            c1, c2 = st.columns(2)
+            with c1:
                 st.session_state['series_show_individual_cycles'] = st.checkbox(
-                    "Show individual cycles",
-                    value=st.session_state.get('series_show_individual_cycles', True)
-                )
-                
+                    "Show individual cycles", value=st.session_state['series_show_individual_cycles'])
                 st.session_state['series_cycle_overlay_mode'] = st.selectbox(
-                    "Cycle overlay mode",
-                    ["all", "first_few", "averaged_only"],
-                    index=0,
-                    help="How to display multiple cycles"
-                )
-            
-            with col2:
+                    "Cycle overlay mode", ["all", "first_few", "averaged_only"])
+            with c2:
                 st.session_state['series_show_averaged_result'] = st.checkbox(
-                    "Show averaged result",
-                    value=st.session_state.get('series_show_averaged_result', True)
-                )
-                
-                # Analysis window (for future use)
+                    "Show averaged result", value=st.session_state['series_show_averaged_result'])
                 st.session_state['series_analysis_window_start'] = st.slider(
                     "Analysis window start",
-                    0.0, 1.0, 
-                    st.session_state.get('series_analysis_window_start', 0.0),
-                    help="Start of analysis window (fraction of cycle)"
+                    min_value=float(0.0), max_value=float(1.0),
+                    value=float(st.session_state['series_analysis_window_start']),
+                    step=float(0.01)
                 )
-    
-    def _render_cycle_analysis(self, analysis_data: Dict[str, Any], sample_rate: int):
-        """Render individual cycle analysis."""
+
+    def _render_cycle_analysis(self, analysis: Dict[str, Any], sample_rate: int) -> None:
         if not st.session_state.get('series_show_individual_cycles', True):
             return
-        
-        cycles = analysis_data.get('individual_cycles', [])
+        cycles = analysis.get('individual_cycles', [])
         if not cycles:
             return
-        
-        st.markdown("**Individual Cycles Analysis**")
-        
-        # Cycle selector
-        cycle_idx = st.selectbox(
-            "Select cycle to analyze",
-            range(len(cycles)),
-            format_func=lambda x: f"Cycle {x+1}",
-            help="Choose individual cycle for detailed analysis"
-        )
-        
-        if 0 <= cycle_idx < len(cycles):
-            selected_cycle = cycles[cycle_idx]
-            
-            # Visualize selected cycle
-            cycle_visualizer = AudioVisualizer(f"series_cycle_{cycle_idx}")
-            cycle_visualizer.render(
-                audio_data=selected_cycle,
+
+        st.markdown("**Individual Cycles (Inspect One)**")
+        idx = st.selectbox("Select cycle", range(len(cycles)), format_func=lambda i: f"Cycle {i+1}")
+        if 0 <= idx < len(cycles) and VISUALIZER_AVAILABLE:
+            AudioVisualizer(f"series_cycle_{idx}").render(
+                audio_data=cycles[idx],
                 sample_rate=sample_rate,
-                title=f"Cycle {cycle_idx+1} - Individual Analysis",
+                title=f"Cycle {idx+1} — Individual Analysis",
                 show_controls=True,
                 show_analysis=True,
                 height=350
             )
-            
-            # Cycle comparison if multiple cycles exist
-            if len(cycles) > 1:
-                st.markdown("**Cycle Overlay Comparison**")
-                self._render_cycle_overlay(cycles, sample_rate, analysis_data)
-    
-    def _render_cycle_overlay(self, cycles: list, sample_rate: int, analysis_data: Dict[str, Any]):
-        """Render overlay comparison of multiple cycles."""
+
+    def _render_cycle_consistency_overlay(self, analysis: Dict[str, Any], sample_rate: int) -> None:
+        """Plot many individual cycles on the same axes for consistency inspection."""
+        cycles: List[np.ndarray] = analysis.get('individual_cycles', [])
+        if not cycles:
+            return
+
+        st.markdown("**Cycle Consistency Overlay**")
+
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            max_to_plot = st.slider(
+                "Number of cycles to overlay",
+                min_value=int(1), max_value=int(len(cycles)),
+                value=int(min(len(cycles), 10)),
+                step=int(1)
+            )
+        with col_b:
+            norm = st.checkbox("Normalize each cycle (max=1)", value=False)
+
+        plot_cycles = cycles[:max_to_plot]
+        x = np.arange(len(plot_cycles[0])) / float(sample_rate)
+
         import matplotlib.pyplot as plt
-        
-        try:
-            # Determine which cycles to show based on overlay mode
-            overlay_mode = st.session_state.get('series_cycle_overlay_mode', 'all')
-            
-            if overlay_mode == 'all':
-                cycles_to_show = cycles
-                labels = [f"Cycle {i+1}" for i in range(len(cycles))]
-            elif overlay_mode == 'first_few':
-                max_cycles = min(5, len(cycles))
-                cycles_to_show = cycles[:max_cycles]
-                labels = [f"Cycle {i+1}" for i in range(max_cycles)]
-            else:  # averaged_only
-                avg_cycle = analysis_data.get('averaged_cycle')
-                if avg_cycle is not None:
-                    cycles_to_show = [avg_cycle]
-                    labels = ["Averaged"]
-                else:
-                    cycles_to_show = []
-                    labels = []
-            
-            if cycles_to_show:
-                fig, ax = plt.subplots(figsize=(12, 6))
-                
-                # Create time axis for one cycle
-                if len(cycles_to_show[0]) > 0:
-                    time_axis = np.arange(len(cycles_to_show[0])) / sample_rate * 1000  # Convert to ms
-                    
-                    # Plot each cycle
-                    colors = plt.cm.tab10(np.linspace(0, 1, len(cycles_to_show)))
-                    
-                    for i, (cycle, label, color) in enumerate(zip(cycles_to_show, labels, colors)):
-                        alpha = 0.7 if len(cycles_to_show) > 1 else 1.0
-                        ax.plot(time_axis, cycle, label=label, alpha=alpha, color=color, linewidth=1.5)
-                    
-                    ax.set_xlabel('Time (ms)')
-                    ax.set_ylabel('Amplitude')
-                    ax.set_title('Cycle Overlay Comparison')
-                    ax.grid(True, alpha=0.3)
-                    
-                    if len(cycles_to_show) > 1:
-                        ax.legend()
-                    
-                    st.pyplot(fig, use_container_width=True)
-                    plt.close(fig)
-                
-                # Statistics about cycle variations
-                if len(cycles_to_show) > 1:
-                    self._show_cycle_variation_stats(cycles_to_show)
-            
-        except Exception as e:
-            st.error(f"Cycle overlay error: {e}")
-    
-    def _show_cycle_variation_stats(self, cycles: list):
-        """Show statistics about variation between cycles."""
-        try:
-            # Calculate point-wise statistics across cycles
-            cycles_array = np.array(cycles)
-            
-            # Point-wise mean and std
-            mean_cycle = np.mean(cycles_array, axis=0)
-            std_cycle = np.std(cycles_array, axis=0)
-            
-            # Overall variation metrics
-            max_std = np.max(std_cycle)
-            mean_std = np.mean(std_cycle)
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Max Point Variation", f"{max_std:.5f}")
-            with col2:
-                st.metric("Mean Point Variation", f"{mean_std:.5f}")
-            with col3:
-                # Coefficient of variation
-                mean_amplitude = np.mean(np.abs(mean_cycle))
-                if mean_amplitude > 0:
-                    cv = mean_std / mean_amplitude * 100
-                    st.metric("Coefficient of Variation", f"{cv:.2f}%")
-            
-        except Exception as e:
-            st.error(f"Variation statistics error: {e}")
-    
-    def _render_averaged_analysis(self, analysis_data: Dict[str, Any], sample_rate: int):
-        """Render averaged cycle analysis."""
+        fig = plt.figure(figsize=(6.5, 3.0))
+        ax = plt.gca()
+
+        for i, c in enumerate(plot_cycles):
+            y = np.asarray(c, dtype=np.float32)
+            if norm:
+                m = np.max(np.abs(y)) if y.size else 1.0
+                if m > 0:
+                    y = y / m
+            ax.plot(x, y, linewidth=1.0, alpha=0.55, label=f"C{i+1}")
+
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Amplitude")
+        ax.set_title("Overlay of Individual Cycles")
+        if max_to_plot <= 12:
+            ax.legend(ncol=2, fontsize=8, frameon=False)
+        ax.grid(True, alpha=0.25)
+
+        st.pyplot(fig, use_container_width=True)
+
+    def _render_averaged_analysis(self, analysis: Dict[str, Any], sample_rate: int) -> None:
         if not st.session_state.get('series_show_averaged_result', True):
             return
-        
-        averaged_cycle = analysis_data.get('averaged_cycle')
-        if averaged_cycle is None or len(averaged_cycle) == 0:
+        avg = analysis.get('averaged_cycle')
+        if avg is None or len(avg) == 0:
             return
-        
-        st.markdown("**Averaged Cycle Analysis**")
-        
-        # Show averaging information
-        cycles_used = analysis_data.get('cycles_used_for_averaging', 0)
-        start_cycle = analysis_data.get('averaging_start_cycle', 1)
-        
-        st.info(f"Averaged from {cycles_used} cycles (starting from cycle {start_cycle})")
-        
-        # Visualize averaged cycle
-        avg_visualizer = AudioVisualizer("series_averaged_cycle")
-        avg_visualizer.render(
-            audio_data=averaged_cycle,
-            sample_rate=sample_rate,
-            title="Averaged Cycle - Final Result",
-            show_controls=True,
-            show_analysis=True,
-            height=400
-        )
-        
-        # Comparison with individual cycles
-        if analysis_data.get('individual_cycles'):
-            st.markdown("**Averaging Effectiveness**")
-            self._analyze_averaging_effectiveness(analysis_data, sample_rate)
-    
-    def _analyze_averaging_effectiveness(self, analysis_data: Dict[str, Any], sample_rate: int):
-        """Analyze how effective the averaging process was."""
-        try:
-            averaged_cycle = analysis_data.get('averaged_cycle')
-            individual_cycles = analysis_data.get('individual_cycles', [])
-            start_cycle = analysis_data.get('averaging_start_cycle', 1) - 1  # Convert to 0-based
-            
-            if averaged_cycle is None or not individual_cycles:
-                return
-            
-            # Compare averaged result with individual cycles used for averaging
-            cycles_used = individual_cycles[start_cycle:]
-            
-            if len(cycles_used) == 0:
-                return
-            
-            # Calculate SNR improvement through averaging
-            # Compare noise in individual cycles vs averaged result
-            
-            # Estimate noise by looking at high-frequency content
-            from scipy import signal as scipy_signal
-            
-            # High-pass filter to estimate noise (>5kHz)
-            nyquist = sample_rate / 2
-            high_freq = min(5000, nyquist * 0.8)
-            sos = scipy_signal.butter(4, high_freq / nyquist, btype='high', output='sos')
-            
-            # Noise levels in individual cycles
-            individual_noise_levels = []
-            for cycle in cycles_used:
-                try:
-                    noise_component = scipy_signal.sosfilt(sos, cycle)
-                    noise_rms = np.sqrt(np.mean(noise_component**2))
-                    individual_noise_levels.append(noise_rms)
-                except:
-                    individual_noise_levels.append(0)
-            
-            # Noise level in averaged cycle
-            try:
-                avg_noise_component = scipy_signal.sosfilt(sos, averaged_cycle)
-                avg_noise_rms = np.sqrt(np.mean(avg_noise_component**2))
-            except:
-                avg_noise_rms = 0
-            
-            mean_individual_noise = np.mean(individual_noise_levels)
-            
-            # SNR improvement calculation
-            if avg_noise_rms > 0 and mean_individual_noise > 0:
-                snr_improvement_db = 20 * np.log10(mean_individual_noise / avg_noise_rms)
-                theoretical_improvement = 10 * np.log10(len(cycles_used))
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("SNR Improvement", f"{snr_improvement_db:.1f} dB")
-                with col2:
-                    st.metric("Theoretical Max", f"{theoretical_improvement:.1f} dB")
-                with col3:
-                    efficiency = (snr_improvement_db / theoretical_improvement) * 100 if theoretical_improvement > 0 else 0
-                    st.metric("Averaging Efficiency", f"{efficiency:.0f}%")
-                
-                # Assessment
-                if efficiency > 80:
-                    st.success("Excellent averaging effectiveness - cycles are highly consistent")
-                elif efficiency > 60:
-                    st.info("Good averaging effectiveness - some cycle-to-cycle variation")
-                elif efficiency > 40:
-                    st.warning("Moderate averaging effectiveness - significant cycle variation")
-                else:
-                    st.error("Poor averaging effectiveness - high inconsistency between cycles")
-            
-        except Exception as e:
-            st.error(f"Averaging analysis error: {e}")
-    
-    def _render_advanced_settings(self):
-        """Render advanced settings and analysis options."""
-        st.markdown("**Advanced Series Settings**")
-        
-        # Analysis settings
-        st.markdown("**Analysis Configuration**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Averaging Settings**")
-            
-            max_pulses = st.session_state.get('series_num_pulses', 8)
-            st.session_state['series_averaging_start_cycle'] = st.number_input(
-                "Start averaging from cycle",
-                min_value=1,
-                max_value=max_pulses,
-                value=min(st.session_state.get('series_averaging_start_cycle', 2), max_pulses),
-                step=1,
-                help="Skip initial cycles that may have system settling effects",
-                key="advanced_averaging_start"
+
+        if VISUALIZER_AVAILABLE:
+            st.markdown("**Averaged Cycle Analysis**")
+            used = analysis.get('cycles_used_for_averaging', 0)
+            start = analysis.get('averaging_start_cycle', 1)
+            st.info(f"Averaged from {used} cycles (starting at cycle {start})")
+            AudioVisualizer("series_averaged_cycle").render(
+                audio_data=avg,
+                sample_rate=sample_rate,
+                title="Averaged Cycle — Final Result",
+                show_controls=True,
+                show_analysis=True,
+                height=400
             )
-            
-            # Quality thresholds
-            st.markdown("**Quality Thresholds**")
-            series_min_snr = st.number_input(
-                "Minimum SNR (dB)",
-                min_value=0.0,
-                max_value=60.0,
-                value=15.0,
-                step=1.0,
-                help="Minimum signal-to-noise ratio for acceptable recording"
-            )
-            
-            series_max_variation = st.slider(
-                "Max cycle variation (%)",
-                min_value=1.0,
-                max_value=50.0,
-                value=10.0,
-                step=1.0,
-                help="Maximum acceptable variation between cycles"
-            )
-        
-        with col2:
-            st.markdown("**Export Settings**")
-            
-            export_individual = st.checkbox(
-                "Export individual cycles",
-                value=True,
-                help="Export each cycle as separate audio file"
-            )
-            
-            export_averaged = st.checkbox(
-                "Export averaged result",
-                value=True,
-                help="Export the averaged cycle result"
-            )
-            
-            export_analysis = st.checkbox(
-                "Export analysis data",
-                value=True,
-                help="Export analysis metrics as JSON"
-            )
-            
-            if st.button("📁 Export Series Data"):
-                self._export_series_data(export_individual, export_averaged, export_analysis)
-        
-        # Configuration file management
+
+    # ----------------------
+    # Advanced settings
+    # ----------------------
+    def _render_advanced_settings(self) -> None:
+        """Utilities operating on the shared recorder; no new instances created."""
+        if not self.recorder:
+            st.warning("Recorder unavailable")
+            return
+
+        st.markdown("**Recorder Snapshot**")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Sample Rate", int(getattr(self.recorder, 'sample_rate', 0)))
+        with c2:
+            st.metric("Num Pulses", int(getattr(self.recorder, 'num_pulses', 0)))
+        with c3:
+            st.metric("Cycle (ms)", f"{float(getattr(self.recorder, 'cycle_duration', 0.0))*1000:.1f}")
+        with c4:
+            st.metric("Volume", f"{float(getattr(self.recorder, 'volume', 0.0)):.2f}")
+
         st.markdown("---")
-        st.markdown("**Configuration File Management**")
-        
-        # File operations
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Save Configuration**")
-            
-            # Default config filename
-            default_config_name = st.text_input(
-                "Config filename",
-                value="recorderConfig.json",
-                help="Name for the configuration file"
-            )
-            
-            save_col1, save_col2 = st.columns(2)
-            
-            with save_col1:
-                if st.button("💾 Save Config File", help="Save to project directory"):
-                    self._save_config_to_file(default_config_name)
-            
-            with save_col2:
-                if st.button("💾 Save as Default", help="Save as recorderConfig.json"):
-                    self._save_config_to_file("recorderConfig.json")
-            
-            # Show available config files
-            self._show_available_configs()
-        
-        with col2:
-            st.markdown("**Load Configuration**")
-            
-            # File selector for existing configs
-            config_files = self._get_config_files()
-            
-            if config_files:
-                selected_config = st.selectbox(
-                    "Select config file to load",
-                    config_files,
-                    help="Choose from existing configuration files"
-                )
-                
-                load_col1, load_col2 = st.columns(2)
-                
-                with load_col1:
-                    if st.button("📂 Load Selected"):
-                        self._load_config_from_file(selected_config)
-                        st.success(f"Loaded configuration from {selected_config}")
-                        st.rerun()
-                
-                with load_col2:
-                    if st.button("🗑️ Delete Selected"):
-                        self._delete_config_file(selected_config)
-                        st.success(f"Deleted {selected_config}")
-                        st.rerun()
-            else:
-                st.info("No configuration files found")
-            
-            # File upload as alternative
-            st.markdown("**Upload Config File**")
-            uploaded_config = st.file_uploader(
-                "Upload configuration",
-                type=['json'],
-                help="Upload configuration file from elsewhere"
-            )
-            
-            if uploaded_config:
+        st.markdown("**State Management**")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Rebuild Playback Signal"):
                 try:
-                    config = json.load(uploaded_config)
-                    self._import_series_config(config)
-                    st.success("Configuration imported from upload")
-                    st.rerun()
+                    if hasattr(self.recorder, "_generate_complete_signal"):
+                        _ = self.recorder._generate_complete_signal()
+                        st.success("Playback signal regenerated.")
+                    else:
+                        st.info("Recorder has no _generate_complete_signal()")
                 except Exception as e:
-                    st.error(f"Import failed: {e}")
-            
-            # Reset option
-            if st.button("🔄 Reset to Defaults"):
-                self._reset_series_defaults()
-                st.success("Reset to default settings")
-                st.rerun()
-    
-    def _export_series_data(self, export_individual: bool, export_averaged: bool, export_analysis: bool):
-        """Export series recording data."""
-        recorded_audio = st.session_state.get('series_recorded_audio')
-        analysis_data = st.session_state.get('series_analysis_data', {})
-        sample_rate = st.session_state.get('series_sample_rate', 48000)
-        
-        if recorded_audio is None:
-            st.error("No series recording available to export")
-            return
-        
-        try:
-            # Create export data structure
-            timestamp = int(time.time())
-            
-            if export_analysis and analysis_data:
-                # Export analysis as JSON
-                export_data = {
-                    "timestamp": timestamp,
-                    "series_config": {
-                        "num_pulses": st.session_state.get('series_num_pulses', 8),
-                        "pulse_duration_ms": st.session_state.get('series_pulse_duration', 8.0),
-                        "cycle_duration_ms": st.session_state.get('series_cycle_duration', 100.0),
-                        "pulse_frequency": st.session_state.get('series_pulse_frequency', 1000.0),
-                    },
-                    "analysis_results": analysis_data
-                }
-                
-                analysis_json = json.dumps(export_data, indent=2, default=str)
-                
-                st.download_button(
-                    "📊 Download Analysis Data",
-                    data=analysis_json,
-                    file_name=f"series_analysis_{timestamp}.json",
-                    mime="application/json"
-                )
-            
-            # For audio exports, we'd need to implement WAV file creation
-            # This would require additional audio processing libraries
-            if export_individual or export_averaged:
-                st.info("Audio export functionality requires additional implementation with WAV file creation")
-                
-        except Exception as e:
-            st.error(f"Export error: {e}")
-    
-    def _import_series_config(self, config: Dict[str, Any]):
-        """Import series configuration from JSON."""
-        try:
-            series_config = config.get('series_config', {})
-            
-            # Map config values to session state
-            config_mapping = {
-                'num_pulses': 'series_num_pulses',
-                'pulse_duration_ms': 'series_pulse_duration',
-                'cycle_duration_ms': 'series_cycle_duration',
-                'pulse_frequency': 'series_pulse_frequency',
-                'pulse_volume': 'series_pulse_volume',
-                'pulse_form': 'series_pulse_form',
-                'fade_duration_ms': 'series_fade_duration',
-                'record_extra_time_ms': 'series_record_extra_time',
-                'averaging_start_cycle': 'series_averaging_start_cycle'
-            }
-            
-            for config_key, session_key in config_mapping.items():
-                if config_key in series_config:
-                    st.session_state[session_key] = series_config[config_key]
-                    
-        except Exception as e:
-            raise ValueError(f"Invalid configuration format: {e}")
-    
-    def _save_config_to_file(self, filename: str):
-        """Save current series configuration to a file in the project directory."""
-        try:
-            # Create the full configuration structure expected by RoomResponseRecorder
-            config = {
-                "sample_rate": st.session_state.get('audio_sample_rate', 48000),
-                "pulse_duration": st.session_state.get('series_pulse_duration', 8.0) / 1000.0,  # Convert to seconds
-                "pulse_fade": st.session_state.get('series_fade_duration', 0.1) / 1000.0,  # Convert to seconds
-                "cycle_duration": st.session_state.get('series_cycle_duration', 100.0) / 1000.0,  # Convert to seconds
-                "num_pulses": st.session_state.get('series_num_pulses', 8),
-                "volume": st.session_state.get('series_pulse_volume', 0.4),
-                "pulse_frequency": st.session_state.get('series_pulse_frequency', 1000.0),
-                "impulse_form": st.session_state.get('series_pulse_form', 'sine'),
-                
-                # Additional metadata for reference
-                "computer": st.session_state.get('audio_selected_input_device', 'Unknown_Computer'),
-                "room": st.session_state.get('audio_selected_output_device', 'Unknown_Room'),
-                
-                # Series-specific settings for future use
-                "series_config": {
-                    "record_extra_time_ms": st.session_state.get('series_record_extra_time', 200.0),
-                    "averaging_start_cycle": st.session_state.get('series_averaging_start_cycle', 2),
-                    "created_timestamp": time.time(),
-                    "created_by": "Series Settings Panel"
-                }
-            }
-            
-            # Save to project directory
-            file_path = Path(filename)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-            
-            st.success(f"Configuration saved to {file_path.absolute()}")
-            
-            # If saving as default, update the collect panel's config reference
-            if filename == "recorderConfig.json":
-                st.info("This configuration will now be used by the Collect panel")
-                
-        except Exception as e:
-            st.error(f"Failed to save configuration: {e}")
-    
-    def _get_config_files(self) -> list:
-        """Get list of available configuration files in the project directory."""
-        try:
-            config_files = []
-            
-            # Look for JSON files in current directory that might be configs
-            for file_path in Path('.').glob('*.json'):
+                    st.error(f"Failed to rebuild signal: {e}")
+        with col_b:
+            if st.button("Show SDL Core Info"):
                 try:
-                    # Try to read and validate it's a config file
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                    
-                    # Check if it looks like a recorder config
-                    if any(key in config for key in ['sample_rate', 'pulse_duration', 'num_pulses']):
-                        config_files.append(file_path.name)
-                        
-                except:
-                    # Skip files that aren't valid JSON or don't look like configs
-                    continue
-            
-            # Always include recorderConfig.json if it exists
-            if Path('recorderConfig.json').exists() and 'recorderConfig.json' not in config_files:
-                config_files.append('recorderConfig.json')
-            
-            return sorted(config_files)
-            
-        except Exception:
-            return []
-    
-    def _show_available_configs(self):
-        """Show list of available configuration files."""
-        config_files = self._get_config_files()
-        
-        if config_files:
-            st.markdown("**Available Config Files:**")
-            for config_file in config_files:
-                try:
-                    file_path = Path(config_file)
-                    if file_path.exists():
-                        file_size = file_path.stat().st_size
-                        mod_time = file_path.stat().st_mtime
-                        mod_time_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mod_time))
-                        
-                        # Check if it's the current default
-                        indicator = " (default)" if config_file == "recorderConfig.json" else ""
-                        
-                        st.caption(f"📄 {config_file}{indicator} - {file_size} bytes - {mod_time_str}")
-                except:
-                    st.caption(f"📄 {config_file}")
-        else:
-            st.caption("No configuration files found")
-    
-    def _load_config_from_file(self, filename: str):
-        """Load configuration from a file and update session state."""
-        try:
-            file_path = Path(filename)
-            
-            if not file_path.exists():
-                st.error(f"Configuration file {filename} not found")
-                return
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            
-            # Update session state with loaded values
-            # Handle both flat config and nested recorder_config structures
-            if 'recorder_config' in config:
-                config_data = config['recorder_config']
-            else:
-                config_data = config
-            
-            # Map config values to session state
-            if 'sample_rate' in config_data:
-                st.session_state['audio_sample_rate'] = config_data['sample_rate']
-            if 'pulse_duration' in config_data:
-                st.session_state['series_pulse_duration'] = config_data['pulse_duration'] * 1000.0  # Convert to ms
-            if 'pulse_fade' in config_data:
-                st.session_state['series_fade_duration'] = config_data['pulse_fade'] * 1000.0  # Convert to ms
-            if 'cycle_duration' in config_data:
-                st.session_state['series_cycle_duration'] = config_data['cycle_duration'] * 1000.0  # Convert to ms
-            if 'num_pulses' in config_data:
-                st.session_state['series_num_pulses'] = config_data['num_pulses']
-            if 'volume' in config_data:
-                st.session_state['series_pulse_volume'] = config_data['volume']
-            if 'pulse_frequency' in config_data:
-                st.session_state['series_pulse_frequency'] = config_data['pulse_frequency']
-            if 'impulse_form' in config_data:
-                st.session_state['series_pulse_form'] = config_data['impulse_form']
-            
-            # Load series-specific settings if available
-            series_config = config.get('series_config', {})
-            if 'record_extra_time_ms' in series_config:
-                st.session_state['series_record_extra_time'] = series_config['record_extra_time_ms']
-            if 'averaging_start_cycle' in series_config:
-                st.session_state['series_averaging_start_cycle'] = series_config['averaging_start_cycle']
-                
-        except Exception as e:
-            st.error(f"Failed to load configuration from {filename}: {e}")
-    
-    def _delete_config_file(self, filename: str):
-        """Delete a configuration file."""
-        try:
-            file_path = Path(filename)
-            
-            # Prevent deletion of the default config without confirmation
-            if filename == "recorderConfig.json":
-                st.warning("Cannot delete the default recorderConfig.json file through this interface")
-                return
-            
-            if file_path.exists():
-                file_path.unlink()
-            else:
-                st.warning(f"File {filename} not found")
-                
-        except Exception as e:
-            st.error(f"Failed to delete {filename}: {e}")
-    
-    def _reset_series_defaults(self):
-        """Reset series settings to default values."""
-        defaults = {
-            'series_num_pulses': 8,
-            'series_pulse_duration': 8.0,
-            'series_cycle_duration': 100.0,
-            'series_pulse_frequency': 1000.0,
-            'series_pulse_volume': 0.4,
-            'series_pulse_form': 'sine',
-            'series_fade_duration': 0.1,
-            'series_record_extra_time': 200.0,
-            'series_averaging_start_cycle': 2,
-            'series_show_individual_cycles': True,
-            'series_show_averaged_result': True,
-            'series_cycle_overlay_mode': 'all'
+                    info = self.recorder.get_sdl_core_info()
+                    st.json(info)
+                except Exception as e:
+                    st.error(f"Failed to get SDL info: {e}")
+
+        with st.expander("Derived Parameters"):
+            try:
+                st.write(f"pulse_samples: {int(getattr(self.recorder, 'pulse_samples', 0))}")
+                st.write(f"fade_samples: {int(getattr(self.recorder, 'fade_samples', 0))}")
+                st.write(f"cycle_samples: {int(getattr(self.recorder, 'cycle_samples', 0))}")
+                st.write(f"gap_samples: {int(getattr(self.recorder, 'gap_samples', 0))}")
+                st.write(f"total_duration: {float(getattr(self.recorder, 'total_duration', 0.0))} s")
+            except Exception:
+                pass
+
+    # ----------------------
+    # Export / config I/O
+    # ----------------------
+    def _export_series_config(self) -> None:
+        cfg = {
+            "series_config": {
+                "num_pulses": int(st.session_state['series_num_pulses']),
+                "pulse_duration_ms": float(st.session_state['series_pulse_duration']),
+                "cycle_duration_ms": float(st.session_state['series_cycle_duration']),
+                "pulse_frequency": float(st.session_state['series_pulse_frequency']),
+                "pulse_volume": float(st.session_state['series_pulse_volume']),
+                "pulse_form": str(st.session_state['series_pulse_form']),
+                "fade_duration_ms": float(st.session_state['series_fade_duration']),
+                "record_extra_time_ms": float(st.session_state['series_record_extra_time']),
+                "averaging_start_cycle": int(st.session_state['series_averaging_start_cycle']),
+            },
+            "audio_settings": {
+                "sample_rate": int(st.session_state.get('audio_sample_rate',
+                                                        getattr(self.recorder, 'sample_rate', 48000))),
+            },
+            "export_timestamp": float(time.time()),
+            "export_version": "1.1",
         }
-        
-        for key, value in defaults.items():
-            st.session_state[key] = value
+        js = json.dumps(cfg, indent=2)
+        st.download_button("Download Series Configuration",
+                           data=js,
+                           file_name=f"series_config_{int(time.time())}.json",
+                           mime="application/json")
+        with st.expander("Configuration Preview"):
+            st.code(js, language="json")

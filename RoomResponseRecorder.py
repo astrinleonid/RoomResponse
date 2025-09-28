@@ -2,10 +2,21 @@ import numpy as np
 import wave
 import time
 import json
+import threading
+import queue
+import time
+import numpy as np
 from datetime import datetime
 from pathlib import Path
-import sdl_audio_core
 from typing import Optional, Tuple, Dict, Any
+from MicTesting import _SDL_AVAILABLE, AudioRecorder, AudioRecordingWorker, AudioProcessingWorker, AudioProcessor, sdl_audio_core
+
+# try:
+#     import sdl_audio_core as sdl_core
+#     _SDL_AVAILABLE = True
+# except ImportError:
+#     sdl = None
+#     _SDL_AVAILABLE = False
 
 
 class RoomResponseRecorder:
@@ -70,6 +81,96 @@ class RoomResponseRecorder:
 
         # Validate configuration
         self._validate_config()
+        self.input_device = -1
+        self.output_device = -1
+
+    def get_sdl_core_info(self) -> dict:
+        """
+        Centralized snapshot of sdl_audio_core state and recorder-related audio settings.
+        Surfaces errors per section so the UI can display what's wrong.
+        """
+        info = {
+            "sdl_available": _SDL_AVAILABLE,
+            "module_version": None,
+            "sdl_version": None,
+            "drivers": [],
+            "devices": {"input_devices": [], "output_devices": []},
+            "device_counts": {"input": 0, "output": 0, "total": 0},
+            "engine_stats": None,
+            "recorder": {
+                "input_device": getattr(self, "input_device", -1),
+                "output_device": getattr(self, "output_device", -1),
+                "sample_rate": getattr(self, "sample_rate", 48000),
+                "volume": getattr(self, "volume", 0.3),
+            },
+            "errors": {},
+            "installation_ok": None,
+        }
+
+        if not _SDL_AVAILABLE:
+            info["errors"]["import"] = "sdl_audio_core not importable"
+            return info
+
+        # Module version
+        try:
+            info["module_version"] = sdl_audio_core.get_version()  # exposed by binding
+        except Exception as e:
+            info["errors"]["module_version"] = str(e)
+
+        # SDL version (static)
+        try:
+            info["sdl_version"] = sdl_audio_core.AudioEngine.get_sdl_version()
+        except Exception as e:
+            info["errors"]["sdl_version"] = str(e)
+
+        # Drivers (static)
+        try:
+            info["drivers"] = sdl_audio_core.AudioEngine.get_audio_drivers() or []
+        except Exception as e:
+            info["errors"]["drivers"] = str(e)
+
+        # Devices
+        try:
+            devs = sdl_audio_core.list_all_devices() or {}
+            in_list = devs.get("input_devices", []) or []
+            out_list = devs.get("output_devices", []) or []
+            info["devices"]["input_devices"] = in_list
+            info["devices"]["output_devices"] = out_list
+            info["device_counts"] = {
+                "input": len(in_list),
+                "output": len(out_list),
+                "total": len(in_list) + len(out_list),
+            }
+        except Exception as e:
+            info["errors"]["list_all_devices"] = str(e)
+
+        # Optional installation check (binding returns bool)
+        try:
+            ok = sdl_audio_core.check_installation()
+            info["installation_ok"] = bool(ok)
+        except Exception as e:
+            info["errors"]["check_installation"] = str(e)
+
+        # Optional: best-effort engine stats
+        try:
+            eng = sdl_audio_core.AudioEngine()
+            if hasattr(eng, "get_stats"):
+                stats = eng.get_stats()
+                if isinstance(stats, dict):
+                    info["engine_stats"] = stats
+                else:
+                    fields = [
+                        "actual_input_sample_rate",
+                        "actual_output_sample_rate",
+                        "input_latency_ms",
+                        "output_latency_ms",
+                        "xruns",
+                    ]
+                    info["engine_stats"] = {f: getattr(stats, f) for f in fields if hasattr(stats, f)} or None
+        except Exception as e:
+            info["errors"]["engine_stats"] = str(e)
+
+        return info
 
     def _validate_config(self):
         """Validate the recorder configuration"""
@@ -115,6 +216,12 @@ class RoomResponseRecorder:
                 signal[start_sample:end_sample] = single_pulse
 
         return signal.tolist()  # Convert for C++ compatibility
+
+    def set_audio_devices(self, input = None, output = None):
+        if input is not None:
+            self.input_device = input
+        if output is not None:
+            self.output_device = output
 
     def get_signal_info(self) -> Dict[str, Any]:
         """Get information about the generated signal"""
@@ -163,142 +270,6 @@ class RoomResponseRecorder:
             print(f"Error listing devices: {e}")
             return None
 
-    def _select_devices_interactive(self) -> Tuple[Optional[Any], Optional[Any]]:
-        """Interactively select input and output devices"""
-        devices = self.list_devices()
-        if not devices:
-            return None, None
-
-        try:
-            input_devices = devices['input_devices']
-            output_devices = devices['output_devices']
-
-            # Select input device
-            print(f"\nSelect Input Device:")
-            for i, device in enumerate(input_devices):
-                print(f"  {i}: [{device.device_id}] {device.name}")
-            input_choice = int(input(f"Enter choice (0-{len(input_devices) - 1}): "))
-            selected_input = input_devices[input_choice]
-
-            # Select output device
-            print(f"\nSelect Output Device:")
-            for i, device in enumerate(output_devices):
-                print(f"  {i}: [{device.device_id}] {device.name}")
-            output_choice = int(input(f"Enter choice (0-{len(output_devices) - 1}): "))
-            selected_output = output_devices[output_choice]
-
-            print(f"\nSelected devices:")
-            print(f"  Input: {selected_input.name}")
-            print(f"  Output: {selected_output.name}")
-
-            return selected_input, selected_output
-
-        except (ValueError, IndexError) as e:
-            print(f"Invalid selection: {e}")
-            return None, None
-
-    def _auto_select_devices(self) -> Tuple[Optional[Any], Optional[Any]]:
-        """Automatically select the first available devices"""
-        devices = self.list_devices()
-        if not devices:
-            return None, None
-
-        input_devices = devices['input_devices']
-        output_devices = devices['output_devices']
-
-        if input_devices and output_devices:
-            selected_input = input_devices[0]
-            selected_output = output_devices[0]
-            print(f"\nAuto-selected devices:")
-            print(f"  Input: {selected_input.name}")
-            print(f"  Output: {selected_output.name}")
-            return selected_input, selected_output
-        else:
-            print("No suitable devices found for auto-selection")
-            return None, None
-
-    def _record_method_1(self, interactive: bool = False) -> Optional[np.ndarray]:
-        """Method 1: Manual AudioEngine setup with device selection"""
-        print("Recording Method 1: Manual AudioEngine Setup")
-
-        # Check installation
-        if not sdl_audio_core.check_installation():
-            return None
-
-        # Select devices
-        if interactive:
-            input_device, output_device = self._select_devices_interactive()
-        else:
-            input_device, output_device = self._auto_select_devices()
-
-        if not input_device or not output_device:
-            print("Device selection failed")
-            return None
-
-        try:
-            # Create and configure audio engine
-            engine = sdl_audio_core.AudioEngine()
-            config = sdl_audio_core.AudioEngineConfig()
-            config.sample_rate = self.sample_rate
-            config.buffer_size = 1024
-            config.enable_logging = True
-
-            # Initialize and start engine
-            if not engine.initialize(config):
-                print("Failed to initialize audio engine")
-                return None
-
-            if not engine.start():
-                print("Failed to start audio engine")
-                engine.shutdown()
-                return None
-
-            # Set devices
-            if not engine.set_input_device(input_device.device_id):
-                print(f"Failed to set input device: {input_device.name}")
-                engine.shutdown()
-                return None
-
-            if not engine.set_output_device(output_device.device_id):
-                print(f"Failed to set output device: {output_device.name}")
-                engine.shutdown()
-                return None
-
-            # Start synchronized recording and playback
-            max_recording_samples = len(self.playback_signal) * 2
-
-            if not engine.start_synchronized_recording_and_playback(
-                    self.playback_signal, max_recording_samples):
-                print("Failed to start synchronized operation")
-                engine.shutdown()
-                return None
-
-            # Wait for completion
-            duration_seconds = len(self.playback_signal) / self.sample_rate
-            timeout_ms = int(duration_seconds * 1000) + 2000
-
-            if not engine.wait_for_playback_completion(timeout_ms):
-                print("Playback did not complete within timeout")
-                engine.stop_synchronized_and_get_data()
-                engine.shutdown()
-                return None
-
-            # Wait for echo/reverb and get data
-            time.sleep(0.2)
-            recorded_data = engine.stop_synchronized_and_get_data()
-
-            # Get statistics
-            stats = engine.get_stats()
-            print(f"Recording stats: {len(recorded_data)} samples, "
-                  f"underruns: {stats.buffer_underruns}, overruns: {stats.buffer_overruns}")
-
-            engine.shutdown()
-
-            return np.array(recorded_data, dtype=np.float32) if recorded_data else None
-
-        except Exception as e:
-            print(f"Error in method 1: {e}")
-            return None
 
     def _record_method_2(self) -> Optional[np.ndarray]:
         """Method 2: Auto device selection with convenience function"""
@@ -307,7 +278,9 @@ class RoomResponseRecorder:
         try:
             result = sdl_audio_core.measure_room_response_auto(
                 self.playback_signal,
-                volume=self.volume
+                volume=self.volume,
+                input_device =self.input_device,
+                output_device =self.output_device
             )
 
             if not result['success']:
@@ -321,30 +294,6 @@ class RoomResponseRecorder:
 
         except Exception as e:
             print(f"Error in method 2: {e}")
-            return None
-
-    def _record_method_3(self, input_device_id: int, output_device_id: int) -> Optional[np.ndarray]:
-        """Method 3: Specific device IDs"""
-        print(f"Recording Method 3: Specific Devices (in:{input_device_id}, out:{output_device_id})")
-
-        try:
-            result = sdl_audio_core.quick_device_test(
-                input_device_id,
-                output_device_id,
-                self.playback_signal
-            )
-
-            if not result['success']:
-                print(f"Device test failed: {result.get('error_message', 'Unknown error')}")
-                return None
-
-            recorded_data = result['recorded_data']
-            print(f"Recorded {result['samples_recorded']} samples")
-
-            return np.array(recorded_data, dtype=np.float32) if recorded_data else None
-
-        except Exception as e:
-            print(f"Error in method 3: {e}")
             return None
 
     def _process_recorded_signal(self, recorded_audio: np.ndarray) -> Dict[str, np.ndarray]:
@@ -467,10 +416,7 @@ class RoomResponseRecorder:
     def take_record(self,
                     output_file: str,
                     impulse_file: str,
-                    method: int = 2,
-                    interactive: bool = False,
-                    input_device_id: Optional[int] = None,
-                    output_device_id: Optional[int] = None) -> Optional[np.ndarray]:
+                    method: int = 2) -> Optional[np.ndarray]:
         """
         Main API method to record room response
 
@@ -479,8 +425,7 @@ class RoomResponseRecorder:
             impulse_file: Filename for impulse response
             method: Recording method (1=manual, 2=auto, 3=specific devices)
             interactive: Whether to use interactive device selection (method 1 only)
-            input_device_id: Input device ID (method 3 only)
-            output_device_id: Output device ID (method 3 only)
+
 
         Returns:
             Recorded audio data as numpy array, or None if failed
@@ -490,30 +435,7 @@ class RoomResponseRecorder:
         print(f"{'=' * 60}")
 
         try:
-            # Record using specified method
-            if method == 1:
-                recorded_audio = self._record_method_1(interactive=interactive)
-            elif method == 2:
-                recorded_audio = self._record_method_2()
-            elif method == 3:
-                if input_device_id is None or output_device_id is None:
-                    # Interactive device selection for method 3
-                    devices = self.list_devices()
-                    if devices:
-                        try:
-                            input_device_id = int(input("\nEnter input device ID: "))
-                            output_device_id = int(input("Enter output device ID: "))
-                        except ValueError:
-                            print("Invalid device ID entered")
-                            return None
-                    else:
-                        print("Could not list devices")
-                        return None
-                recorded_audio = self._record_method_3(input_device_id, output_device_id)
-            else:
-                print(f"Invalid method {method}. Use 1, 2, or 3.")
-                return None
-
+            recorded_audio = self._record_method_2()
             if recorded_audio is None:
                 print("Recording failed - no data captured")
                 return None
@@ -560,83 +482,61 @@ class RoomResponseRecorder:
             print(f"Error during recording: {e}")
             return None
 
+    # Updated RoomResponseRecorder methods
+    def test_mic(self, duration: float = 10.0, chunk_duration: float = 0.1):
+        """
+        Simple microphone test with real-time RMS monitoring using reusable components
 
-def main():
-    """Example usage of the refactored recorder"""
-    import sys
+        Args:
+            duration: Total test duration in seconds
+            chunk_duration: Audio chunk duration for processing in seconds
+        """
+        print(f"\nTesting microphone for {duration} seconds...")
+        print("Speak into the microphone to see RMS levels")
+        print("Press Ctrl+C to stop early\n")
 
-    # Check for interactive flag
-    interactive_mode = '--interactive' in sys.argv or '-i' in sys.argv
-
-    recorder_congig_path = "recorderConfig.json"
-    # Create recorder with default settings
-    recorder = RoomResponseRecorder(recorder_congig_path)
-
-    # Print signal information
-    recorder.print_signal_analysis()
-
-    # Generate filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if interactive_mode:
-        # Interactive mode - let user choose method and devices
-        print(f"\n{'=' * 60}")
-        print("INTERACTIVE MODE - Recording Method Selection:")
-        print("1. Manual device setup (with optional interactive selection)")
-        print("2. Automatic device selection (recommended)")
-        print("3. Specific device IDs")
-        print(f"{'=' * 60}")
+        audio_queue = queue.Queue()
 
         try:
-            choice = input("Select method (1-3) or press Enter for method 2: ").strip()
-            method = int(choice) if choice else 2
+            # Create recorder and workers
+            with AudioRecorder(self.sample_rate, self.input_device, enable_logging=False) as recorder:
+                recording_worker = AudioRecordingWorker(recorder, audio_queue, chunk_duration)
+                processing_worker = AudioProcessingWorker(audio_queue)
 
-            if method not in [1, 2, 3]:
-                raise ValueError("Invalid method")
+                # Start workers
+                recording_worker.start()
+                processing_worker.start()
 
-            # Generate output filenames
-            output_file = f"response_{timestamp}_method{method}.wav"
-            impulse_file = f"impulse_{timestamp}_method{method}.wav"
+                print("Recording started...")
 
-            # Record based on method
-            if method == 1:
-                interactive = input("Use interactive device selection? (y/n): ").strip().lower() == 'y'
-                audio_data = recorder.take_record(output_file, impulse_file, method=1, interactive=interactive)
-            else:
-                audio_data = recorder.take_record(output_file, impulse_file, method=method)
+                try:
+                    time.sleep(duration)
+                except KeyboardInterrupt:
+                    print("\nStopping test...")
 
-        except (ValueError, KeyboardInterrupt) as e:
-            print(f"\nSession cancelled: {e}")
-            return
+                # Stop workers
+                recording_worker.stop()
+                processing_worker.stop()
 
-    else:
-        # Default mode - use method 2 automatically
-        print(f"\n{'=' * 60}")
-        print("AUTOMATIC MODE - Using default audio devices")
-        print(f"{'=' * 60}")
-        print("(Use --interactive or -i flag for device selection)")
+        except Exception as e:
+            print(f"Error during microphone test: {e}")
 
-        output_file = f"response_{timestamp}_auto.wav"
-        impulse_file = f"impulse_{timestamp}_auto.wav"
-
-        # Record with method 2 (auto)
-        audio_data = recorder.take_record(output_file, impulse_file, method=2)
-
-    # Print final status
-    if audio_data is not None:
-        print(f"\n✅ Recording completed successfully!")
-        print(f"Files saved: {output_file}, {impulse_file}")
-    else:
-        print(f"\n❌ Recording failed!")
-        print("Troubleshooting:")
-        print("1. Check audio device connections")
-        print("2. Verify device permissions")
-        print("3. Try interactive mode: python RoomResponseRecorder.py --interactive")
-
-    print(f"\n{'=' * 60}")
-    print("Recording session complete!")
-    print(f"{'=' * 60}")
-
+        print("\nMicrophone test completed.")
+        print("\nTips:")
+        print("- Normal speech: -40 to -20 dB")
+        print("- Loud speech: -20 to -10 dB")
+        print("- Too quiet: below -50 dB")
+        print("- Too loud/clipping: above -6 dB")
 
 if __name__ == "__main__":
-    main()
+    r = RoomResponseRecorder()
+
+    r.list_devices()
+    print(r.get_sdl_core_info())
+    print("\n\n")
+
+    input_d = int(input("Please enter input device number: "))
+    output_d = int(input("Please enter output device number: "))
+    r.set_audio_devices(input_d, output_d)
+    r.test_mic(duration=30.0)
+    r.take_record("test.wav", "test_impulse.wav")

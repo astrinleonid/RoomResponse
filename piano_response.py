@@ -36,7 +36,7 @@ except ImportError:
 
 # ---------------------------- Session Keys ----------------------------
 SK_DATASET_ROOT = "dataset_root"
-SK_DEFAULT_DATASET_ROOT = "room_response_dataset"
+SK_DEFAULT_DATASET_ROOT = "piano"
 SK_SCN_SELECTIONS = "scenarios_selected_set"
 SK_SCN_EXPLORE = "scenarios_explore_path"
 SK_FILTER_TEXT = "filter_text"
@@ -177,13 +177,18 @@ class AudioCollectionGUI:
             st.sidebar.success("Audio engine ready")
             # Show basic audio info
             with st.sidebar.expander("Audio System Info"):
-                try:
-                    drivers = sdl.get_audio_drivers()
-                    st.write(f"**Available drivers:** {', '.join(drivers)}")
-                    devices = sdl.list_all_devices()
-                    st.write(f"**Total devices:** {len(devices.get('input', []))} input, {len(devices.get('output', []))} output")
-                except Exception as e:
-                    st.write(f"Info unavailable: {e}")
+                    try:
+                        drivers = sdl.AudioEngine.get_audio_drivers()  # was sdl.get_audio_drivers()
+                        st.write(f"**Available drivers:** {', '.join(drivers)}")
+
+                        devices = sdl.list_all_devices()
+                        st.write(
+                            f"**Total devices:** "
+                            f"{len(devices.get('input_devices', []))} input, "
+                            f"{len(devices.get('output_devices', []))} output"
+                        )
+                    except Exception as e:
+                        st.write(f"Info unavailable: {e}")
         except ImportError:
             st.sidebar.error("SDL audio core not available")
             st.sidebar.caption("Run build script to compile audio engine")

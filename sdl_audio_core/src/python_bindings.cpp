@@ -352,7 +352,7 @@ PYBIND11_MODULE(sdl_audio_core, m) {
 
     // Room response measurement with automatic device selection
     m.def("measure_room_response_auto", [](const std::vector<float>& test_signal,
-                                          float volume = 0.3) {
+                                          float volume = 0.3, int input_device = -1, int output_device = -1) {
         AudioEngine engine;
         AudioEngine::Config config;
         config.enable_logging = true;
@@ -372,7 +372,7 @@ PYBIND11_MODULE(sdl_audio_core, m) {
 
         try {
             // Use default devices (-1)
-            recorded_data = engine.measure_room_response(test_signal, -1, -1);
+            recorded_data = engine.measure_room_response(test_signal, input_device, output_device);
             success = !recorded_data.empty();
 
         } catch (const std::exception& e) {
@@ -390,7 +390,7 @@ PYBIND11_MODULE(sdl_audio_core, m) {
 
         return result;
     }, "Measure room response with automatic device selection",
-       py::arg("test_signal"), py::arg("volume") = 0.3f);
+       py::arg("test_signal"), py::arg("volume") = 0.3f, py::arg("input_device") = -1, py::arg("output_device") = -1);
 
     // Version info
     m.attr("__version__") = "0.1.0";
