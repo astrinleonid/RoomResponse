@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# detect_paths.py - environment autodiscovery for PianoidCore build
+# detect_paths.py - environment autodiscovery for PianoidCore build (No CUDA)
 # Pure stdlib, ASCII-only output. Python 3.8+
 import argparse
 import json
@@ -136,32 +136,6 @@ def _find_windows_sdk():
     return {}
 
 
-def _find_cuda(user_hint=None):
-    cand = None
-    if user_hint:
-        cand = user_hint
-    if not cand:
-        cand = os.environ.get("CUDA_PATH")
-    if not cand:
-        # scan default
-        pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
-        cand = _glob_latest(Path(pf) / "NVIDIA GPU Computing Toolkit" / "CUDA", "v*")
-    if not cand:
-        return {}
-    cuda_home = Path(cand)
-    nvcc = cuda_home / "bin" / "nvcc.exe"
-    include = cuda_home / "include"
-    lib64 = cuda_home / "lib" / "x64"
-    if nvcc.exists() and include.exists() and lib64.exists():
-        return {
-            "cuda_home": str(cuda_home),
-            "cuda_nvcc": str(nvcc),
-            "cuda_include": str(include),
-            "cuda_libdir": str(lib64),
-        }
-    return {}
-
-
 def _find_sdl2(user_hint=None):
     root = None
     if user_hint:
@@ -230,31 +204,11 @@ def _find_pybind11():
         return {}
 
 
-def _default_arches():
-    # Safe defaults for modern RTX; override via env CUDA_ARCHES="80,86,89"
-    env = os.environ.get("CUDA_ARCHES")
-    if env:
-        parts = [p.strip() for p in env.split(",") if p.strip().isdigit()]
-        if parts:
-            return parts
-    # Try to detect with torch if present
-    try:
-        import torch  # type: ignore
-        if torch.cuda.is_available():
-            cc = torch.cuda.get_device_capability()
-            maj, minr = cc
-            return [str(maj) + str(minr)]
-    except Exception:
-        pass
-    return ["80", "86", "89"]
-
-
 def build_config(args):
     cfg = {}
     # collect raw data
     msvc_info = _find_msvc()
     winsdk_info = _find_windows_sdk()
-    cuda_info = _find_cuda(args.cuda)
     sdl2_info = _find_sdl2(args.sdl2)
     py_info = _py_info()
     pybind_info = _find_pybind11()
@@ -262,7 +216,6 @@ def build_config(args):
     # Structure the config to match what setup.py expects
     cfg = {
         "windows": {
-            "cuda_home": cuda_info.get("cuda_home", ""),
             "visual_studio": {
                 "vc_tools_bin_hostx64_x64": str(Path(msvc_info.get("msvc_cl", "")).parent) if msvc_info.get(
                     "msvc_cl") else ""
@@ -271,15 +224,12 @@ def build_config(args):
                 "base_path": sdl2_info.get("sdl2_root", "")
             }
         },
-        "cuda_arch_list": _default_arches(),
         "project_root": str(Path(args.project_root).resolve()) if args.project_root else str(Path.cwd().resolve()),
 
         # Keep flat structure for validation
         "msvc_cl": msvc_info.get("msvc_cl", ""),
         "msvc_tools_root": msvc_info.get("msvc_tools_root", ""),
         "winsdk_root": winsdk_info.get("winsdk_root", ""),
-        "cuda_home": cuda_info.get("cuda_home", ""),
-        "cuda_nvcc": cuda_info.get("cuda_nvcc", ""),
         "sdl2_root": sdl2_info.get("sdl2_root", ""),
         "python_include": py_info.get("python_include", ""),
         "python_libdir": py_info.get("python_libdir", ""),
@@ -290,9 +240,6 @@ def build_config(args):
     includes = []
     if cfg.get("pybind11_include"):
         includes.append(cfg["pybind11_include"])
-    if cuda_info.get("cuda_include"):
-        includes.append(cuda_info["cuda_include"])
-    includes.append(str(Path(cfg["project_root"]) / "pianoid_cuda"))
     includes.append(cfg["python_include"])
     sdl_inc = sdl2_info.get("sdl2_include")
     if sdl_inc:
@@ -304,14 +251,12 @@ def build_config(args):
     libdirs = []
     if sdl2_info.get("sdl2_libdir"):
         libdirs.append(sdl2_info["sdl2_libdir"])
-    if cuda_info.get("cuda_libdir"):
-        libdirs.append(cuda_info["cuda_libdir"])
     if cfg.get("python_libdir"):
         libdirs.append(cfg["python_libdir"])
 
     cfg["include_dirs"] = includes
     cfg["library_dirs"] = libdirs
-    cfg["libraries"] = ["SDL2", "cudart", "winmm", "ole32", "advapi32"]
+    cfg["libraries"] = ["SDL2", "winmm", "ole32", "advapi32"]
 
     return cfg
 
@@ -321,8 +266,6 @@ def validate(cfg):
         "msvc_cl",
         "msvc_tools_root",
         "winsdk_root",
-        "cuda_home",
-        "cuda_nvcc",
         "sdl2_root",
         "python_include",
         "python_libdir",
@@ -332,17 +275,15 @@ def validate(cfg):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Detect build toolchain for PianoidCore (Windows).")
+    ap = argparse.ArgumentParser(description="Detect build toolchain for PianoidCore (Windows, No CUDA).")
     ap.add_argument("--out", default="build_config.json", help="Output JSON path (default: build_config.json)")
-    ap.add_argument("--cuda", default=None,
-                    help="Hint for CUDA root, e.g. C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.x")
     ap.add_argument("--sdl2", default=None, help="Hint for SDL2 root, e.g. C:\\SDL2-2.30.0")
     ap.add_argument("--project-root", default=None, help="Root of the project (default: cwd)")
     ap.add_argument("--quiet", action="store_true", help="Print only the summary line")
     args = ap.parse_args()
 
     if not args.quiet:
-        log("=== PianoidCore System Configuration Detection ===")
+        log("=== PianoidCore System Configuration Detection (No CUDA) ===")
         log("Checking Python environment...")
         log("  Python version: %s" % sys.version.split()[0])
         log("  Virtual environment: %s" % ("Yes" if sys.prefix != sys.base_prefix else "No"))
@@ -360,7 +301,6 @@ def main():
             log("")
             log("HINTS")
             log("  Use flags to provide hints, for example:")
-            log("    python detect_paths.py --cuda \"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.9\"")
             log("    python detect_paths.py --sdl2 \"C:\\SDL2-2.30.0\"")
         # do not write output on failure
         return 2
