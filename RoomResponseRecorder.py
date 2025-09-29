@@ -249,6 +249,7 @@ class RoomResponseRecorder:
         print(f"- Number of pulses: {info['num_pulses']}")
         print(f"- Volume: {info['volume']}")
         print(f"- Impulse form: {info['impulse_form']}")
+        print(f"- Audio devices: in {self.input_device} out {self.output_device}")
 
     def list_devices(self) -> Optional[Dict]:
         """List all available audio devices"""
@@ -431,9 +432,9 @@ class RoomResponseRecorder:
             Recorded audio data as numpy array, or None if failed
         """
         print(f"\n{'=' * 60}")
-        print(f"Room Response Recording - Method {method}")
+        print(f"Room Response Recording")
         print(f"{'=' * 60}")
-
+        # self._generate_complete_signal()
         try:
             recorded_audio = self._record_method_2()
             if recorded_audio is None:

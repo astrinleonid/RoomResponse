@@ -7,10 +7,7 @@ import sys
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Any
-import wave
 from pathlib import Path
-
-# Import the refactored recorder
 
 # Optional non-blocking keyboard on Windows
 try:
@@ -22,6 +19,10 @@ except Exception:
 from RoomResponseRecorder import RoomResponseRecorder
 
 
+# ==============================
+# Data classes
+# ==============================
+
 @dataclass
 class ScenarioConfig:
     """Configuration for a measurement scenario"""
@@ -31,7 +32,7 @@ class ScenarioConfig:
     room_name: str
     num_measurements: int = 30
     measurement_interval: float = 2.0  # seconds between measurements
-    warm_up_measurements: int = 3      # measurements to discard at start
+    warm_up_measurements: int = 0      # optional warm-ups to discard at start
     additional_metadata: Dict[str, Any] = None
 
     def __post_init__(self):
@@ -61,14 +62,19 @@ class MeasurementMetadata:
         return asdict(self)
 
 
+
+# ==============================
+# Collector
+# ==============================
+
 class SingleScenarioCollector:
     """
-    Single scenario data collector with:
-      - append/overwrite/abort behavior for existing folders
-      - config compatibility check
-      - persistent metadata (session_metadata.json)
-      - pause/resume support (PAUSE file, STOP file, and Windows keypress 'p'/'q')
-      - resume index from existing measurements when appending
+    Single-scenario data collector (recorder-API aligned):
+      - Reuses an injected shared RoomResponseRecorder (if provided).
+      - No interactive device prompts or method switching.
+      - Append/overwrite/abort behavior for existing folders.
+      - Compatibility checks vs. prior session_metadata.json (optional).
+      - Pause/resume/stop via sentinel files; non-blocking keys on Windows.
     """
 
     def __init__(
@@ -77,10 +83,11 @@ class SingleScenarioCollector:
         recorder_config: str | Dict[str, Any] = "recorderConfig.json",
         scenario_config: Dict[str, Any] | None = None,
         merge_mode: str = "append",               # 'append' (default), 'overwrite', 'abort'
-        allow_config_mismatch: bool = False,      # if True, only warn on mismatch
+        allow_config_mismatch: bool = False,      # if True, warn instead of error
         resume: bool = True,                      # continue from next index if appending
-        pause_file_name: str = "PAUSE",           # drop this file into scenario root to pause
-        stop_file_name: str = "STOP"              # drop this file into scenario root to stop
+        pause_file_name: str = "PAUSE",           # drop this file into the scenario root to pause
+        stop_file_name: str = "STOP",             # drop this file into the scenario root to stop
+        recorder: Optional[RoomResponseRecorder] = None
     ):
         self.base_output_dir = Path(base_output_dir)
         self.merge_mode = merge_mode.lower()
@@ -92,17 +99,21 @@ class SingleScenarioCollector:
         if scenario_config:
             self.setup_scenario_from_dict(**scenario_config)
         else:
-            self.setup_scenario_from_input(interactive_devices=False)
+            self.setup_scenario_from_input()
 
-        # Recorder config path + dict
+        # Normalize config input so we can store a dict into metadata
         self.recorder_config_path, self.recorder_config_dict = self._normalize_recorder_config(recorder_config)
 
-        self.recorder: Optional[RoomResponseRecorder] = None
-        self.measurements: List[MeasurementMetadata] = []
-        self.interactive_mode = False
-        self.recording_method = 2  # default to auto
+        # Recorder (shared if injected)
+        self.recorder: Optional[RoomResponseRecorder] = recorder
 
-        # Quality thresholds
+        print("/n/n++++++++++++ Debug output of the recorder parameters 1 ++++++++++++++")
+        self.recorder.print_signal_analysis()
+
+        # Collected measurements (this run)
+        self.measurements: List[MeasurementMetadata] = []
+
+        # Quality thresholds (simple heuristics; tune as you wish)
         self.quality_thresholds = {
             'min_snr_db': 15.0,
             'max_clip_percentage': 2.0,
@@ -118,9 +129,7 @@ class SingleScenarioCollector:
         self._existing_metadata: Dict[str, Any] | None = None
         self._existing_measurements_count: int = 0
 
-        self._external_recorder_injected = False  # reserved for future use if you decide to DI recorder
-
-    # -------------------- setup & config --------------------
+    # -------------------- scenario setup --------------------
 
     def setup_scenario_from_dict(self, **parameters):
         required = {
@@ -135,8 +144,7 @@ class SingleScenarioCollector:
             raise ValueError(f"Unexpected scenario parameter(s): {', '.join(sorted(unknown))}")
         self.scenario = ScenarioConfig(**parameters)
 
-    def setup_scenario_from_input(self, interactive_devices: bool = False):
-        self.interactive_mode = interactive_devices
+    def setup_scenario_from_input(self):
         print("\n" + "=" * 60)
         print("ROOM RESPONSE DATA COLLECTION - SINGLE SCENARIO")
         print("=" * 60)
@@ -146,15 +154,21 @@ class SingleScenarioCollector:
         scenario_number = input("Enter scenario number: ").strip() or "1"
         description = input("Enter scenario description: ").strip() or f"Room response measurement scenario {scenario_number}"
 
-        try:
-            num_measurements = int(input("Number of measurements (default 30): ").strip() or "30")
-        except ValueError:
-            num_measurements = 30
+        def _get_int(prompt: str, default: int) -> int:
+            try:
+                return int(input(prompt).strip() or str(default))
+            except ValueError:
+                return default
 
-        try:
-            interval = float(input("Interval between measurements in seconds (default 2.0): ").strip() or "2.0")
-        except ValueError:
-            interval = 2.0
+        def _get_float(prompt: str, default: float) -> float:
+            try:
+                return float(input(prompt).strip() or str(default))
+            except ValueError:
+                return default
+
+        num_measurements = _get_int("Number of measurements (default 30): ", 30)
+        interval = _get_float("Interval between measurements in seconds (default 2.0): ", 2.0)
+        warmups = _get_int("Warm-up measurements to run (default 0): ", 0)
 
         self.scenario = ScenarioConfig(
             scenario_number=scenario_number,
@@ -162,8 +176,11 @@ class SingleScenarioCollector:
             computer_name=computer_name,
             room_name=room_name,
             num_measurements=num_measurements,
-            measurement_interval=interval
+            measurement_interval=interval,
+            warm_up_measurements=warmups
         )
+
+    # -------------------- paths & metadata --------------------
 
     def get_scenario_dir(self) -> Path:
         return self.scenario_dir
@@ -171,20 +188,10 @@ class SingleScenarioCollector:
     def get_meta_file(self) -> Path:
         return self.meta_file
 
-    def append_event_jsonl(self, event: dict):
-        """Append a tiny JSON line to analysis/events.jsonl for cheap, frequent checkpoints."""
-        try:
-            events_path = self.scenario_dir / 'analysis' / 'events.jsonl'
-            events_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(events_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-
     def _normalize_recorder_config(self, cfg: str | Dict[str, Any]) -> tuple[Optional[Path], Dict[str, Any]]:
         """
         Returns (config_path, config_dict). If a path is provided, we read it.
-        We always keep a dict to store in metadata, and pass the path (if any) to the recorder.
+        We always keep a dict to store in metadata, and pass the path (if any) to the recorder constructor.
         """
         if isinstance(cfg, dict):
             return None, cfg
@@ -192,7 +199,7 @@ class SingleScenarioCollector:
         cfg_dict: Dict[str, Any] = {}
         if cfg_path.is_file():
             try:
-                cfg_dict = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+                cfg_dict = json.loads(cfg_path.read_text(encoding="utf-8"))
             except Exception as e:
                 print(f"Warning: failed to read config file '{cfg_path}': {e}")
         else:
@@ -215,17 +222,16 @@ class SingleScenarioCollector:
         (self.scenario_dir / "analysis").mkdir(exist_ok=True)
 
         self.meta_dir = self.scenario_dir / "metadata"
-        # Use a stable file name expected by your analysis tools
         self.meta_file = self.meta_dir / "session_metadata.json"
 
-        # If directory already exists, decide behavior
+        # Merge behavior
         if any(self.scenario_dir.iterdir()):
             if self.merge_mode == "abort":
                 raise FileNotFoundError(
                     f"Scenario folder already exists: {self.scenario_dir}. Use merge_mode='append' or 'overwrite'."
                 )
             elif self.merge_mode == "overwrite":
-                # clear audio subfolders + old metadata
+                # Clear subfolders (leave metadata dir present but remove files)
                 for sub in ["raw_recordings", "impulse_responses", "room_responses", "analysis"]:
                     p = self.scenario_dir / sub
                     for f in p.glob("*"):
@@ -239,7 +245,7 @@ class SingleScenarioCollector:
                     except Exception:
                         pass
 
-        # Load existing metadata if present (used for compatibility check & resume)
+        # Load existing metadata if present (for compatibility check & resume)
         self._existing_metadata = self._load_existing_metadata()
         self._existing_measurements_count = self._count_existing_measurements()
 
@@ -252,40 +258,34 @@ class SingleScenarioCollector:
         return None
 
     def _count_existing_measurements(self) -> int:
-        # 1) Prefer metadata
+        # Prefer metadata
         if self._existing_metadata and "measurements" in self._existing_metadata:
             try:
                 return int(len(self._existing_metadata["measurements"]))
             except Exception:
                 pass
-
-        # 2) Fallback: count impulse files in folder
+        # Fallback: count impulses
         try:
-            imp = list((self.scenario_dir / "impulse_responses").glob("*.wav"))
-            return len(imp)
+            return len(list((self.scenario_dir / "impulse_responses").glob("*.wav")))
         except Exception:
             return 0
 
     # -------------------- compatibility --------------------
 
     def _config_compatible(self, old_cfg: Dict[str, Any], new_cfg: Dict[str, Any]) -> bool:
-        """
-        Define what 'compatible' means. We compare key signal params.
-        """
+        """Define what 'compatible' means for appends; compare key signal params."""
         keys = [
             "sample_rate", "pulse_duration", "pulse_fade", "cycle_duration",
             "num_pulses", "volume", "pulse_frequency", "impulse_form"
         ]
         for k in keys:
-            ov = old_cfg.get(k, None)
-            nv = new_cfg.get(k, None)
-            if ov != nv:
+            if old_cfg.get(k) != new_cfg.get(k):
                 return False
         return True
 
     def _assert_or_warn_config_compat(self):
         if not self._existing_metadata:
-            return  # nothing to compare
+            return
         old = self._existing_metadata.get("recorder_config", {})
         new = self.recorder_config_dict or {}
         if not self._config_compatible(old, new):
@@ -298,31 +298,47 @@ class SingleScenarioCollector:
     # -------------------- recorder --------------------
 
     def initialize_recorder(self):
-        self.recording_method = 1 if self.interactive_mode else 2
-        # Pass path if we have it; many recorders expect a file path
+        """
+        Prepare the recorder for use. Reuse injected shared recorder if provided.
+        No device prompting or method switching; the UI is the source of truth.
+        """
         cfg_arg = str(self.recorder_config_path) if self.recorder_config_path else self.recorder_config_dict
-        self.recorder = RoomResponseRecorder(cfg_arg)
 
-        print("\nTesting audio device setup...")
-        devices = self.recorder.list_devices()
-        if not devices or not devices.get('input_devices') or not devices.get('output_devices'):
-            raise RuntimeError("No suitable audio devices found")
+        if self.recorder is None:
+            # CLI/standalone path: create a recorder instance from config
+            self.recorder = RoomResponseRecorder(cfg_arg)
+            print("+++++++++ New instance of the recorder is created +++++++++++++++")
+        else:
+            print("+++++++++ Shared instance of the recorder is used , debug output 2 +++++++++++++++")
+            self.recorder.print_signal_analysis()
+            # Shared recorder path: do NOT alter devices/settings here.
+            # Optionally, if your refactored recorder exposes a non-invasive loader, you could call it here.
+            pass
 
-        self.device_info = {
-            'input_device': devices['input_devices'][0].name if devices['input_devices'] else "Unknown",
-            'output_device': devices['output_devices'][0].name if devices['output_devices'] else "Unknown",
-            'method': self.recording_method,
-            'interactive': self.interactive_mode
-        }
+        # Snapshot device/sdl info for metadata (best-effort; non-fatal)
+        self.device_info = {}
+        try:
+            if hasattr(self.recorder, "get_sdl_core_info"):
+                core = self.recorder.get_sdl_core_info()
+                # Keep only lightweight bits for metadata
+                self.device_info = {
+                    "sdl_available": bool(core.get("sdl_available")),
+                    "module_version": core.get("module_version"),
+                    "sdl_version": core.get("sdl_version"),
+                    "device_counts": core.get("device_counts"),
+                    "recorder": core.get("recorder", {}),
+                    "installation_ok": core.get("installation_ok"),
+                }
+        except Exception:
+            # Non-fatal
+            self.device_info = {}
 
-        print("Audio setup complete:")
-        print(f"  Input: {self.device_info['input_device']}")
-        print(f"  Output: {self.device_info['output_device']}")
-        print(f"  Recording method: {self.recording_method}")
-        if self.interactive_mode:
-            print("  Mode: Interactive device selection")
-
-        self.recorder.print_signal_analysis()
+        # Optional visibility: print current signal analysis (safe no-op if method missing)
+        try:
+            if hasattr(self.recorder, "print_signal_analysis"):
+                self.recorder.print_signal_analysis()
+        except Exception:
+            pass
 
     # -------------------- quality helpers --------------------
 
@@ -374,7 +390,7 @@ class SingleScenarioCollector:
 
         return assessment
 
-    # -------------------- metadata --------------------
+    # -------------------- metadata persist --------------------
 
     def _build_base_metadata(self) -> Dict[str, Any]:
         return {
@@ -398,7 +414,7 @@ class SingleScenarioCollector:
         }
 
     def _save_metadata(self, append: bool = True):
-        """Persist metadata to metadata/session_metadata.json (and keep backwards-compat if desired)."""
+        """Persist metadata to metadata/session_metadata.json."""
         if not self.meta_file:
             raise RuntimeError("Metadata path not initialized")
 
@@ -436,7 +452,7 @@ class SingleScenarioCollector:
         self.meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self._existing_metadata = meta  # keep in memory
 
-        # (Optional) also write a legacy per-scenario file if you need backward compatibility:
+        # Optional: legacy mirror (if any external tools rely on it)
         legacy = self.meta_dir / f"{self.scenario.scenario_name}_metadata.json"
         try:
             legacy.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -511,15 +527,13 @@ class SingleScenarioCollector:
         successful_measurements = 0
         failed_measurements = 0
 
-        # Warm-up
+        # Optional warm-up(s) at start (when not resuming mid-run)
         if self.scenario.warm_up_measurements > 0 and start_index == 0:
             print(f"\nPerforming {self.scenario.warm_up_measurements} warm-up measurements...")
             for i in range(self.scenario.warm_up_measurements):
                 print(f"  Warm-up {i + 1}/{self.scenario.warm_up_measurements}")
                 try:
-                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav",
-                                                  method=self.recording_method,
-                                                  interactive=self.interactive_mode)
+                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav")
                 except Exception as e:
                     print(f"    Warm-up failed: {e}")
                 for tmp in ["temp_warmup.wav", "temp_warmup_impulse.wav"]:
@@ -554,15 +568,17 @@ class SingleScenarioCollector:
             try:
                 audio_data = self.recorder.take_record(
                     str(raw_path),
-                    str(impulse_path),
-                    method=self.recording_method,
-                    interactive=(self.interactive_mode if absolute_idx == 0 else False)
+                    str(impulse_path)
                 )
 
-                # Recorder may drop room file with different suffix; try to move/rename
-                expected_room_file = raw_path.parent / f"room_{raw_path.stem}_room.wav"
-                if expected_room_file.exists():
-                    expected_room_file.rename(room_path)
+                # If the recorder writes the room response under a derived name, relocate it to our target name.
+                # (Best-effort, safe no-op if the expected file doesn't exist.)
+                derived_room = raw_path.parent / f"room_{raw_path.stem}_room.wav"
+                if derived_room.exists() and not room_path.exists():
+                    try:
+                        derived_room.rename(room_path)
+                    except Exception:
+                        pass
 
                 if audio_data is not None:
                     q = self.calculate_quality_metrics(audio_data)
@@ -608,8 +624,7 @@ class SingleScenarioCollector:
         return scenario_measurements
 
     def save_scenario_metadata(self):
-        # Kept for backwards compatibility; now _save_metadata() is called incrementally.
-        # This just ensures we have a final write.
+        """Final write (metadata is also saved incrementally after each measurement)."""
         self._save_metadata(append=True)
 
     def generate_summary_report(self):
@@ -657,7 +672,12 @@ class SingleScenarioCollector:
         print("\n".join(report_lines))
 
     def collect_scenario(self, interactive_devices: bool = False, confirm_start: bool = False):
-        """Run the complete collection with pause/resume & compatibility."""
+        """
+        Run the complete collection with pause/resume & compatibility.
+
+        NOTE: 'interactive_devices' is retained for backward compatibility with the UI,
+        but it is ignored (no interactive recorder flow in the new API).
+        """
         try:
             self.setup_directories()
             self.initialize_recorder()
@@ -704,15 +724,16 @@ class SingleScenarioCollector:
             raise
 
 
+# ==============================
+# CLI entry point
+# ==============================
+
 def main():
-    """Main function for single scenario dataset collection"""
+    """Main function for single scenario dataset collection (standalone use)"""
     print("Room Response Single Scenario Data Collector")
     print("=" * 60)
 
-    # Check for interactive device selection flag
-    interactive_devices = '--interactive' in sys.argv or '-i' in sys.argv
-
-    # Configuration
+    # Build a collector with inline defaults (CLI path)
     collector = SingleScenarioCollector(
         base_output_dir="room_response_dataset",
         recorder_config={
@@ -722,17 +743,12 @@ def main():
             'cycle_duration': 0.1,
             'num_pulses': 8,
             'volume': 0.4,
-            'impulse_form': 'square'
+            'impulse_form': 'sine'
         }
     )
 
-    if interactive_devices:
-        print("\nInteractive device selection mode enabled")
-    else:
-        print("\nUsing default audio devices (use -i flag for device selection)")
-
     # Run collection
-    collector.collect_scenario(interactive_devices=interactive_devices)
+    collector.collect_scenario(interactive_devices=False)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ import streamlit as st
 
 # Import core audio components
 try:
+    from RoomResponseRecorder import RoomResponseRecorder
+except ImportError:
+    RoomResponseRecorder = None
+
+try:
     from ScenarioManager import ScenarioManager
 except ImportError:
     ScenarioManager = None
@@ -54,29 +59,38 @@ SK_BROWSER_FILTER = "dataset_browser_filter"
 
 class AudioCollectionGUI:
     """Simplified GUI focused on audio collection and impulse response measurement."""
-    
+
     def __init__(self):
         self.scenario_manager = None
         self.collection_panel = None
         self.audio_panel = None
         self.audio_settings_panel = None
+        self.recorder = None
         self._initialize_components()
 
     def _initialize_components(self):
         """Initialize only the audio-focused components."""
+        if RoomResponseRecorder is not None:
+            try:
+                # Persist a single recorder instance across Streamlit reruns.
+                if "recorder" not in st.session_state or st.session_state["recorder"] is None:
+                    st.session_state["recorder"] = RoomResponseRecorder()
+                self.recorder = st.session_state["recorder"]
+            except Exception:
+                self.recorder = None
         if ScenarioManager is not None:
             self.scenario_manager = ScenarioManager()
         if CollectionPanel and self.scenario_manager:
-            self.collection_panel = CollectionPanel(self.scenario_manager)
+            self.collection_panel = CollectionPanel(self.scenario_manager, recorder=self.recorder)
         if AudioAnalysisPanel and self.scenario_manager:
             self.audio_panel = AudioAnalysisPanel(self.scenario_manager)
         if AudioSettingsPanel:
-            self.audio_settings_panel = AudioSettingsPanel(self.scenario_manager)
+            self.audio_settings_panel = AudioSettingsPanel(self.scenario_manager, recorder=self.recorder)
 
     def run(self):
         """Main application entry point."""
         st.set_page_config(
-            page_title="Audio Collection & Impulse Response Tool", 
+            page_title="Audio Collection & Impulse Response Tool",
             layout="wide",
             initial_sidebar_state="expanded"
         )
@@ -91,15 +105,15 @@ class AudioCollectionGUI:
         st.session_state.setdefault(SK_SAVED_LABELS, {})
         st.session_state.setdefault(SK_BROWSER_OPEN, False)
         st.session_state.setdefault(SK_BROWSER_FILTER, "")
-        
+
         # Initialize dataset defaults
         default_root = st.session_state.get(
-            SK_DATASET_ROOT, 
+            SK_DATASET_ROOT,
             os.path.join(os.getcwd(), SK_DEFAULT_DATASET_ROOT)
         )
         default_root = os.path.abspath(default_root)
         st.session_state.setdefault(SK_DATASET_ROOT, default_root)
-        
+
         # Handle pending folder name updates
         pending = st.session_state.pop(SK_DATASET_NAME_PENDING, None)
         if pending is not None:
@@ -112,7 +126,7 @@ class AudioCollectionGUI:
         """Dataset root selection interface."""
         st.sidebar.markdown("### Dataset Location")
 
-        current_root = st.session_state.get(SK_DATASET_ROOT, 
+        current_root = st.session_state.get(SK_DATASET_ROOT,
                                           os.path.join(os.getcwd(), SK_DEFAULT_DATASET_ROOT))
         default_name = os.path.basename(current_root) if os.path.basename(current_root) else SK_DEFAULT_DATASET_ROOT
 
@@ -160,9 +174,9 @@ class AudioCollectionGUI:
 
     def _looks_like_path(self, s: str) -> bool:
         """Check if string looks like a file path rather than just a folder name."""
-        return (os.path.isabs(s) or 
-                s.startswith("~") or 
-                ("/" in s) or 
+        return (os.path.isabs(s) or
+                s.startswith("~") or
+                ("/" in s) or
                 ("\\" in s) or
                 (len(s) >= 2 and s[1] == ":"))  # Windows drive letter
 
@@ -196,8 +210,8 @@ class AudioCollectionGUI:
         # Main panel selection
         options = ["Scenarios", "Collect", "Audio Settings", "Audio Analysis"]
         selected = st.sidebar.radio(
-            "Select panel", 
-            options=options, 
+            "Select panel",
+            options=options,
             index=0,
             help="Choose your workflow step"
         )
@@ -231,19 +245,19 @@ class AudioCollectionGUI:
     def _render_basic_audio_analysis(self):
         """Basic audio file analysis when dedicated panel isn't available."""
         st.header("Audio Analysis")
-        
+
         root = st.session_state.get(SK_DATASET_ROOT)
         if not os.path.isdir(root):
             st.error("Please set a valid dataset directory first")
             return
-            
+
         st.info("Basic audio analysis panel - upload audio files for quick inspection")
-        
+
         uploaded_file = st.file_uploader(
-            "Upload audio file for analysis", 
+            "Upload audio file for analysis",
             type=['wav', 'mp3', 'flac', 'ogg']
         )
-        
+
         if uploaded_file:
             st.audio(uploaded_file, format='audio/wav')
             st.success(f"File: {uploaded_file.name}")
@@ -257,7 +271,7 @@ class AudioCollectionGUI:
 
         st.header("Scenarios Overview")
         root = st.session_state.get(SK_DATASET_ROOT, os.getcwd())
-        
+
         if not os.path.isdir(root):
             st.error("Please provide a valid dataset root directory.")
             return
@@ -268,7 +282,7 @@ class AudioCollectionGUI:
         # Load scenarios
         with st.spinner("Loading scenarios..."):
             df = self.scenario_manager.build_scenarios_df(root)
-            
+
         if df.empty:
             st.info("No scenarios found. Use the Collect panel to create recordings.")
             st.markdown("**Quick Start:**")
@@ -288,13 +302,13 @@ class AudioCollectionGUI:
 
         # Bulk operations (simplified for audio workflow)
         self._render_scenario_bulk_operations(df, dfv)
-        
+
         # Selection controls
         self._render_scenario_selection_controls(dfv, len(df))
-        
+
         # Scenarios table
         self._render_scenarios_table(dfv)
-        
+
         # Summary and explorer
         self._render_scenario_summary(df, dfv)
         self._render_scenario_explorer()
@@ -302,7 +316,7 @@ class AudioCollectionGUI:
     def _render_scenario_filters(self):
         """Render scenario filtering controls."""
         col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-        
+
         with col1:
             st.text_input(
                 "Filter scenarios (regex supported)",
@@ -322,22 +336,22 @@ class AudioCollectionGUI:
     def _render_scenario_bulk_operations(self, df, dfv):
         """Simplified bulk operations for audio workflow."""
         st.markdown("### Bulk Label Management")
-        
+
         existing_labels = sorted(self.scenario_manager.get_unique_labels(df))
         if existing_labels:
             st.caption(f"Existing labels: {', '.join(existing_labels[:10])}")
 
         with st.form("bulk_label_form"):
             col1, col2 = st.columns([3, 1])
-            
+
             with col1:
                 label_text = st.text_input(
-                    "Label to apply", 
+                    "Label to apply",
                     placeholder="quiet, baseline, test-setup-1",
                     help="Comma-separated labels"
                 )
                 append_mode = st.checkbox("Append to existing labels", value=False)
-            
+
             with col2:
                 apply_btn = st.form_submit_button(f"Apply to {len(dfv)} scenarios")
                 clear_btn = st.form_submit_button(f"Clear all labels")
@@ -360,7 +374,7 @@ class AudioCollectionGUI:
         """Apply labels to multiple scenarios."""
         updated = 0
         new_labels = [s.strip() for s in label_text.split(",") if s.strip()]
-        
+
         for _, row in dfv.iterrows():
             path = row["path"]
             if append_mode:
@@ -373,27 +387,27 @@ class AudioCollectionGUI:
                 final_label = ", ".join(merged) if merged else None
             else:
                 final_label = label_text
-            
+
             if self.scenario_manager.write_label(path, final_label):
                 updated += 1
-        
+
         return updated
 
     def _render_scenario_selection_controls(self, dfv, total_count):
         """Render scenario selection controls."""
         col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
-        
+
         with col1:
             if st.button("Select All Filtered"):
                 for _, row in dfv.iterrows():
                     st.session_state[SK_SCN_SELECTIONS].add(row["path"])
                 st.rerun()
-        
+
         with col2:
             if st.button("Clear Selection"):
                 st.session_state[SK_SCN_SELECTIONS].clear()
                 st.rerun()
-        
+
         with col3:
             if st.button("Invert Selection"):
                 for _, row in dfv.iterrows():
@@ -404,7 +418,7 @@ class AudioCollectionGUI:
                     else:
                         selections.add(path)
                 st.rerun()
-        
+
         with col4:
             selected_count = len(st.session_state[SK_SCN_SELECTIONS])
             st.caption(f"Selected: {selected_count} | Filtered: {len(dfv)} | Total: {total_count}")
@@ -413,7 +427,7 @@ class AudioCollectionGUI:
         """Render simplified scenarios table for audio workflow."""
         st.markdown("---")
         st.markdown("### Scenarios")
-        
+
         # Table headers
         col1, col2, col3, col4, col5 = st.columns([0.08, 0.15, 0.25, 0.35, 0.17])
         with col1: st.markdown("**Select**")
@@ -421,7 +435,7 @@ class AudioCollectionGUI:
         with col3: st.markdown("**Labels**")
         with col4: st.markdown("**Description & Files**")
         with col5: st.markdown("**Actions**")
-        
+
         # Table rows
         for idx, row in dfv.iterrows():
             self._render_scenario_row(idx, row)
@@ -456,9 +470,9 @@ class AudioCollectionGUI:
         with col3:
             key_lbl = f"lbl_{idx}_{hash(scn_path)}"
             new_label = st.text_input(
-                "Labels", 
-                value=label_val, 
-                key=key_lbl, 
+                "Labels",
+                value=label_val,
+                key=key_lbl,
                 label_visibility="collapsed",
                 placeholder="Add labels..."
             )
@@ -475,7 +489,7 @@ class AudioCollectionGUI:
                 st.write(display_desc)
             else:
                 st.caption("No description")
-            
+
             # Show file types available
             files_info = self._get_scenario_files_info(scn_path)
             if files_info:
@@ -491,29 +505,29 @@ class AudioCollectionGUI:
         """Get brief info about files in scenario."""
         if not os.path.exists(scenario_path):
             return ""
-        
+
         info_parts = []
-        
+
         # Check for different file types
         raw_dir = os.path.join(scenario_path, "raw_recordings")
-        impulse_dir = os.path.join(scenario_path, "impulse_responses") 
+        impulse_dir = os.path.join(scenario_path, "impulse_responses")
         room_dir = os.path.join(scenario_path, "room_responses")
-        
+
         if os.path.exists(raw_dir):
             raw_count = len([f for f in os.listdir(raw_dir) if f.endswith('.wav')])
             if raw_count > 0:
                 info_parts.append(f"Raw: {raw_count}")
-        
+
         if os.path.exists(impulse_dir):
             impulse_count = len([f for f in os.listdir(impulse_dir) if f.endswith('.wav')])
             if impulse_count > 0:
                 info_parts.append(f"Impulse: {impulse_count}")
-        
+
         if os.path.exists(room_dir):
             room_count = len([f for f in os.listdir(room_dir) if f.endswith('.wav')])
             if room_count > 0:
                 info_parts.append(f"Room: {room_count}")
-        
+
         return " | ".join(info_parts) if info_parts else "No audio files"
 
     def _render_scenario_summary(self, df, dfv):
@@ -521,9 +535,9 @@ class AudioCollectionGUI:
         st.markdown("---")
         unique_labels = self.scenario_manager.get_unique_labels(df)
         selected_count = len(st.session_state[SK_SCN_SELECTIONS])
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             st.markdown(f"""
             **Summary:**
@@ -532,13 +546,13 @@ class AudioCollectionGUI:
             - **Selected scenarios:** {selected_count}
             - **Unique labels:** {len(unique_labels)}
             """)
-            
+
             if unique_labels:
                 labels_text = ', '.join(sorted(unique_labels)[:5])
                 if len(unique_labels) > 5:
                     labels_text += f" (and {len(unique_labels) - 5} more)"
                 st.caption(f"Labels: {labels_text}")
-        
+
         with col2:
             if selected_count > 0:
                 st.info(f"Target: {selected_count} scenarios selected")
@@ -550,7 +564,7 @@ class AudioCollectionGUI:
         selected_paths = st.session_state[SK_SCN_SELECTIONS]
         if not selected_paths:
             return
-        
+
         st.markdown("### Selected Scenarios Details")
         for path in sorted(selected_paths):
             if os.path.exists(path):
@@ -566,35 +580,35 @@ class AudioCollectionGUI:
 
         st.markdown("---")
         st.subheader(f"Exploring: {os.path.basename(exp_path)}")
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             # Audio files
             wavs = self.scenario_manager.list_wavs(exp_path) if self.scenario_manager else []
             if wavs:
                 st.markdown(f"**Audio Files ({len(wavs)} found):**")
-                
+
                 # Show first few files
                 preview_files = wavs[:5]
                 selected_file = st.selectbox(
-                    "Select file to play", 
+                    "Select file to play",
                     preview_files,
                     format_func=lambda x: os.path.basename(x)
                 )
-                
+
                 if selected_file:
                     st.audio(selected_file, format="audio/wav")
-                    
+
                     # File info
                     file_size = os.path.getsize(selected_file) / (1024 * 1024)  # MB
                     st.caption(f"Size: {file_size:.2f} MB | Path: {selected_file}")
-                
+
                 if len(wavs) > 5:
                     st.caption(f"Showing first 5 of {len(wavs)} audio files")
             else:
                 st.info("No audio files found in this scenario")
-        
+
         with col2:
             # File structure
             st.markdown("**Folder Structure:**")
@@ -606,7 +620,7 @@ class AudioCollectionGUI:
                     st.write(f"OK {subdir} ({file_count} files)")
                 else:
                     st.write(f"MISSING {subdir}")
-            
+
             # Close explorer
             if st.button("Close Explorer"):
                 st.session_state[SK_SCN_EXPLORE] = None

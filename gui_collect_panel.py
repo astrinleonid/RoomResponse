@@ -27,6 +27,13 @@ except Exception:
     SeriesWorker = None  # type: ignore
     WorkerCommand = None  # type: ignore
 
+# near the imports (optional; type-only import so it won’t create a hard dep)
+from typing import Optional
+try:
+    from RoomResponseRecorder import RoomResponseRecorder  # type: ignore
+except Exception:
+    RoomResponseRecorder = None  # type: ignore
+
 # Session keys
 SK_DATASET_ROOT = "dataset_root"
 SK_SERIES_EVT_Q = "series_event_q"
@@ -37,12 +44,21 @@ SK_SERIES_STARTED_AT = "series_started_at"
 SK_COLLECTION_OUTPUT_OVERRIDE = "collection_output_override"
 
 class CollectionPanel:
-    def __init__(self, scenario_manager):
+    def __init__(self, scenario_manager, recorder: Optional["RoomResponseRecorder"]=None):
         self.scenario_manager = scenario_manager
+        self.recorder: Optional[RoomResponseRecorder] = recorder
+        print("/n/n++++++++++++ Debug output of the recorder parameters 3 ++++++++++++++")
+        self.recorder.print_signal_analysis()
 
     def render(self) -> None:
         st.header("Collect - Data Collection")
         if not self._check_dependencies():
+            return
+
+        if self.recorder is None:
+            st.error("Shared RoomResponseRecorder is not available. "
+                         "Ensure piano_response.py instantiates a single recorder "
+                         "and passes it into CollectionPanel(recorder=...).")
             return
         root = st.session_state.get(SK_DATASET_ROOT, os.getcwd())
         if not os.path.isdir(root):
@@ -191,8 +207,15 @@ class CollectionPanel:
             st.info(f"📁 Scenario will be saved as: `{scenario_name}`"); st.caption(f"📂 Full path: `{scenario_path}`")
         st.markdown("### Execute Collection")
         if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True):
-            SingleScenarioExecutor(self.scenario_manager).execute(common_config=common_cfg, scenario_number=scenario_number, description=description)
 
+            print("/n/n++++++++++++ Debug output of the recorder parameters 4 ++++++++++++++")
+            self.recorder.print_signal_analysis()
+
+            SingleScenarioExecutor(self.scenario_manager, recorder=self.recorder).execute(
+                                    common_config = common_cfg,
+                                    scenario_number = scenario_number,
+                                    description = description
+            )
     def _render_series_mode(self, common_cfg: Dict[str, Any]) -> None:
         st.markdown("### Series Configuration")
         c1, c2 = st.columns([1, 1])
@@ -358,8 +381,9 @@ class CollectionPanel:
                 st.info("Use the Collect form values; defaults are loaded from recorderConfig.json.")
 
 class SingleScenarioExecutor:
-    def __init__(self, scenario_manager):
+    def __init__(self, scenario_manager, recorder: Optional["RoomResponseRecorder"]=None):
         self.scenario_manager = scenario_manager
+        self.recorder = recorder
     def execute(self, common_config: Dict[str, Any], scenario_number: str, description: str) -> None:
         if not self._validate_inputs(common_config, scenario_number):
             return
@@ -379,6 +403,7 @@ class SingleScenarioExecutor:
                 recorder_config=common_config["config_file"],
                 scenario_config=params,
                 merge_mode="append", allow_config_mismatch=False, resume=True,
+                recorder=self.recorder
             )
             st.info("🎵 Collection started (blocking). Monitor the console for progress.")
             collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
