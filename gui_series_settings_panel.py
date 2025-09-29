@@ -157,9 +157,9 @@ class SeriesSettingsPanel:
             # floats across the board
             pulse_duration_ms = st.number_input(
                 "Pulse duration (ms)",
-                min_value=float(0.5), max_value=float(200.0),
+                min_value=float(0.02), max_value=float(200.0),
                 value=float(st.session_state['series_pulse_duration']),
-                step=float(0.5)
+                step=float(0.02)
             )
             pulse_freq = st.number_input(
                 "Pulse frequency (Hz)",

@@ -204,6 +204,7 @@ class RoomResponseRecorder:
 
     def _generate_complete_signal(self) -> list:
         """Generate the complete test signal with all pulses"""
+        self.pulse_samples = int(self.pulse_duration * self.sample_rate)
         total_samples = self.cycle_samples * self.num_pulses
         signal = np.zeros(total_samples, dtype=np.float32)
         single_pulse = self._generate_single_pulse(self.pulse_samples)
