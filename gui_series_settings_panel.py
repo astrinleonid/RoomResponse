@@ -9,6 +9,7 @@ Series Settings Panel - Multi-pulse Recording Configuration and Analysis
 
 from __future__ import annotations
 
+import shutil
 import time
 import json
 from pathlib import Path
@@ -257,15 +258,15 @@ class SeriesSettingsPanel:
 
     def _render_series_controls(self) -> None:
         st.markdown("**Series Controls**")
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             if st.button("🎵 Record Series",
                          disabled=not (SDL_AVAILABLE and RECORDER_AVAILABLE and self.recorder)):
                 self._execute_series_recording()
+        # with c2:
+        #     if st.button("🔊 Preview Series", disabled=not (SDL_AVAILABLE and self.recorder)):
+        #         self._preview_series()
         with c2:
-            if st.button("🔊 Preview Series", disabled=not (SDL_AVAILABLE and self.recorder)):
-                self._preview_series()
-        with c3:
             if st.button("⚙️ Export Series Config"):
                 self._export_series_config()
 
@@ -280,6 +281,11 @@ class SeriesSettingsPanel:
         try:
             with st.spinner("Recording pulse series..."):
                 tmp = Path("TMP"); tmp.mkdir(exist_ok=True)
+                for item in tmp.iterdir():
+                    if item.is_file():
+                        item.unlink()
+                    elif item.is_dir():
+                        shutil.rmtree(item)
                 ts = int(time.time())
                 raw_path = tmp / f"series_raw_{ts}.wav"
                 imp_path = tmp / f"series_impulse_{ts}.wav"
@@ -309,34 +315,6 @@ class SeriesSettingsPanel:
             with st.expander("Details"):
                 st.code(str(e))
 
-    def _preview_series(self) -> None:
-        if not self.recorder:
-            st.error("Recorder unavailable")
-            return
-
-        try:
-            with st.spinner("Generating series preview..."):
-                signal = self.recorder._generate_complete_signal()
-                signal_arr = np.asarray(signal, dtype=np.float32)
-
-                try:
-                    if SDL_AVAILABLE and sdl is not None and hasattr(sdl, "quick_device_test"):
-                        inp = getattr(self.recorder, 'input_device_id', -1)
-                        out = getattr(self.recorder, 'output_device_id', -1)
-                        result = sdl.quick_device_test(inp, out, signal)
-                        if isinstance(result, dict) and result.get('success'):
-                            st.success("Series preview played.")
-                        else:
-                            msg = result.get('error_message', 'Unknown error') if isinstance(result, dict) else str(result)
-                            st.warning(f"Preview playback issue: {msg}")
-                except Exception as e:
-                    st.warning(f"Preview playback error (storing for visualization): {e}")
-
-                st.session_state['series_preview_audio'] = signal_arr
-                st.session_state['series_preview_sample_rate'] = int(self.recorder.sample_rate)
-
-        except Exception as e:
-            st.error(f"Series generation error: {e}")
 
     # ----------------------
     # APPLY settings permanently to the shared recorder

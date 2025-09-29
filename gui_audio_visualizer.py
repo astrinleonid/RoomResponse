@@ -11,6 +11,7 @@ This component provides:
 
 Save this file as: gui_audio_visualizer.py
 """
+import hashlib
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -487,48 +488,39 @@ class AudioVisualizer:
                     mime="application/json",
                     key=f"{self.session_key_prefix}_download_meta"
                 )
-    
+
     def _render_playback_controls(self, audio_data: np.ndarray, sample_rate: int):
         """Render playback controls."""
         st.markdown("---")
         st.markdown("**Playback Controls**")
-        
-        # Create audio player using HTML audio element
+
+        # Build fresh WAV bytes from the *current* buffer and sample rate
         wav_data = self._create_wav_download(audio_data, sample_rate)
-        b64_audio = base64.b64encode(wav_data).decode()
-        
-        # HTML audio player
-        audio_html = f"""
-        <audio controls style="width: 100%;">
-            <source src="data:audio/wav;base64,{b64_audio}" type="audio/wav">
-            Your browser does not support the audio element.
-        </audio>
-        """
-        
-        st.markdown(audio_html, unsafe_allow_html=True)
-        
+
+        # Use a content hash as the widget key to force a re-render when audio changes
+        audio_hash = hashlib.md5(wav_data).hexdigest()[:12]
+        st.audio(wav_data, format="audio/wav", start_time=0)
+
         # Playback info
         duration = len(audio_data) / sample_rate
         st.caption(f"Duration: {duration:.3f} seconds | Sample Rate: {sample_rate} Hz")
-    
+
     def _create_wav_download(self, audio_data: np.ndarray, sample_rate: int) -> bytes:
-        """Create WAV file data for download."""
-        # Normalize and convert to int16
-        if np.max(np.abs(audio_data)) > 0:
+        """Create WAV file data for download/playback in the browser."""
+        # Normalize to int16 range (no resampling, no pulse count change)
+        if len(audio_data) and np.max(np.abs(audio_data)) > 0:
             normalized = audio_data / np.max(np.abs(audio_data)) * 0.95
         else:
             normalized = audio_data
-        
-        audio_int16 = (normalized * 32767).astype(np.int16)
-        
-        # Create WAV file in memory
+        pcm = (np.clip(normalized, -1.0, 1.0) * 32767.0).astype(np.int16, copy=False)
+
+        # Write WAV header with the *actual* sample_rate you passed in
         buffer = io.BytesIO()
-        with wave.open(buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 2 bytes per sample
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-        
+        with wave.open(buffer, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(int(sample_rate))
+            wf.writeframes(pcm.tobytes())
         return buffer.getvalue()
     
     def _create_csv_download(self, audio_data: np.ndarray, sample_rate: int) -> str:
