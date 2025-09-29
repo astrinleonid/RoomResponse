@@ -14,6 +14,7 @@ import time
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+import math  # <-- added
 
 import numpy as np
 import streamlit as st
@@ -315,7 +316,6 @@ class SeriesSettingsPanel:
             with st.expander("Details"):
                 st.code(str(e))
 
-
     # ----------------------
     # APPLY settings permanently to the shared recorder
     # ----------------------
@@ -382,6 +382,43 @@ class SeriesSettingsPanel:
                 analysis['averaged_cycle'] = avg_cycle
                 analysis['cycles_used_for_averaging'] = len(to_avg)
                 analysis['averaging_start_cycle'] = start + 1
+
+                # --- NEW: spectral analysis of the averaged impulse response segment ---
+                try:
+                    win_start_frac = float(st.session_state.get('series_analysis_window_start', 0.0))
+                    win_end_frac = float(st.session_state.get('series_analysis_window_end', 1.0))
+                    win_start_frac = max(0.0, min(1.0, win_start_frac))
+                    win_end_frac = max(0.0, min(1.0, win_end_frac))
+                    if win_end_frac <= win_start_frac:
+                        win_end_frac = min(1.0, win_start_frac + 0.05)  # small guard
+
+                    N = len(avg_cycle)
+                    s = int(math.floor(N * win_start_frac))
+                    e = int(math.ceil(N * win_end_frac))
+                    seg = np.asarray(avg_cycle[s:e], dtype=np.float32)
+
+                    # Hann window to reduce leakage
+                    if seg.size > 1:
+                        w = np.hanning(seg.size).astype(np.float32)
+                        seg_w = seg * w
+                    else:
+                        seg_w = seg
+
+                    # rFFT → magnitude dB
+                    eps = 1e-12
+                    spec = np.fft.rfft(seg_w)
+                    mag = np.abs(spec)
+                    mag_db = 20.0 * np.log10(mag + eps)
+                    freqs = np.fft.rfftfreq(seg_w.size, d=1.0/float(sr))
+
+                    analysis['averaged_spectrum'] = {
+                        'freqs': freqs.astype(np.float32),
+                        'magnitude_db': mag_db.astype(np.float32),
+                        'window': [float(win_start_frac), float(win_end_frac)],
+                        'n_fft': int(seg_w.size)
+                    }
+                except Exception as _fft_err:
+                    analysis['spectrum_error'] = str(_fft_err)
 
             # Consistency metric
             if len(cycles) > 1:
@@ -495,6 +532,7 @@ class SeriesSettingsPanel:
                     value=float(st.session_state['series_analysis_window_start']),
                     step=float(0.01)
                 )
+                # NOTE: end slider is optional; if not shown, end defaults to 1.0.
 
     def _render_cycle_analysis(self, analysis: Dict[str, Any], sample_rate: int) -> None:
         if not st.session_state.get('series_show_individual_cycles', True):
@@ -578,6 +616,42 @@ class SeriesSettingsPanel:
                 show_analysis=True,
                 height=400
             )
+
+        # --- NEW: Spectrum of the averaged impulse response (windowed segment) ---
+        spec = analysis.get('averaged_spectrum')
+        if spec is not None and 'freqs' in spec and 'magnitude_db' in spec:
+            st.markdown("**Averaged Cycle — Magnitude Spectrum**")
+
+            colx, coly = st.columns([2, 1])
+            with colx:
+                st.caption(
+                    f"Window: {spec.get('window', [0.0, 1.0])[0]:.2f} – {spec.get('window', [0.0, 1.0])[1]:.2f} "
+                    f"(fraction of averaged cycle), NFFT={spec.get('n_fft', 0)}"
+                )
+            with coly:
+                log_x = st.checkbox("Log frequency axis", value=True, key="series_spectrum_logx")
+
+            freqs = np.asarray(spec['freqs'])
+            mag_db = np.asarray(spec['magnitude_db'])
+
+            import matplotlib.pyplot as plt
+            fig = plt.figure(figsize=(6.5, 3.0))
+            ax = plt.gca()
+            if log_x:
+                f = np.clip(freqs, 1e1, None)  # avoid log(0)
+                ax.semilogx(f, mag_db)
+                ax.set_xlim([max(10, f.min()), f.max() if f.max() > 10 else 24000])
+            else:
+                ax.plot(freqs, mag_db)
+                ax.set_xlim([0, max(20000, freqs.max() if freqs.size else 20000)])
+            # show ~80 dB span by default centered near peak
+            if mag_db.size:
+                ax.set_ylim([mag_db.max() - 80.0, mag_db.max() + 3.0])
+            ax.grid(True, alpha=0.25)
+            ax.set_xlabel("Frequency (Hz)")
+            ax.set_ylabel("Magnitude (dB)")
+            ax.set_title("Averaged Impulse Response — Spectrum")
+            st.pyplot(fig, use_container_width=True)
 
     # ----------------------
     # Advanced settings
