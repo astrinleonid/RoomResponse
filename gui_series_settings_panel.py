@@ -572,27 +572,21 @@ class SeriesSettingsPanel:
         with col_b:
             norm = st.checkbox("Normalize each cycle (max=1)", value=False)
 
+        # Use AudioVisualizer static method for overlay plot
         plot_cycles = cycles[:max_to_plot]
-        x = np.arange(len(plot_cycles[0])) / float(sample_rate)
+        labels = [f"C{i+1}" for i in range(len(plot_cycles))]
 
-        import matplotlib.pyplot as plt
-        fig = plt.figure(figsize=(6.5, 3.0))
-        ax = plt.gca()
-
-        for i, c in enumerate(plot_cycles):
-            y = np.asarray(c, dtype=np.float32)
-            if norm:
-                m = np.max(np.abs(y)) if y.size else 1.0
-                if m > 0:
-                    y = y / m
-            ax.plot(x, y, linewidth=1.0, alpha=0.55, label=f"C{i+1}")
-
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Amplitude")
-        ax.set_title("Overlay of Individual Cycles")
-        if max_to_plot <= 12:
-            ax.legend(ncol=2, fontsize=8, frameon=False)
-        ax.grid(True, alpha=0.25)
+        fig = AudioVisualizer.render_overlay_plot(
+            audio_signals=plot_cycles,
+            sample_rate=sample_rate,
+            title="Overlay of Individual Cycles",
+            labels=labels,
+            normalize=norm,
+            show_legend=(max_to_plot <= 12),
+            figsize=(6.5, 3.0),
+            alpha=0.55,
+            linewidth=1.0
+        )
 
         st.pyplot(fig, use_container_width=True)
 
@@ -617,40 +611,34 @@ class SeriesSettingsPanel:
                 height=400
             )
 
-        # --- NEW: Spectrum of the averaged impulse response (windowed segment) ---
-        spec = analysis.get('averaged_spectrum')
-        if spec is not None and 'freqs' in spec and 'magnitude_db' in spec:
+        # --- Spectrum of the averaged impulse response (windowed segment) ---
+        if avg is not None and len(avg) > 0:
             st.markdown("**Averaged Cycle — Magnitude Spectrum**")
+
+            # Get window settings
+            win_start_frac = float(st.session_state.get('series_analysis_window_start', 0.0))
+            win_end_frac = float(st.session_state.get('series_analysis_window_end', 1.0))
 
             colx, coly = st.columns([2, 1])
             with colx:
                 st.caption(
-                    f"Window: {spec.get('window', [0.0, 1.0])[0]:.2f} – {spec.get('window', [0.0, 1.0])[1]:.2f} "
-                    f"(fraction of averaged cycle), NFFT={spec.get('n_fft', 0)}"
+                    f"Window: {win_start_frac:.2f} – {win_end_frac:.2f} "
+                    f"(fraction of averaged cycle)"
                 )
             with coly:
                 log_x = st.checkbox("Log frequency axis", value=True, key="series_spectrum_logx")
 
-            freqs = np.asarray(spec['freqs'])
-            mag_db = np.asarray(spec['magnitude_db'])
+            # Use AudioVisualizer static method for spectrum plot
+            fig = AudioVisualizer.render_spectrum_plot(
+                audio_data=avg,
+                sample_rate=sample_rate,
+                title="Averaged Impulse Response — Spectrum",
+                log_x=log_x,
+                window_func="hanning",
+                window_range=(win_start_frac, win_end_frac),
+                figsize=(6.5, 3.0)
+            )
 
-            import matplotlib.pyplot as plt
-            fig = plt.figure(figsize=(6.5, 3.0))
-            ax = plt.gca()
-            if log_x:
-                f = np.clip(freqs, 1e1, None)  # avoid log(0)
-                ax.semilogx(f, mag_db)
-                ax.set_xlim([max(10, f.min()), f.max() if f.max() > 10 else 24000])
-            else:
-                ax.plot(freqs, mag_db)
-                ax.set_xlim([0, max(20000, freqs.max() if freqs.size else 20000)])
-            # show ~80 dB span by default centered near peak
-            if mag_db.size:
-                ax.set_ylim([mag_db.max() - 80.0, mag_db.max() + 3.0])
-            ax.grid(True, alpha=0.25)
-            ax.set_xlabel("Frequency (Hz)")
-            ax.set_ylabel("Magnitude (dB)")
-            ax.set_title("Averaged Impulse Response — Spectrum")
             st.pyplot(fig, use_container_width=True)
 
     # ----------------------

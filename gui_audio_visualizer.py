@@ -549,5 +549,238 @@ class AudioVisualizer:
             "component_id": self.component_id,
             "export_timestamp": str(np.datetime64('now'))
         }
-        
+
         return json.dumps(metadata, indent=2)
+
+    # ========================================================================
+    # Static methods for advanced visualizations
+    # These can be used independently without instantiating AudioVisualizer
+    # ========================================================================
+
+    @staticmethod
+    def render_overlay_plot(
+        audio_signals: list,
+        sample_rate: int,
+        title: str = "Waveform Overlay",
+        labels: Optional[list] = None,
+        normalize: bool = False,
+        max_signals: Optional[int] = None,
+        show_legend: bool = True,
+        figsize: tuple = (10, 4),
+        alpha: float = 0.6,
+        linewidth: float = 1.0
+    ) -> Figure:
+        """
+        Plot multiple audio signals overlaid on the same axes.
+
+        Args:
+            audio_signals: List of numpy arrays containing audio data
+            sample_rate: Sample rate in Hz
+            title: Plot title
+            labels: Optional list of labels for each signal
+            normalize: If True, normalize each signal to max amplitude of 1
+            max_signals: Maximum number of signals to plot (None = all)
+            show_legend: Whether to show legend
+            figsize: Figure size (width, height) in inches
+            alpha: Transparency of plot lines (0-1)
+            linewidth: Width of plot lines
+
+        Returns:
+            matplotlib Figure object
+        """
+        if not audio_signals:
+            fig, ax = plt.subplots(figsize=figsize)
+            ax.text(0.5, 0.5, 'No signals provided', ha='center', va='center')
+            return fig
+
+        # Limit number of signals if specified
+        if max_signals is not None:
+            audio_signals = audio_signals[:max_signals]
+            if labels is not None:
+                labels = labels[:max_signals]
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        fig.patch.set_facecolor('white')
+
+        # Plot each signal
+        for i, signal in enumerate(audio_signals):
+            # Normalize if requested
+            if normalize:
+                max_val = np.max(np.abs(signal)) if len(signal) > 0 else 1.0
+                if max_val > 0:
+                    signal = signal / max_val
+
+            # Create time axis
+            time_axis = np.arange(len(signal)) / sample_rate
+
+            # Generate label
+            if labels and i < len(labels):
+                label = labels[i]
+            else:
+                label = f"Signal {i+1}"
+
+            # Plot
+            ax.plot(time_axis, signal, linewidth=linewidth, alpha=alpha, label=label)
+
+        # Formatting
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Amplitude" + (" (normalized)" if normalize else ""))
+        ax.set_title(title)
+        ax.grid(True, alpha=0.25)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3, linewidth=0.5)
+
+        if show_legend and len(audio_signals) <= 15:
+            ax.legend(ncol=min(3, len(audio_signals)), fontsize=8, frameon=False)
+
+        plt.tight_layout()
+        return fig
+
+    @staticmethod
+    def render_spectrum_plot(
+        audio_data: np.ndarray,
+        sample_rate: int,
+        title: str = "Frequency Spectrum",
+        log_x: bool = False,
+        window_func: Optional[str] = "hanning",
+        window_range: tuple = (0.0, 1.0),
+        db_range: Optional[tuple] = None,
+        freq_range: Optional[tuple] = None,
+        figsize: tuple = (10, 4)
+    ) -> Figure:
+        """
+        Plot frequency spectrum with advanced options.
+
+        Args:
+            audio_data: Audio signal as numpy array
+            sample_rate: Sample rate in Hz
+            title: Plot title
+            log_x: Use logarithmic frequency scale
+            window_func: Window function to apply ('hanning', 'hamming', 'blackman', None)
+            window_range: Tuple (start_frac, end_frac) to window signal (0.0-1.0)
+            db_range: Optional tuple (min_db, max_db) for y-axis limits
+            freq_range: Optional tuple (min_freq, max_freq) for x-axis limits
+            figsize: Figure size (width, height) in inches
+
+        Returns:
+            matplotlib Figure object
+        """
+        # Extract windowed segment
+        N = len(audio_data)
+        start_idx = int(N * window_range[0])
+        end_idx = int(N * window_range[1])
+        segment = audio_data[start_idx:end_idx].astype(np.float32)
+
+        # Apply window function
+        if window_func and len(segment) > 1:
+            if window_func == "hanning":
+                window = np.hanning(len(segment))
+            elif window_func == "hamming":
+                window = np.hamming(len(segment))
+            elif window_func == "blackman":
+                window = np.blackman(len(segment))
+            else:
+                window = np.ones(len(segment))
+            segment = segment * window.astype(np.float32)
+
+        # Compute FFT
+        eps = 1e-12
+        fft_result = np.fft.rfft(segment)
+        magnitude = np.abs(fft_result)
+        magnitude_db = 20.0 * np.log10(magnitude + eps)
+        freqs = np.fft.rfftfreq(len(segment), d=1.0 / sample_rate)
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        fig.patch.set_facecolor('white')
+
+        # Plot
+        if log_x:
+            # Avoid log(0) by clipping to minimum frequency
+            freqs_clipped = np.clip(freqs, 10, None)
+            ax.semilogx(freqs_clipped, magnitude_db, linewidth=1.0)
+            if freq_range:
+                ax.set_xlim(freq_range)
+            else:
+                ax.set_xlim([max(10, freqs_clipped.min()), freqs_clipped.max()])
+        else:
+            ax.plot(freqs, magnitude_db, linewidth=1.0)
+            if freq_range:
+                ax.set_xlim(freq_range)
+            else:
+                ax.set_xlim([0, sample_rate / 2])
+
+        # Y-axis limits
+        if db_range:
+            ax.set_ylim(db_range)
+        elif len(magnitude_db) > 0:
+            # Auto-range: show 80 dB span centered near peak
+            max_db = magnitude_db.max()
+            ax.set_ylim([max_db - 80.0, max_db + 3.0])
+
+        # Formatting
+        ax.set_xlabel("Frequency (Hz)")
+        ax.set_ylabel("Magnitude (dB)")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.25)
+
+        # Add info caption
+        caption = f"NFFT={len(segment)}"
+        if window_func:
+            caption += f", Window={window_func}"
+        if window_range != (0.0, 1.0):
+            caption += f", Range=[{window_range[0]:.2f}, {window_range[1]:.2f}]"
+        ax.text(0.02, 0.98, caption, transform=ax.transAxes,
+                fontsize=8, verticalalignment='top', alpha=0.7)
+
+        plt.tight_layout()
+        return fig
+
+    @staticmethod
+    def load_wav_file(file_path: str) -> Tuple[Optional[np.ndarray], int]:
+        """
+        Load WAV file and return normalized audio data.
+
+        Args:
+            file_path: Path to WAV file
+
+        Returns:
+            Tuple of (audio_data, sample_rate)
+            Returns (None, 0) on error
+        """
+        try:
+            with wave.open(file_path, 'rb') as wf:
+                sample_rate = wf.getframerate()
+                n_channels = wf.getnchannels()
+                n_frames = wf.getnframes()
+                sample_width = wf.getsampwidth()
+
+                # Read raw audio data
+                raw_data = wf.readframes(n_frames)
+
+                # Convert to numpy array based on sample width
+                if sample_width == 1:
+                    dtype = np.uint8
+                    audio_data = np.frombuffer(raw_data, dtype=dtype).astype(np.float32)
+                    audio_data = (audio_data - 128) / 128.0
+                elif sample_width == 2:
+                    dtype = np.int16
+                    audio_data = np.frombuffer(raw_data, dtype=dtype).astype(np.float32)
+                    audio_data = audio_data / 32768.0
+                elif sample_width == 4:
+                    dtype = np.int32
+                    audio_data = np.frombuffer(raw_data, dtype=dtype).astype(np.float32)
+                    audio_data = audio_data / 2147483648.0
+                else:
+                    return None, 0
+
+                # Handle multi-channel audio (convert to mono)
+                if n_channels == 2:
+                    audio_data = audio_data.reshape(-1, 2).mean(axis=1)
+                elif n_channels > 2:
+                    audio_data = audio_data.reshape(-1, n_channels).mean(axis=1)
+
+                return audio_data, sample_rate
+
+        except Exception as e:
+            return None, 0
