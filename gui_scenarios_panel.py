@@ -23,6 +23,16 @@ except ImportError:
     AudioVisualizer = None
     VISUALIZER_AVAILABLE = False
 
+# Optional: Signal alignment
+try:
+    from signal_alignment import SignalAligner, align_impulse_responses, average_signals
+    ALIGNMENT_AVAILABLE = True
+except ImportError:
+    SignalAligner = None
+    align_impulse_responses = None
+    average_signals = None
+    ALIGNMENT_AVAILABLE = False
+
 # Session keys
 SK_SCN_SELECTIONS = "scenarios_selected_set"
 SK_SCN_EXPLORE = "scenarios_explore_path"
@@ -458,6 +468,7 @@ class ScenariosPanel:
         """Get audio files grouped by type."""
         files_by_type = {
             "impulse_responses": [],
+            "impulse_responses_aligned": [],
             "room_responses": [],
             "raw_recordings": [],
         }
@@ -496,6 +507,9 @@ class ScenariosPanel:
         """Render overlay view of multiple audio files."""
         st.markdown("---")
         st.markdown(f"### Overlay View: {audio_type.replace('_', ' ').title()}")
+
+        # Debug info
+        st.caption(f"🔍 Debug: Viewing {len(file_paths)} files of type '{audio_type}' | Alignment available: {ALIGNMENT_AVAILABLE}")
 
         if not VISUALIZER_AVAILABLE:
             st.warning("AudioVisualizer not available - overlay view requires gui_audio_visualizer.py")
@@ -629,6 +643,105 @@ class ScenariosPanel:
             import traceback
             st.code(traceback.format_exc())
 
+        # Signal Alignment Tool (outside the try-except for visualization)
+        # Debug: Show status
+        if not ALIGNMENT_AVAILABLE:
+            st.warning("⚠️ Signal alignment module not available. Install signal_alignment.py to enable this feature.")
+        elif audio_type != "impulse_responses":
+            st.info(f"ℹ️ Signal alignment is only available for impulse_responses (current type: {audio_type})")
+
+        if ALIGNMENT_AVAILABLE and audio_type == "impulse_responses":
+            st.markdown("---")
+            with st.expander("🔧 Signal Alignment Tool", expanded=False):
+                st.markdown("**Synchronize impulse responses using cross-correlation**")
+                st.caption("Aligns all signals to a reference by finding optimal time shifts")
+
+                col_a, col_b = st.columns([2, 1])
+
+                with col_a:
+                    ref_idx = st.number_input(
+                        "Reference signal index (0-based)",
+                        min_value=0,
+                        max_value=len(file_paths) - 1,
+                        value=0,
+                        help="Index of the signal to use as reference (0 = first file)"
+                    )
+
+                with col_b:
+                    threshold = st.slider(
+                        "Noise threshold",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.3,
+                        step=0.05,
+                        help="Amplitude threshold for removing noise (0.3 recommended)"
+                    )
+
+                if st.button("🔄 Align All Signals", type="primary", use_container_width=True):
+                    self._run_signal_alignment(
+                        file_paths,
+                        scenario_path,
+                        ref_idx,
+                        threshold
+                    )
+
+        # Signal Averaging Tool
+        if ALIGNMENT_AVAILABLE:
+            st.markdown("---")
+            with st.expander("📊 Signal Averaging Tool", expanded=False):
+                st.markdown("**Average multiple signals into a single representative signal**")
+                st.caption("Optionally align signals before averaging for better results")
+
+                col_a, col_b = st.columns([2, 1])
+
+                with col_a:
+                    align_before_avg = st.checkbox(
+                        "Align signals before averaging",
+                        value=True,
+                        help="Recommended: Align signals first for better averaging results"
+                    )
+
+                    if align_before_avg:
+                        avg_ref_idx = st.number_input(
+                            "Reference signal for alignment (0-based)",
+                            min_value=0,
+                            max_value=len(file_paths) - 1,
+                            value=0,
+                            key="avg_ref_idx",
+                            help="Index of the signal to use as reference for alignment"
+                        )
+
+                        avg_threshold = st.slider(
+                            "Alignment threshold",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.3,
+                            step=0.05,
+                            key="avg_threshold",
+                            help="Amplitude threshold for noise removal during alignment"
+                        )
+                    else:
+                        avg_ref_idx = 0
+                        avg_threshold = 0.3
+
+                with col_b:
+                    output_filename = st.text_input(
+                        "Output filename",
+                        value=f"averaged_{audio_type}.wav",
+                        help="Name for the averaged signal file"
+                    )
+
+                if st.button("📈 Average All Signals", type="primary", use_container_width=True):
+                    self._run_signal_averaging(
+                        file_paths,
+                        scenario_path,
+                        audio_type,
+                        output_filename,
+                        align_before_avg,
+                        avg_ref_idx,
+                        avg_threshold
+                    )
+
     def _render_audio_file(self, file_path: str) -> None:
         """Render audio file with visualization using AudioVisualizer API."""
         st.markdown("---")
@@ -671,3 +784,306 @@ class ScenariosPanel:
     def _render_basic_audio_player(self, file_path: str) -> None:
         """Render basic audio player without visualization."""
         st.audio(file_path, format="audio/wav")
+
+    def _run_signal_alignment(
+        self,
+        file_paths: list,
+        scenario_path: str,
+        reference_index: int,
+        threshold: float
+    ) -> None:
+        """
+        Run signal alignment and save results.
+
+        Args:
+            file_paths: List of file paths to align
+            scenario_path: Path to scenario directory
+            reference_index: Index of reference signal
+            threshold: Noise threshold value
+        """
+        if not ALIGNMENT_AVAILABLE:
+            st.error("Signal alignment module not available")
+            return
+
+        # Create output directory
+        output_dir = os.path.join(scenario_path, "impulse_responses_aligned")
+
+        try:
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def progress_callback(current, total, message):
+                progress = current / total if total > 0 else 0
+                progress_bar.progress(progress)
+                status_text.text(f"{message} ({current}/{total})")
+
+            # Run alignment
+            with st.spinner("Aligning signals..."):
+                report = align_impulse_responses(
+                    file_paths=file_paths,
+                    output_dir=output_dir,
+                    reference_index=reference_index,
+                    threshold=threshold,
+                    progress_callback=progress_callback
+                )
+
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+
+            # Show success message
+            st.success(f"✅ Successfully aligned {report['num_signals']} signals!")
+            st.info(f"📁 Saved to: `{output_dir}`")
+
+            # Show alignment statistics
+            st.markdown("### Alignment Report")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    "Signals Aligned",
+                    report['num_signals']
+                )
+
+            with col2:
+                st.metric(
+                    "Sample Rate",
+                    f"{report['sample_rate']} Hz"
+                )
+
+            with col3:
+                st.metric(
+                    "Max Shift",
+                    f"{report['shifts_ms']['max']:.1f} ms"
+                )
+
+            with col4:
+                st.metric(
+                    "Avg Correlation",
+                    f"{report['correlations']['mean']:.3f}"
+                )
+
+            # Detailed statistics
+            with st.expander("Detailed Statistics"):
+                st.markdown("**Time Shifts (milliseconds):**")
+                st.json({
+                    "Min": f"{report['shifts_ms']['min']:.2f} ms",
+                    "Max": f"{report['shifts_ms']['max']:.2f} ms",
+                    "Mean": f"{report['shifts_ms']['mean']:.2f} ms",
+                    "Std Dev": f"{report['shifts_ms']['std']:.2f} ms"
+                })
+
+                st.markdown("**Time Shifts (samples):**")
+                st.json({
+                    "Min": report['shifts_samples']['min'],
+                    "Max": report['shifts_samples']['max'],
+                    "Mean": f"{report['shifts_samples']['mean']:.1f}",
+                    "Std Dev": f"{report['shifts_samples']['std']:.1f}"
+                })
+
+                st.markdown("**Cross-Correlation Quality:**")
+                st.json({
+                    "Min": f"{report['correlations']['min']:.4f}",
+                    "Max": f"{report['correlations']['max']:.4f}",
+                    "Mean": f"{report['correlations']['mean']:.4f}",
+                    "Std Dev": f"{report['correlations']['std']:.4f}"
+                })
+
+            # Tips
+            st.info(
+                "💡 **Tip:** Low correlation values (<0.5) may indicate poor alignment. "
+                "Try adjusting the threshold or selecting a different reference signal."
+            )
+
+            # Offer to refresh and view aligned files
+            if st.button("📂 View Aligned Files"):
+                st.session_state[SK_SCN_EXPLORE] = scenario_path
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Alignment failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+    def _run_signal_averaging(
+        self,
+        file_paths: list,
+        scenario_path: str,
+        audio_type: str,
+        output_filename: str,
+        align_first: bool,
+        reference_index: int,
+        threshold: float
+    ) -> None:
+        """
+        Run signal averaging and save result.
+
+        Args:
+            file_paths: List of file paths to average
+            scenario_path: Path to scenario directory
+            audio_type: Type of audio files (for output directory)
+            output_filename: Name for output file
+            align_first: Whether to align before averaging
+            reference_index: Index of reference signal for alignment
+            threshold: Noise threshold value
+        """
+        if not ALIGNMENT_AVAILABLE:
+            st.error("Signal averaging module not available")
+            return
+
+        # Determine output directory and file path
+        output_dir = os.path.join(scenario_path, f"{audio_type}_averaged")
+        output_file = os.path.join(output_dir, output_filename)
+
+        try:
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def progress_callback(current, total, message):
+                progress = current / total if total > 0 else 0
+                progress_bar.progress(progress)
+                status_text.text(f"{message} ({current}/{total})")
+
+            # Run averaging
+            with st.spinner("Averaging signals..."):
+                report = average_signals(
+                    file_paths=file_paths,
+                    output_file=output_file,
+                    align_first=align_first,
+                    reference_index=reference_index,
+                    threshold=threshold,
+                    progress_callback=progress_callback
+                )
+
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+
+            # Show success message
+            st.success(f"✅ Successfully averaged {report['num_signals']} signals!")
+            st.info(f"📁 Saved to: `{output_file}`")
+
+            # Show averaging statistics
+            st.markdown("### Averaging Report")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    "Signals Averaged",
+                    report['num_signals']
+                )
+
+            with col2:
+                st.metric(
+                    "Sample Rate",
+                    f"{report['sample_rate']} Hz"
+                )
+
+            with col3:
+                st.metric(
+                    "Duration",
+                    f"{report['averaged_duration_s']:.3f} s"
+                )
+
+            with col4:
+                st.metric(
+                    "Peak Amplitude",
+                    f"{report['averaged_peak']:.3f}"
+                )
+
+            # Additional metrics
+            col5, col6, col7 = st.columns(3)
+
+            with col5:
+                st.metric(
+                    "RMS Level",
+                    f"{report['averaged_rms']:.4f}"
+                )
+
+            with col6:
+                st.metric(
+                    "Aligned First",
+                    "Yes" if report['aligned'] else "No"
+                )
+
+            with col7:
+                st.metric(
+                    "Length (samples)",
+                    f"{report['averaged_length']:,}"
+                )
+
+            # Detailed statistics
+            with st.expander("Individual Signal Statistics"):
+                st.markdown("**Length Statistics:**")
+                st.json({
+                    "Min": f"{report['individual_stats']['lengths']['min']:,} samples",
+                    "Max": f"{report['individual_stats']['lengths']['max']:,} samples",
+                    "Mean": f"{report['individual_stats']['lengths']['mean']:.1f} samples",
+                })
+
+                st.markdown("**RMS Statistics:**")
+                st.json({
+                    "Min": f"{report['individual_stats']['rms']['min']:.4f}",
+                    "Max": f"{report['individual_stats']['rms']['max']:.4f}",
+                    "Mean": f"{report['individual_stats']['rms']['mean']:.4f}",
+                })
+
+                st.markdown("**Peak Amplitude Statistics:**")
+                st.json({
+                    "Min": f"{report['individual_stats']['peak']['min']:.4f}",
+                    "Max": f"{report['individual_stats']['peak']['max']:.4f}",
+                    "Mean": f"{report['individual_stats']['peak']['mean']:.4f}",
+                })
+
+                # Show alignment report if aligned
+                if report['aligned'] and 'alignment' in report:
+                    st.markdown("---")
+                    st.markdown("**Alignment Details:**")
+                    alignment = report['alignment']
+                    st.json({
+                        "Max Shift": f"{alignment['shifts_ms']['max']:.2f} ms",
+                        "Mean Shift": f"{alignment['shifts_ms']['mean']:.2f} ms",
+                        "Avg Correlation": f"{alignment['correlations']['mean']:.3f}",
+                    })
+
+            # Visualization (automatically shown)
+            st.markdown("---")
+            st.markdown("### Averaged Signal Visualization")
+
+            if VISUALIZER_AVAILABLE:
+                try:
+                    audio_data, sample_rate_loaded = AudioVisualizer.load_wav_file(output_file)
+                    if audio_data is not None:
+                        viz = AudioVisualizer("averaged_signal")
+                        viz.render(
+                            audio_data=audio_data,
+                            sample_rate=sample_rate_loaded,
+                            title="Averaged Signal",
+                            show_controls=True,
+                            show_analysis=True,
+                            height=400
+                        )
+                    else:
+                        st.error("Failed to load averaged signal for visualization")
+                except Exception as e:
+                    st.error(f"Visualization error: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+            else:
+                st.warning("AudioVisualizer not available - averaged signal saved but cannot be visualized")
+                st.info(f"You can find the file at: {output_file}")
+
+            # Offer to refresh and view in explorer
+            st.markdown("---")
+            if st.button("📂 Refresh Explorer"):
+                st.session_state[SK_SCN_EXPLORE] = scenario_path
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Averaging failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
