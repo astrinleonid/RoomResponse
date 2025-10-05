@@ -33,9 +33,20 @@ except ImportError:
     average_signals = None
     ALIGNMENT_AVAILABLE = False
 
+# Optional: FIR filter file I/O
+try:
+    from FirFilterFileIO import save_fir_filters, load_fir_filters, get_fir_file_info
+    FIR_FILTER_IO_AVAILABLE = True
+except ImportError:
+    save_fir_filters = None
+    load_fir_filters = None
+    get_fir_file_info = None
+    FIR_FILTER_IO_AVAILABLE = False
+
 # Session keys
 SK_SCN_SELECTIONS = "scenarios_selected_set"
 SK_SCN_EXPLORE = "scenarios_explore_path"
+SK_SCN_FIR_EXPORT = "scenarios_fir_export_path"
 SK_FILTER_TEXT = "filter_text"
 SK_FILTER_COMPUTER = "filter_computer"
 SK_FILTER_ROOM = "filter_room"
@@ -101,6 +112,7 @@ class ScenariosPanel:
         # Summary and explorer
         self._render_scenario_summary(df, dfv)
         self._render_scenario_explorer()
+        self._render_fir_export_dialog()
 
     def _init_session_state(self) -> None:
         """Initialize session state defaults."""
@@ -232,7 +244,7 @@ class ScenariosPanel:
         st.markdown("### Scenarios")
 
         # Table headers
-        col1, col2, col3, col4, col5, col6 = st.columns([0.06, 0.1, 0.15, 0.15, 0.35, 0.14])
+        col1, col2, col3, col4, col5, col6 = st.columns([0.06, 0.1, 0.15, 0.15, 0.33, 0.16])
         with col1:
             st.markdown("**Select**")
         with col2:
@@ -260,7 +272,7 @@ class ScenariosPanel:
         description_val = row.get("description", "")
         sample_count = row.get("sample_count", 0)
 
-        col1, col2, col3, col4, col5, col6 = st.columns([0.06, 0.1, 0.15, 0.15, 0.35, 0.14])
+        col1, col2, col3, col4, col5, col6 = st.columns([0.06, 0.1, 0.15, 0.15, 0.33, 0.16])
 
         # Selection checkbox
         with col1:
@@ -310,9 +322,16 @@ class ScenariosPanel:
 
         # Actions
         with col6:
-            if st.button("Explore", key=f"explore_{idx}_{hash(scn_path)}", help="Explore files"):
-                st.session_state[SK_SCN_EXPLORE] = scn_path
-                st.rerun()
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("Explore", key=f"explore_{idx}_{hash(scn_path)}", help="Explore files", use_container_width=True):
+                    st.session_state[SK_SCN_EXPLORE] = scn_path
+                    st.rerun()
+            with col_b:
+                if FIR_FILTER_IO_AVAILABLE:
+                    if st.button("Export FIR", key=f"fir_{idx}_{hash(scn_path)}", help="Export as FIR filter", use_container_width=True):
+                        st.session_state[SK_SCN_FIR_EXPORT] = scn_path
+                        st.rerun()
 
     def _get_scenario_files_info(self, scenario_path: str) -> str:
         """Get brief info about files in scenario."""
@@ -742,6 +761,173 @@ class ScenariosPanel:
                         avg_threshold
                     )
 
+        # FIR Filter Export Tool
+        if FIR_FILTER_IO_AVAILABLE:
+            st.markdown("---")
+            with st.expander("💾 Export as FIR Filter", expanded=False):
+                st.markdown("**Save calculated response as FIR filter**")
+                st.caption("Export single scenario response to .fir filter bank (create new or add to existing)")
+
+                # Source selection: single file or averaged
+                st.markdown("**1. Select Source:**")
+                source_mode = st.radio(
+                    "Response source",
+                    ["Single File", "Average of All Files"],
+                    horizontal=True,
+                    help="Choose a single response file or average all files in this scenario"
+                )
+
+                selected_file = None
+                if source_mode == "Single File":
+                    if len(file_paths) > 10:
+                        selected_file = st.selectbox(
+                            "Select response file",
+                            file_paths,
+                            format_func=lambda x: os.path.basename(x),
+                            key="fir_single_file"
+                        )
+                    else:
+                        selected_file = st.radio(
+                            "Select response file",
+                            file_paths,
+                            format_func=lambda x: os.path.basename(x),
+                            key="fir_single_file_radio"
+                        )
+
+                # File mode: create new or add to existing
+                st.markdown("---")
+                st.markdown("**2. Target FIR File:**")
+
+                file_mode = st.radio(
+                    "File operation",
+                    ["Create New File", "Add to Existing File"],
+                    horizontal=True,
+                    help="Create a new .fir file or add this filter to an existing one"
+                )
+
+                fir_filename = None
+                filter_length = None
+                existing_info = None
+
+                if file_mode == "Create New File":
+                    col_a, col_b = st.columns([2, 1])
+
+                    with col_a:
+                        fir_filename = st.text_input(
+                            "New FIR filename",
+                            value=f"{audio_type}_bank.fir",
+                            help="Name for new .fir filter bank file"
+                        )
+                        if not fir_filename.endswith('.fir'):
+                            fir_filename = fir_filename + '.fir'
+
+                    with col_b:
+                        filter_length = st.number_input(
+                            "Filter length (taps)",
+                            min_value=64,
+                            max_value=131072,
+                            value=8192,
+                            step=512,
+                            help="Number of taps (samples) for FIR filters"
+                        )
+
+                else:  # Add to Existing File
+                    # Look for existing .fir files in root FIR folder
+                    dataset_root = st.session_state.get("dataset_root", os.getcwd())
+                    fir_dir = os.path.join(dataset_root, "FIR")
+                    existing_files = []
+                    if os.path.exists(fir_dir):
+                        existing_files = [f for f in os.listdir(fir_dir) if f.endswith('.fir')]
+
+                    if not existing_files:
+                        st.warning("⚠️ No existing .fir files found. Please create a new file first.")
+                    else:
+                        fir_filename = st.selectbox(
+                            "Select existing FIR file",
+                            existing_files,
+                            help="Choose an existing .fir file to add this filter to"
+                        )
+
+                        # Load and display existing file info
+                        existing_file_path = os.path.join(fir_dir, fir_filename)
+                        try:
+                            existing_info = get_fir_file_info(existing_file_path)
+                            filter_length = existing_info['filter_length']
+
+                            st.info(
+                                f"📋 Existing file: {existing_info['num_filters']} filters, "
+                                f"{existing_info['num_inputs']}×{existing_info['num_outputs']} channels, "
+                                f"{filter_length} taps, {existing_info['sample_rate']} Hz"
+                            )
+                        except Exception as e:
+                            st.error(f"Failed to read existing file: {e}")
+                            existing_info = None
+
+                # Channel mapping
+                st.markdown("---")
+                st.markdown("**3. Channel Mapping:**")
+
+                col_a, col_b = st.columns(2)
+
+                with col_a:
+                    input_channel = st.number_input(
+                        "Input channel",
+                        min_value=0,
+                        max_value=31,
+                        value=0,
+                        help="Source input channel for this filter"
+                    )
+
+                with col_b:
+                    output_channel = st.number_input(
+                        "Output channel",
+                        min_value=0,
+                        max_value=31,
+                        value=0,
+                        help="Destination output channel for this filter"
+                    )
+
+                # Sample rate
+                sample_rate_input = st.number_input(
+                    "Sample rate (Hz)",
+                    min_value=8000,
+                    max_value=192000,
+                    value=48000,
+                    step=1000,
+                    help="Sample rate of the impulse response"
+                )
+
+                # Export button
+                st.markdown("---")
+                can_export = (
+                    (source_mode == "Average of All Files" or selected_file is not None) and
+                    fir_filename is not None and
+                    filter_length is not None
+                )
+
+                if not can_export:
+                    st.warning("⚠️ Please complete all settings above")
+
+                if st.button(
+                    "💾 Export to FIR Filter",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=not can_export
+                ):
+                    self._export_to_fir_filter(
+                        scenario_path=scenario_path,
+                        file_mode=file_mode,
+                        fir_filename=fir_filename,
+                        source_mode=source_mode,
+                        selected_file=selected_file,
+                        all_files=file_paths,
+                        filter_length=filter_length,
+                        input_channel=input_channel,
+                        output_channel=output_channel,
+                        sample_rate=sample_rate_input,
+                        existing_info=existing_info
+                    )
+
     def _render_audio_file(self, file_path: str) -> None:
         """Render audio file with visualization using AudioVisualizer API."""
         st.markdown("---")
@@ -1087,3 +1273,547 @@ class ScenariosPanel:
             st.error(f"Averaging failed: {e}")
             import traceback
             st.code(traceback.format_exc())
+
+    def _export_to_fir_filter(
+        self,
+        scenario_path: str,
+        file_mode: str,
+        fir_filename: str,
+        source_mode: str,
+        selected_file: Optional[str],
+        all_files: list,
+        filter_length: int,
+        input_channel: int,
+        output_channel: int,
+        sample_rate: int,
+        existing_info: Optional[dict]
+    ) -> None:
+        """
+        Export impulse response as FIR filter (create new or add to existing).
+
+        Args:
+            scenario_path: Path to scenario directory (used for context only)
+            file_mode: "Create New File" or "Add to Existing File"
+            fir_filename: Name of .fir file
+            source_mode: "Single File" or "Average of All Files"
+            selected_file: Path to selected file (if single file mode)
+            all_files: List of all available files (for averaging)
+            filter_length: Number of taps for the filter
+            input_channel: Input channel number
+            output_channel: Output channel number
+            sample_rate: Sample rate in Hz
+            existing_info: Info dict from existing file (if adding to existing)
+        """
+        if not FIR_FILTER_IO_AVAILABLE:
+            st.error("FIR filter I/O module not available")
+            return
+
+        # Save to centralized FIR folder at dataset root level
+        dataset_root = st.session_state.get("dataset_root", os.getcwd())
+        output_dir = os.path.join(dataset_root, "FIR")
+        output_file = os.path.join(output_dir, fir_filename)
+
+        try:
+            # Create output directory
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            # Step 1: Load or compute the impulse response
+            status_text.text("Loading impulse response...")
+            progress_bar.progress(0.2)
+
+            impulse_response = None
+            source_description = ""
+
+            if source_mode == "Single File":
+                # Load single file
+                source_description = os.path.basename(selected_file)
+                status_text.text(f"Loading {source_description}...")
+
+                if VISUALIZER_AVAILABLE:
+                    impulse_response, sr = AudioVisualizer.load_wav_file(selected_file)
+                else:
+                    import scipy.io.wavfile as wavfile
+                    sr, impulse_response = wavfile.read(selected_file)
+                    if impulse_response.dtype == np.int16:
+                        impulse_response = impulse_response.astype(np.float32) / 32768.0
+                    elif impulse_response.dtype == np.int32:
+                        impulse_response = impulse_response.astype(np.float32) / 2147483648.0
+
+                if impulse_response is None or len(impulse_response) == 0:
+                    st.error(f"Failed to load {source_description}")
+                    progress_bar.empty()
+                    status_text.empty()
+                    return
+
+            else:  # Average of All Files
+                source_description = f"Average of {len(all_files)} files"
+                status_text.text(f"Averaging {len(all_files)} files...")
+
+                signals = []
+                sr = None
+
+                for i, file_path in enumerate(all_files):
+                    progress = 0.2 + (0.3 * (i / len(all_files)))
+                    progress_bar.progress(progress)
+
+                    if VISUALIZER_AVAILABLE:
+                        audio_data, file_sr = AudioVisualizer.load_wav_file(file_path)
+                    else:
+                        import scipy.io.wavfile as wavfile
+                        file_sr, audio_data = wavfile.read(file_path)
+                        if audio_data.dtype == np.int16:
+                            audio_data = audio_data.astype(np.float32) / 32768.0
+                        elif audio_data.dtype == np.int32:
+                            audio_data = audio_data.astype(np.float32) / 2147483648.0
+
+                    if audio_data is not None and len(audio_data) > 0:
+                        signals.append(audio_data)
+                        if sr is None:
+                            sr = file_sr
+
+                if not signals:
+                    st.error("Failed to load any files for averaging")
+                    progress_bar.empty()
+                    status_text.empty()
+                    return
+
+                # Average the signals (pad to same length first)
+                max_len = max(len(s) for s in signals)
+                padded_signals = []
+                for sig in signals:
+                    if len(sig) < max_len:
+                        sig = np.pad(sig, (0, max_len - len(sig)), mode='constant')
+                    padded_signals.append(sig)
+
+                impulse_response = np.mean(padded_signals, axis=0).astype(np.float32)
+
+            # Verify sample rate
+            if sr != sample_rate:
+                st.warning(f"Sample rate mismatch: loaded {sr} Hz, expected {sample_rate} Hz")
+
+            progress_bar.progress(0.6)
+
+            # Step 2: Truncate or pad to filter_length
+            status_text.text(f"Truncating/padding to {filter_length} taps...")
+
+            if len(impulse_response) > filter_length:
+                # Truncate
+                impulse_response = impulse_response[:filter_length]
+            elif len(impulse_response) < filter_length:
+                # Pad with zeros
+                padding = filter_length - len(impulse_response)
+                impulse_response = np.pad(impulse_response, (0, padding), mode='constant')
+
+            impulse_response = impulse_response.astype(np.float32)
+            progress_bar.progress(0.7)
+
+            # Step 3: Create or update FIR filter bank
+            if file_mode == "Create New File":
+                # Create new filter bank with this single filter
+                status_text.text("Creating new FIR filter bank...")
+
+                # Determine num_inputs and num_outputs to accommodate this channel mapping
+                num_inputs = input_channel + 1
+                num_outputs = output_channel + 1
+                num_filters = num_inputs * num_outputs
+
+                # Create empty filter bank
+                filters = np.zeros((num_filters, filter_length), dtype=np.float32)
+
+                # Insert the impulse response at the correct position
+                # mapId = input_channel × num_outputs + output_channel
+                map_id = input_channel * num_outputs + output_channel
+                filters[map_id] = impulse_response
+
+                progress_bar.progress(0.8)
+
+                # Save new file
+                status_text.text(f"Saving new file {fir_filename}...")
+                save_fir_filters(
+                    filepath=output_file,
+                    filters=filters,
+                    num_inputs=num_inputs,
+                    num_outputs=num_outputs,
+                    sample_rate=sample_rate
+                )
+
+                is_new_file = True
+                final_num_inputs = num_inputs
+                final_num_outputs = num_outputs
+                final_num_filters = num_filters
+
+            else:  # Add to Existing File
+                # Load existing filter bank
+                status_text.text(f"Loading existing file {fir_filename}...")
+                existing_data = load_fir_filters(output_file)
+
+                existing_filters = existing_data['filters']
+                num_inputs = existing_data['num_inputs']
+                num_outputs = existing_data['num_outputs']
+                num_filters = existing_data['num_filters']
+
+                progress_bar.progress(0.75)
+
+                # Check if we need to expand the filter bank
+                required_inputs = input_channel + 1
+                required_outputs = output_channel + 1
+
+                if required_inputs > num_inputs or required_outputs > num_outputs:
+                    # Need to expand filter bank
+                    status_text.text("Expanding filter bank dimensions...")
+
+                    new_num_inputs = max(num_inputs, required_inputs)
+                    new_num_outputs = max(num_outputs, required_outputs)
+                    new_num_filters = new_num_inputs * new_num_outputs
+
+                    # Create expanded filter bank
+                    new_filters = np.zeros((new_num_filters, filter_length), dtype=np.float32)
+
+                    # Copy existing filters to new positions
+                    for old_map_id in range(num_filters):
+                        old_in_ch = old_map_id // num_outputs
+                        old_out_ch = old_map_id % num_outputs
+                        new_map_id = old_in_ch * new_num_outputs + old_out_ch
+                        new_filters[new_map_id] = existing_filters[old_map_id]
+
+                    filters = new_filters
+                    num_inputs = new_num_inputs
+                    num_outputs = new_num_outputs
+                    num_filters = new_num_filters
+                else:
+                    filters = existing_filters.copy()
+
+                progress_bar.progress(0.85)
+
+                # Insert the new impulse response
+                map_id = input_channel * num_outputs + output_channel
+                filters[map_id] = impulse_response
+
+                # Check if we're overwriting an existing filter
+                existing_filter_present = np.any(existing_filters[map_id] != 0) if map_id < len(existing_filters) else False
+                if existing_filter_present:
+                    st.warning(f"⚠️ Overwriting existing filter at Input {input_channel} → Output {output_channel}")
+
+                # Save updated file
+                status_text.text(f"Saving updated file {fir_filename}...")
+                save_fir_filters(
+                    filepath=output_file,
+                    filters=filters,
+                    num_inputs=num_inputs,
+                    num_outputs=num_outputs,
+                    sample_rate=sample_rate
+                )
+
+                is_new_file = False
+                final_num_inputs = num_inputs
+                final_num_outputs = num_outputs
+                final_num_filters = num_filters
+
+            progress_bar.progress(1.0)
+
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+
+            # Show success message
+            if is_new_file:
+                st.success(f"✅ Created new FIR filter bank with 1 filter!")
+            else:
+                st.success(f"✅ Added filter to existing FIR filter bank!")
+
+            st.info(f"📁 Saved to: `{output_file}`")
+
+            # Show FIR filter export information
+            st.markdown("### FIR Filter Export Report")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("Filter Bank Size", f"{final_num_inputs}×{final_num_outputs}")
+
+            with col2:
+                st.metric("Total Filters", final_num_filters)
+
+            with col3:
+                st.metric("Filter Length", f"{filter_length} taps")
+
+            with col4:
+                st.metric("Sample Rate", f"{sample_rate} Hz")
+
+            # Additional info
+            col5, col6, col7 = st.columns(3)
+
+            file_size = os.path.getsize(output_file)
+            file_size_mb = file_size / (1024 * 1024)
+
+            with col5:
+                st.metric("File Size", f"{file_size_mb:.2f} MB")
+
+            with col6:
+                duration_ms = (filter_length / sample_rate) * 1000
+                st.metric("Filter Duration", f"{duration_ms:.1f} ms")
+
+            with col7:
+                # Count non-zero filters
+                final_data = load_fir_filters(output_file)
+                non_zero_filters = sum(1 for f in final_data['filters'] if np.any(f != 0))
+                st.metric("Active Filters", non_zero_filters)
+
+            # This filter's details
+            st.markdown("---")
+            st.markdown("**Added Filter Details:**")
+
+            col_a, col_b, col_c = st.columns(3)
+
+            with col_a:
+                st.write(f"**Routing:** Input {input_channel} → Output {output_channel}")
+
+            with col_b:
+                st.write(f"**Source:** {source_description}")
+
+            with col_c:
+                peak_val = np.max(np.abs(impulse_response))
+                st.write(f"**Peak Amplitude:** {peak_val:.4f}")
+
+            # Detailed channel mapping
+            with st.expander("Full Channel Mapping"):
+                st.markdown("**All filters in bank:**")
+                final_data = load_fir_filters(output_file)
+                for map_id, (in_ch, out_ch) in enumerate(final_data['channel_mapping']):
+                    is_active = np.any(final_data['filters'][map_id] != 0)
+                    status = "✓ Active" if is_active else "○ Empty"
+                    highlight = " **← Just added**" if map_id == (input_channel * final_num_outputs + output_channel) else ""
+                    st.write(f"- Filter {map_id}: Input {in_ch} → Output {out_ch} | {status}{highlight}")
+
+            # Tips
+            st.info(
+                "💡 **Tip:** You can add more filters to this .fir file by selecting "
+                "\"Add to Existing File\" and specifying different input/output channels."
+            )
+
+        except Exception as e:
+            st.error(f"FIR export failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            if 'progress_bar' in locals():
+                progress_bar.empty()
+            if 'status_text' in locals():
+                status_text.empty()
+
+    def _render_fir_export_dialog(self) -> None:
+        """Render FIR export dialog when a scenario is selected for export."""
+        if not FIR_FILTER_IO_AVAILABLE:
+            return
+
+        fir_export_path = st.session_state.get(SK_SCN_FIR_EXPORT)
+        if not fir_export_path or not os.path.exists(fir_export_path):
+            return
+
+        st.markdown("---")
+        st.subheader(f"💾 Export FIR Filter: {os.path.basename(fir_export_path)}")
+
+        # Close button at the top
+        if st.button("✕ Close FIR Export", key="close_fir_export_top"):
+            st.session_state[SK_SCN_FIR_EXPORT] = None
+            st.rerun()
+
+        # Get available audio files
+        audio_files = self._get_audio_files_by_type(fir_export_path)
+        available_types = [k for k, v in audio_files.items() if v]
+
+        if not available_types:
+            st.warning("No audio files found in this scenario")
+            return
+
+        # Step 1: Select audio type
+        st.markdown("**1. Select Audio Type:**")
+        audio_type = st.selectbox(
+            "Audio type",
+            available_types,
+            format_func=lambda x: f"{x.replace('_', ' ').title()} ({len(audio_files[x])} files)",
+            key="fir_export_audio_type"
+        )
+
+        files_of_type = audio_files[audio_type]
+
+        # Step 2: Select source
+        st.markdown("---")
+        st.markdown("**2. Select Source:**")
+        source_mode = st.radio(
+            "Response source",
+            ["Single File", "Average of All Files"],
+            horizontal=True,
+            help="Choose a single response file or average all files",
+            key="fir_export_source_mode"
+        )
+
+        selected_file = None
+        if source_mode == "Single File":
+            if len(files_of_type) > 10:
+                selected_file = st.selectbox(
+                    "Select response file",
+                    files_of_type,
+                    format_func=lambda x: os.path.basename(x),
+                    key="fir_export_single_file"
+                )
+            else:
+                selected_file = st.radio(
+                    "Select response file",
+                    files_of_type,
+                    format_func=lambda x: os.path.basename(x),
+                    key="fir_export_single_file_radio"
+                )
+
+        # Step 3: File mode
+        st.markdown("---")
+        st.markdown("**3. Target FIR File:**")
+
+        file_mode = st.radio(
+            "File operation",
+            ["Create New File", "Add to Existing File"],
+            horizontal=True,
+            help="Create a new .fir file or add this filter to an existing one",
+            key="fir_export_file_mode"
+        )
+
+        fir_filename = None
+        filter_length = None
+        existing_info = None
+
+        if file_mode == "Create New File":
+            col_a, col_b = st.columns([2, 1])
+
+            with col_a:
+                fir_filename = st.text_input(
+                    "New FIR filename",
+                    value=f"{audio_type}_bank.fir",
+                    help="Name for new .fir filter bank file",
+                    key="fir_export_new_filename"
+                )
+                if not fir_filename.endswith('.fir'):
+                    fir_filename = fir_filename + '.fir'
+
+            with col_b:
+                filter_length = st.number_input(
+                    "Filter length (taps)",
+                    min_value=64,
+                    max_value=131072,
+                    value=8192,
+                    step=512,
+                    help="Number of taps (samples) for FIR filters",
+                    key="fir_export_filter_length"
+                )
+
+        else:  # Add to Existing File
+            # Look for existing .fir files in root FIR folder
+            dataset_root = st.session_state.get("dataset_root", os.getcwd())
+            fir_dir = os.path.join(dataset_root, "FIR")
+            existing_files = []
+            if os.path.exists(fir_dir):
+                existing_files = [f for f in os.listdir(fir_dir) if f.endswith('.fir')]
+
+            if not existing_files:
+                st.warning("⚠️ No existing .fir files found in FIR folder. Please create a new file first.")
+            else:
+                fir_filename = st.selectbox(
+                    "Select existing FIR file",
+                    existing_files,
+                    help="Choose an existing .fir file to add this filter to",
+                    key="fir_export_existing_filename"
+                )
+
+                # Load and display existing file info
+                existing_file_path = os.path.join(fir_dir, fir_filename)
+                try:
+                    existing_info = get_fir_file_info(existing_file_path)
+                    filter_length = existing_info['filter_length']
+
+                    st.info(
+                        f"📋 Existing file: {existing_info['num_filters']} filters, "
+                        f"{existing_info['num_inputs']}×{existing_info['num_outputs']} channels, "
+                        f"{filter_length} taps, {existing_info['sample_rate']} Hz"
+                    )
+                except Exception as e:
+                    st.error(f"Failed to read existing file: {e}")
+                    existing_info = None
+
+        # Step 4: Channel mapping
+        st.markdown("---")
+        st.markdown("**4. Channel Mapping:**")
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            input_channel = st.number_input(
+                "Input channel",
+                min_value=0,
+                max_value=31,
+                value=0,
+                help="Source input channel for this filter",
+                key="fir_export_input_channel"
+            )
+
+        with col_b:
+            output_channel = st.number_input(
+                "Output channel",
+                min_value=0,
+                max_value=31,
+                value=0,
+                help="Destination output channel for this filter",
+                key="fir_export_output_channel"
+            )
+
+        # Step 5: Sample rate
+        sample_rate_input = st.number_input(
+            "Sample rate (Hz)",
+            min_value=8000,
+            max_value=192000,
+            value=48000,
+            step=1000,
+            help="Sample rate of the impulse response",
+            key="fir_export_sample_rate"
+        )
+
+        # Export button
+        st.markdown("---")
+        can_export = (
+            (source_mode == "Average of All Files" or selected_file is not None) and
+            fir_filename is not None and
+            filter_length is not None
+        )
+
+        if not can_export:
+            st.warning("⚠️ Please complete all settings above")
+
+        col_export, col_close = st.columns([3, 1])
+
+        with col_export:
+            if st.button(
+                "💾 Export to FIR Filter",
+                type="primary",
+                use_container_width=True,
+                disabled=not can_export,
+                key="fir_export_button"
+            ):
+                self._export_to_fir_filter(
+                    scenario_path=fir_export_path,
+                    file_mode=file_mode,
+                    fir_filename=fir_filename,
+                    source_mode=source_mode,
+                    selected_file=selected_file,
+                    all_files=files_of_type,
+                    filter_length=filter_length,
+                    input_channel=input_channel,
+                    output_channel=output_channel,
+                    sample_rate=sample_rate_input,
+                    existing_info=existing_info
+                )
+
+        with col_close:
+            if st.button("Cancel", use_container_width=True, key="fir_export_cancel"):
+                st.session_state[SK_SCN_FIR_EXPORT] = None
+                st.rerun()
