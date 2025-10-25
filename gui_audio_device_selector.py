@@ -362,6 +362,14 @@ class AudioDeviceSelector:
             sr = int(getattr(self.recorder, 'sample_rate', 48000))
             inp = int(getattr(self.recorder, 'input_device', -1))
 
+            # Get selected channel and device max channels
+            selected_channel = int(st.session_state.get('audio_input_channel', 0))
+            max_channels = self._get_selected_device_max_channels()
+
+            # Configure for multi-channel if device supports it
+            input_channels = max(1, max_channels)  # Use device's max channels
+            input_channel = min(selected_channel, max_channels - 1)  # Clamp to valid range
+
             # Simple shared state
             shared_state = {
                 'running': True,
@@ -369,7 +377,8 @@ class AudioDeviceSelector:
                 'latest_rms': 0.0,
                 'update_count': 0,
                 'last_update': time.time(),
-                'error': None
+                'error': None,
+                'monitoring_channel': input_channel
             }
 
             def worker():
@@ -378,7 +387,8 @@ class AudioDeviceSelector:
                     chunk_sec = 0.1  # Fixed 100ms chunks
                     min_samples = int(sr * chunk_sec)
 
-                    with MicTesting.AudioRecorder(sample_rate=sr, input_device=inp, enable_logging=False) as ar:
+                    with MicTesting.AudioRecorder(sample_rate=sr, input_device=inp, enable_logging=False,
+                                                 input_channels=input_channels, input_channel=input_channel) as ar:
                         while shared_state['running']:
                             try:
                                 audio_chunk = ar.get_audio_chunk(min_samples)
@@ -452,6 +462,7 @@ class AudioDeviceSelector:
         rms = float(shared_state.get('latest_rms', 0.0))
         update_count = shared_state.get('update_count', 0)
         last_update = shared_state.get('last_update', 0)
+        monitoring_channel = shared_state.get('monitoring_channel', 0)
 
         # Check freshness
         age = time.time() - last_update
@@ -459,10 +470,10 @@ class AudioDeviceSelector:
             st.warning(f"Stale data ({age:.1f}s old)")
             return
 
-        # Progress bar
+        # Progress bar with channel indicator
         rng_db = 60.0
         percent = float(max(0.0, min(1.0, (level_db + rng_db) / rng_db)))
-        st.progress(percent, text=f"Level: {level_db:+.1f} dBFS")
+        st.progress(percent, text=f"Channel {monitoring_channel}: {level_db:+.1f} dBFS")
 
         # Metrics
         col1, col2, col3 = st.columns(3)

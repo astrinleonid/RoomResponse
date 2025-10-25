@@ -15,10 +15,13 @@ except ImportError:
 class AudioRecorder:
     """Reusable audio recording component"""
 
-    def __init__(self, sample_rate: int = 48000, input_device: int = -1, enable_logging: bool = False):
+    def __init__(self, sample_rate: int = 48000, input_device: int = -1, enable_logging: bool = False,
+                 input_channels: int = 1, input_channel: int = 0):
         self.sample_rate = sample_rate
         self.input_device = input_device
         self.enable_logging = enable_logging
+        self.input_channels = input_channels  # Total channels to configure
+        self.input_channel = input_channel    # Specific channel to monitor (0-based)
         self.engine = None
 
     def __enter__(self):
@@ -29,6 +32,7 @@ class AudioRecorder:
         config = sdl_audio_core.AudioEngineConfig()
         config.sample_rate = self.sample_rate
         config.enable_logging = self.enable_logging
+        config.input_channels = self.input_channels
 
         if not self.engine.initialize(config):
             raise RuntimeError("Failed to initialize audio engine")
@@ -52,13 +56,15 @@ class AudioRecorder:
             self.engine.shutdown()
 
     def get_audio_chunk(self, min_samples: int) -> np.ndarray:
-        """Get audio chunk with at least min_samples"""
+        """Get audio chunk with at least min_samples from the selected channel"""
         if not self.engine:
             return np.array([])
 
-        recorded_data = self.engine.get_recorded_data()
+        # Get data from the specific channel
+        recorded_data = self.engine.get_recorded_data_channel(self.input_channel)
         if len(recorded_data) >= min_samples:
             latest_chunk = recorded_data[-min_samples:]
+            # Clear all channel buffers (no per-channel clear available yet)
             self.engine.clear_recording_buffer()
             return np.array(latest_chunk, dtype=np.float32)
         return np.array([])
