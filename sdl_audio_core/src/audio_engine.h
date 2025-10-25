@@ -50,6 +50,10 @@ public:
         int output_device_id = -1;  // -1 for default
         bool enable_logging = true;
 
+        // NEW: Multi-channel configuration
+        int input_channels = 1;     // Number of input channels (1-32)
+        int output_channels = 1;    // Keep output mono for now
+
         Config() = default;
     };
 
@@ -92,11 +96,16 @@ private:
     // NEW: Recording and playback state
     std::atomic<bool> is_recording_;
     std::atomic<bool> is_playing_;
-    std::vector<float> recording_buffer_;
+
+    // Multi-channel recording buffers
+    std::vector<std::vector<float>> recording_buffers_;           // [channel_idx][samples]
+    mutable std::vector<std::unique_ptr<std::mutex>> channel_mutexes_;  // Per-channel locks (mutable for const methods)
+    int num_input_channels_;                                      // Cached from config
+    int num_output_channels_;                                     // Cached from config
+
     std::vector<float> playback_signal_;
-    std::atomic<size_t> recording_position_;
+    std::atomic<size_t> recording_position_;             // Frames recorded (same for all channels)
     std::atomic<size_t> playback_position_;
-    mutable std::mutex recording_mutex_;
     mutable std::mutex playback_mutex_;
 
     // SDL Audio callbacks (static functions)
@@ -156,6 +165,12 @@ public:
     size_t get_recorded_samples() const { return recording_position_.load(); }
     void clear_recording_buffer();
 
+    // NEW: Multi-channel data retrieval
+    std::vector<std::vector<float>> get_recorded_data_multichannel();
+    std::vector<float> get_recorded_data_channel(int channel_index);
+    int get_num_input_channels() const { return num_input_channels_; }
+    int get_num_output_channels() const { return num_output_channels_; }
+
     // NEW: Playback functionality
     bool start_playback(const std::vector<float>& signal);
     bool stop_playback();
@@ -197,6 +212,11 @@ public:
         size_t playback_position;
         size_t recording_buffer_size;
         size_t playback_signal_size;
+
+        // NEW: Multi-channel info
+        int num_input_channels;
+        int num_output_channels;
+        std::vector<size_t> channel_buffer_sizes;  // Samples per channel
     };
 
     Stats get_stats() const;

@@ -82,7 +82,9 @@ AudioEngine::AudioEngine()
       is_recording_(false),
       is_playing_(false),
       recording_position_(0),
-      playback_position_(0) {
+      playback_position_(0),
+      num_input_channels_(1),     // NEW: Default to mono
+      num_output_channels_(1) {   // NEW: Default to mono
 }
 
 AudioEngine::~AudioEngine() {
@@ -99,6 +101,31 @@ bool AudioEngine::initialize(const Config& config) {
 
     config_ = config;
 
+    // NEW: Validate multi-channel configuration
+    if (config_.input_channels < 1 || config_.input_channels > 32) {
+        log_error("Invalid input_channels: must be 1-32");
+        state_ = State::Error;
+        return false;
+    }
+    if (config_.output_channels < 1 || config_.output_channels > 32) {
+        log_error("Invalid output_channels: must be 1-32");
+        state_ = State::Error;
+        return false;
+    }
+
+    // NEW: Initialize multi-channel buffers
+    num_input_channels_ = config_.input_channels;
+    num_output_channels_ = config_.output_channels;
+
+    recording_buffers_.resize(num_input_channels_);
+    channel_mutexes_.resize(num_input_channels_);
+
+    // Pre-allocate buffers for each channel (10 seconds @ 48kHz)
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        channel_mutexes_[ch] = std::make_unique<std::mutex>();
+        recording_buffers_[ch].reserve(48000 * 10);
+    }
+
     // Initialize SDL audio subsystem
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
         log_error("Failed to initialize SDL audio: " + std::string(SDL_GetError()));
@@ -108,8 +135,10 @@ bool AudioEngine::initialize(const Config& config) {
 
     log("SDL Audio subsystem initialized");
     log("SDL Version: " + get_sdl_version());
+    log("Multi-channel config: " + std::to_string(num_input_channels_) +
+        " input, " + std::to_string(num_output_channels_) + " output");
 
-    // Create audio buffers
+    // Create audio buffers (circular buffers remain mono for now)
     size_t buffer_samples = config_.buffer_size * 8; // 8x buffer size for safety
     input_buffer_ = std::make_unique<AudioBuffer>(buffer_samples);
     output_buffer_ = std::make_unique<AudioBuffer>(buffer_samples);
@@ -200,9 +229,11 @@ void AudioEngine::shutdown() {
     }
 
     // Clear recording/playback data
-    {
-        std::lock_guard<std::mutex> rec_lock(recording_mutex_);
-        recording_buffer_.clear();
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            recording_buffers_[ch].clear();
+        }
     }
     {
         std::lock_guard<std::mutex> play_lock(playback_mutex_);
@@ -419,11 +450,13 @@ bool AudioEngine::start_recording(size_t max_samples) {
         return false;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(recording_mutex_);
-        recording_buffer_.clear();
-        if (max_samples > 0) {
-            recording_buffer_.reserve(max_samples);
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            recording_buffers_[ch].clear();
+            if (max_samples > 0) {
+                recording_buffers_[ch].reserve(max_samples);
+            }
         }
     }
 
@@ -448,13 +481,49 @@ bool AudioEngine::stop_recording() {
 }
 
 std::vector<float> AudioEngine::get_recorded_data() {
-    std::lock_guard<std::mutex> lock(recording_mutex_);
-    return recording_buffer_;
+    // Return channel 0 for backward compatibility
+    if (num_input_channels_ > 0) {
+        return get_recorded_data_channel(0);
+    }
+    return std::vector<float>();
+}
+
+// NEW: Multi-channel data retrieval
+std::vector<std::vector<float>> AudioEngine::get_recorded_data_multichannel() {
+    std::vector<std::vector<float>> result(num_input_channels_);
+
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            result[ch] = recording_buffers_[ch];
+        }
+    }
+
+    return result;
+}
+
+// NEW: Single channel retrieval
+std::vector<float> AudioEngine::get_recorded_data_channel(int channel_index) {
+    if (channel_index < 0 || channel_index >= num_input_channels_) {
+        throw std::out_of_range("Channel index " + std::to_string(channel_index) +
+                                " out of range [0, " + std::to_string(num_input_channels_) + ")");
+    }
+
+    if (channel_index >= (int)channel_mutexes_.size() || !channel_mutexes_[channel_index]) {
+        return std::vector<float>();  // Return empty if not initialized
+    }
+
+    std::lock_guard<std::mutex> lock(*channel_mutexes_[channel_index]);
+    return recording_buffers_[channel_index];
 }
 
 void AudioEngine::clear_recording_buffer() {
-    std::lock_guard<std::mutex> lock(recording_mutex_);
-    recording_buffer_.clear();
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            recording_buffers_[ch].clear();
+        }
+    }
     recording_position_.store(0);
 }
 
@@ -506,11 +575,13 @@ bool AudioEngine::start_synchronized_recording_and_playback(const std::vector<fl
     }
 
     // Prepare recording buffer
-    {
-        std::lock_guard<std::mutex> lock(recording_mutex_);
-        recording_buffer_.clear();
-        size_t buffer_size = max_recording_samples > 0 ? max_recording_samples : signal.size() * 2;
-        recording_buffer_.reserve(buffer_size);
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            recording_buffers_[ch].clear();
+            size_t buffer_size = max_recording_samples > 0 ? max_recording_samples : signal.size() * 2;
+            recording_buffers_[ch].reserve(buffer_size);
+        }
     }
 
     // Prepare playback signal
@@ -646,9 +717,26 @@ AudioEngine::Stats AudioEngine::get_stats() const {
     stats.recording_position = recording_position_.load();
     stats.playback_position = playback_position_.load();
 
-    {
-        std::lock_guard<std::mutex> lock(recording_mutex_);
-        stats.recording_buffer_size = recording_buffer_.size();
+    // NEW: Multi-channel stats
+    stats.num_input_channels = num_input_channels_;
+    stats.num_output_channels = num_output_channels_;
+
+    stats.channel_buffer_sizes.resize(num_input_channels_);
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        if (ch < (int)channel_mutexes_.size() && channel_mutexes_[ch]) {
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            stats.channel_buffer_sizes[ch] = recording_buffers_[ch].size();
+        } else {
+            stats.channel_buffer_sizes[ch] = 0;
+        }
+    }
+
+    // For backward compatibility, set recording_buffer_size to channel 0 size
+    if (num_input_channels_ > 0 && !channel_mutexes_.empty() && channel_mutexes_[0]) {
+        std::lock_guard<std::mutex> lock(*channel_mutexes_[0]);
+        stats.recording_buffer_size = recording_buffers_[0].size();
+    } else {
+        stats.recording_buffer_size = 0;
     }
 
     {
@@ -802,16 +890,43 @@ void AudioEngine::handle_output_audio(Uint8* stream, int len) {
 
 // NEW: Recording and playback handlers
 void AudioEngine::handle_recording_input(const float* samples, size_t count) {
-    std::lock_guard<std::mutex> lock(recording_mutex_);
+    // count = total samples received = num_frames * num_channels
+    if (num_input_channels_ == 1) {
+        // Fast path for mono (backward compatibility)
+        std::lock_guard<std::mutex> lock(*channel_mutexes_[0]);
+        size_t current_pos = recording_position_.load();
 
-    size_t current_pos = recording_position_.load();
+        for (size_t i = 0; i < count; ++i) {
+            recording_buffers_[0].push_back(samples[i]);
+        }
 
-    // Append samples to recording buffer
-    for (size_t i = 0; i < count; ++i) {
-        recording_buffer_.push_back(samples[i]);
+        recording_position_.store(current_pos + count);
+        return;
     }
 
-    recording_position_.store(current_pos + count);
+    // Multi-channel de-interleaving
+    size_t num_frames = count / num_input_channels_;
+
+    // Pre-reserve memory to avoid reallocations in audio thread
+    for (int ch = 0; ch < num_input_channels_; ++ch) {
+        std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+        recording_buffers_[ch].reserve(recording_buffers_[ch].size() + num_frames);
+    }
+
+    // De-interleave: [L0, R0, L1, R1, ...] → [L0, L1, ...], [R0, R1, ...]
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        for (int ch = 0; ch < num_input_channels_; ++ch) {
+            float sample = samples[frame * num_input_channels_ + ch];
+
+            // Lock only this channel's mutex
+            std::lock_guard<std::mutex> lock(*channel_mutexes_[ch]);
+            recording_buffers_[ch].push_back(sample);
+        }
+    }
+
+    // Update position atomically (frames recorded)
+    size_t current_pos = recording_position_.load();
+    recording_position_.store(current_pos + num_frames);
 }
 
 void AudioEngine::handle_playback_output(float* samples, size_t count) {
@@ -849,7 +964,7 @@ bool AudioEngine::initialize_input_device() {
 
     desired_spec.freq = config_.sample_rate;
     desired_spec.format = AUDIO_F32SYS;  // 32-bit float, system byte order
-    desired_spec.channels = 1;           // Mono
+    desired_spec.channels = num_input_channels_;  // CHANGED: Use configured channel count
     desired_spec.samples = config_.buffer_size;
     desired_spec.callback = input_audio_callback;
     desired_spec.userdata = this;
@@ -874,6 +989,15 @@ bool AudioEngine::initialize_input_device() {
     }
 
     input_spec_ = obtained_spec;
+
+    // NEW: Validate obtained channel count
+    if (obtained_spec.channels != num_input_channels_) {
+        log_error("Device does not support " + std::to_string(num_input_channels_) +
+                  " channels (got " + std::to_string(obtained_spec.channels) + ")");
+        SDL_CloseAudioDevice(input_device_);
+        input_device_ = 0;
+        return false;
+    }
 
     // Start audio input
     SDL_PauseAudioDevice(input_device_, 0);

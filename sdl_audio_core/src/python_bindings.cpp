@@ -64,9 +64,13 @@ PYBIND11_MODULE(sdl_audio_core, m) {
         .def_readwrite("input_device_id", &AudioEngine::Config::input_device_id)
         .def_readwrite("output_device_id", &AudioEngine::Config::output_device_id)
         .def_readwrite("enable_logging", &AudioEngine::Config::enable_logging)
+        .def_readwrite("input_channels", &AudioEngine::Config::input_channels)     // NEW
+        .def_readwrite("output_channels", &AudioEngine::Config::output_channels)   // NEW
         .def("__repr__", [](const AudioEngine::Config& c) {
             return "<AudioEngineConfig sample_rate=" + std::to_string(c.sample_rate) +
-                   " buffer_size=" + std::to_string(c.buffer_size) + ">";
+                   " buffer_size=" + std::to_string(c.buffer_size) +
+                   " input_channels=" + std::to_string(c.input_channels) +
+                   " output_channels=" + std::to_string(c.output_channels) + ">";
         });
 
     // AudioEngine::State enum
@@ -92,7 +96,10 @@ PYBIND11_MODULE(sdl_audio_core, m) {
         .def_readwrite("recording_position", &AudioEngine::Stats::recording_position)
         .def_readwrite("playback_position", &AudioEngine::Stats::playback_position)
         .def_readwrite("recording_buffer_size", &AudioEngine::Stats::recording_buffer_size)
-        .def_readwrite("playback_signal_size", &AudioEngine::Stats::playback_signal_size);
+        .def_readwrite("playback_signal_size", &AudioEngine::Stats::playback_signal_size)
+        .def_readwrite("num_input_channels", &AudioEngine::Stats::num_input_channels)        // NEW
+        .def_readwrite("num_output_channels", &AudioEngine::Stats::num_output_channels)      // NEW
+        .def_readwrite("channel_buffer_sizes", &AudioEngine::Stats::channel_buffer_sizes);   // NEW
 
     // AudioEngine main class
     py::class_<AudioEngine>(m, "AudioEngine")
@@ -147,6 +154,17 @@ PYBIND11_MODULE(sdl_audio_core, m) {
              "Get number of samples recorded so far")
         .def("clear_recording_buffer", &AudioEngine::clear_recording_buffer,
              "Clear the recording buffer")
+
+        // NEW: Multi-channel data retrieval
+        .def("get_recorded_data_multichannel", &AudioEngine::get_recorded_data_multichannel,
+             "Get recorded data for all channels as list of lists")
+        .def("get_recorded_data_channel", &AudioEngine::get_recorded_data_channel,
+             "Get recorded data for specific channel",
+             py::arg("channel_index"))
+        .def("get_num_input_channels", &AudioEngine::get_num_input_channels,
+             "Get number of input channels")
+        .def("get_num_output_channels", &AudioEngine::get_num_output_channels,
+             "Get number of output channels")
 
         // Playback methods
         .def("start_playback", &AudioEngine::start_playback,
@@ -391,6 +409,67 @@ PYBIND11_MODULE(sdl_audio_core, m) {
         return result;
     }, "Measure room response with automatic device selection",
        py::arg("test_signal"), py::arg("volume") = 0.3f, py::arg("input_device") = -1, py::arg("output_device") = -1);
+
+    // NEW: Multi-channel room response measurement
+    m.def("measure_room_response_auto_multichannel",
+        [](const std::vector<float>& test_signal,
+           float volume = 0.3f,
+           int input_device = -1,
+           int output_device = -1,
+           int input_channels = 1) {
+
+            AudioEngine engine;
+            AudioEngine::Config config;
+            config.enable_logging = true;
+            config.sample_rate = 48000;
+            config.input_channels = input_channels;
+            config.output_channels = 1;
+
+            if (!engine.initialize(config)) {
+                throw std::runtime_error("Failed to initialize audio engine");
+            }
+
+            if (!engine.start()) {
+                engine.shutdown();
+                throw std::runtime_error("Failed to start audio engine");
+            }
+
+            std::vector<std::vector<float>> multichannel_data;
+            bool success = false;
+            std::string error_message;
+
+            try {
+                // Use measure_room_response (handles device switching)
+                std::vector<float> response = engine.measure_room_response(test_signal, input_device, output_device);
+
+                // Get multi-channel data
+                multichannel_data = engine.get_recorded_data_multichannel();
+                success = !multichannel_data.empty();
+
+            } catch (const std::exception& e) {
+                error_message = e.what();
+            }
+
+            engine.shutdown();
+
+            // Return Python dict
+            py::dict result;
+            result["success"] = success;
+            result["multichannel_data"] = multichannel_data;
+            result["num_channels"] = (int)multichannel_data.size();
+            result["samples_per_channel"] = multichannel_data.empty() ? 0 : (int)multichannel_data[0].size();
+            result["test_signal_samples"] = (int)test_signal.size();
+            result["error_message"] = error_message;
+
+            return result;
+        },
+        "Measure room response with multi-channel input support",
+        py::arg("test_signal"),
+        py::arg("volume") = 0.3f,
+        py::arg("input_device") = -1,
+        py::arg("output_device") = -1,
+        py::arg("input_channels") = 1
+    );
 
     // Version info
     m.attr("__version__") = "0.1.0";
