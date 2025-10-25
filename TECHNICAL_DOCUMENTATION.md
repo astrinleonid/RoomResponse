@@ -2043,6 +2043,91 @@ class MyPanel:
 {"command": "stop"}
 ```
 
+### 10.4 Multi-Channel Audio Support (GUI Integration)
+
+**Overview**: The GUI now supports multi-channel audio input for testing and monitoring advanced audio interfaces.
+
+**Key Components**:
+
+1. **RoomResponseRecorder Enhancements**:
+   ```python
+   # Multi-channel support attributes
+   recorder.input_channels = 1  # Default: mono (backward compatible)
+
+   # Get device capabilities
+   devices = recorder.get_device_info_with_channels()
+   # Returns: {'input_devices': [{'device_id': 0, 'name': 'Mic', 'max_channels': 8}, ...]}
+
+   # Test multi-channel recording
+   result = recorder.test_multichannel_recording(
+       duration=2.0,
+       num_channels=4
+   )
+   # Returns: {'success': bool, 'multichannel_data': [[ch0_samples], [ch1_samples], ...],
+   #           'channel_stats': [{'max': 0.3, 'rms': 0.02, 'db': -18.5}, ...]}
+   ```
+
+2. **AudioDeviceSelector Features**:
+   - **Channel Count Display**: Device list shows "(N ch)" for multi-channel devices
+   - **Dynamic Channel Picker**: Range automatically adjusts to device capability
+   - **Multi-Channel Monitor**: Live per-channel monitoring (up to 8 channels at 5Hz)
+   - **Test Recording UI**: Test multi-channel recording with statistics table
+
+3. **AudioSettingsPanel - Multi-Channel Test Tab**:
+   ```
+   ┌────────────────────────────────────────────────────────┐
+   │ Audio Settings                                         │
+   ├────────────────────────────────────────────────────────┤
+   │ [System Info] [Device Selection] [Multi-Channel Test]  │
+   ├────────────────────────────────────────────────────────┤
+   │ Selected Device: MOTU 8A (ID: 1) - 8 channels         │
+   ├────────────────────────────────────────────────────────┤
+   │ Multi-Channel Monitor                                  │
+   │  Monitor Channels: [4] ▼                              │
+   │  [Start Monitor]                                       │
+   │                                                        │
+   │  Channel 0: ████████░░ -18.5 dB ✓ Good               │
+   │  Channel 1: ██████░░░░ -22.3 dB 🟡 Moderate          │
+   │  Channel 2: ████████░░ -19.1 dB ✓ Good               │
+   │  Channel 3: ██████░░░░ -24.7 dB 🟡 Moderate          │
+   ├────────────────────────────────────────────────────────┤
+   │ Multi-Channel Test Recording                           │
+   │  Test Channels: [4] Duration: [2.0s]                  │
+   │  [Run Test Recording]                                  │
+   │                                                        │
+   │  Results: 4 channels × 96000 samples                  │
+   │  ┌─────────┬──────────┬──────┬───────┐               │
+   │  │ Channel │ Max Ampl │ RMS  │ dB    │               │
+   │  ├─────────┼──────────┼──────┼───────┤               │
+   │  │ 0       │ 0.3245   │ 0.03 │ -18.2 │               │
+   │  │ 1       │ 0.3108   │ 0.03 │ -19.8 │               │
+   │  └─────────┴──────────┴──────┴───────┘               │
+   └────────────────────────────────────────────────────────┘
+   ```
+
+4. **Implementation Details**:
+   - **Thread-Safe Monitoring**: Background worker thread for per-channel data collection
+   - **5Hz Update Rate**: Efficient UI updates using `st.rerun()` with 200ms sleep
+   - **Error Handling**: Graceful degradation when device doesn't support requested channels
+   - **Backward Compatibility**: Defaults to mono (1 channel), existing code unaffected
+   - **Performance**: Supports up to 32 channels for testing, displays up to 8 simultaneously
+
+5. **Files Modified** (2025-10-25):
+   - `RoomResponseRecorder.py`: Added `input_channels`, `get_device_info_with_channels()`, `test_multichannel_recording()`
+   - `gui_audio_device_selector.py`: Added multi-channel monitor, test UI, dynamic channel picker
+   - `gui_audio_settings_panel.py`: Added "Multi-Channel Test" tab with device info display
+
+**Usage Scenario**:
+```python
+# GUI automatically detects multi-channel devices
+# User selects 8-channel audio interface
+# Channel picker shows 0-7 range
+# User starts 4-channel monitor → sees live levels per channel
+# User runs test recording → gets per-channel statistics
+```
+
+**Reference**: See [GUI_MULTICHANNEL_INTEGRATION_PLAN.md](GUI_MULTICHANNEL_INTEGRATION_PLAN.md) for complete implementation details.
+
 ---
 
 ## 11. Configuration & Metadata

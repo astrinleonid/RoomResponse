@@ -41,6 +41,9 @@ class RoomResponseRecorder:
             'impulse_form': 'sine'
         }
 
+        # Multi-channel support (backward compatible default)
+        self.input_channels = 1
+
         # Load configuration from file if provided
         if config_file_path:
             try:
@@ -172,6 +175,60 @@ class RoomResponseRecorder:
 
         return info
 
+    def get_device_info_with_channels(self) -> dict:
+        """
+        Enhanced device info including max_channels per device.
+
+        Returns:
+            {
+                'input_devices': [
+                    {'device_id': 0, 'name': 'Mic', 'max_channels': 2},
+                    {'device_id': 1, 'name': 'Interface', 'max_channels': 8},
+                    ...
+                ],
+                'output_devices': [...]
+            }
+        """
+        try:
+            devices = sdl_audio_core.list_all_devices()
+            # Extract max_channels from device objects
+            input_list = []
+            for dev in devices.get('input_devices', []):
+                # Handle both dict and object formats
+                if isinstance(dev, dict):
+                    input_list.append({
+                        'device_id': dev.get('device_id', -1),
+                        'name': dev.get('name', 'Unknown'),
+                        'max_channels': dev.get('max_channels', 1)
+                    })
+                else:
+                    input_list.append({
+                        'device_id': getattr(dev, 'device_id', -1),
+                        'name': getattr(dev, 'name', 'Unknown'),
+                        'max_channels': getattr(dev, 'max_channels', 1)
+                    })
+
+            output_list = []
+            for dev in devices.get('output_devices', []):
+                # Handle both dict and object formats
+                if isinstance(dev, dict):
+                    output_list.append({
+                        'device_id': dev.get('device_id', -1),
+                        'name': dev.get('name', 'Unknown'),
+                        'max_channels': dev.get('max_channels', 1)
+                    })
+                else:
+                    output_list.append({
+                        'device_id': getattr(dev, 'device_id', -1),
+                        'name': getattr(dev, 'name', 'Unknown'),
+                        'max_channels': getattr(dev, 'max_channels', 1)
+                    })
+
+            return {'input_devices': input_list, 'output_devices': output_list}
+        except Exception as e:
+            print(f"Error getting device info: {e}")
+            return {'input_devices': [], 'output_devices': []}
+
     def _validate_config(self):
         """Validate the recorder configuration"""
         if self.pulse_samples <= 0:
@@ -272,6 +329,68 @@ class RoomResponseRecorder:
             print(f"Error listing devices: {e}")
             return None
 
+    def test_multichannel_recording(self, duration: float = 2.0,
+                                   num_channels: int = 2) -> dict:
+        """
+        Test multi-channel recording.
+
+        Args:
+            duration: Recording duration in seconds (not used - uses fixed test signal)
+            num_channels: Number of input channels to test
+
+        Returns:
+            {
+                'success': bool,
+                'num_channels': int,
+                'samples_per_channel': int,
+                'multichannel_data': List[List[float]],  # [channel_idx][samples]
+                'channel_stats': [
+                    {'max': float, 'rms': float, 'db': float},
+                    ...
+                ],
+                'error_message': str (if failed)
+            }
+        """
+        try:
+            # Generate test signal (use existing playback signal or create simple tone)
+            test_duration = 0.1  # 100ms chirp
+            t = np.arange(int(test_duration * self.sample_rate)) / self.sample_rate
+            test_signal = (0.3 * np.sin(2 * np.pi * 1000 * t)).tolist()
+
+            # Record with multi-channel API
+            result = sdl_audio_core.measure_room_response_auto_multichannel(
+                test_signal,
+                volume=0.3,
+                input_device=self.input_device,
+                output_device=self.output_device,
+                input_channels=num_channels
+            )
+
+            if not result['success']:
+                return result
+
+            # Calculate per-channel statistics
+            channel_stats = []
+            for ch_data in result['multichannel_data']:
+                ch_np = np.array(ch_data)
+                max_amp = np.max(np.abs(ch_np))
+                rms = np.sqrt(np.mean(ch_np ** 2))
+                db = 20 * np.log10(rms) if rms > 0 else -60.0
+
+                channel_stats.append({
+                    'max': float(max_amp),
+                    'rms': float(rms),
+                    'db': float(db)
+                })
+
+            result['channel_stats'] = channel_stats
+            return result
+
+        except Exception as e:
+            return {
+                'success': False,
+                'error_message': f"Multi-channel test failed: {e}"
+            }
 
     def _record_method_2(self) -> Optional[np.ndarray]:
         """Method 2: Auto device selection with convenience function"""

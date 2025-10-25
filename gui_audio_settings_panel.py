@@ -113,12 +113,21 @@ class AudioSettingsPanel:
         # Quick status bar (IDs + derived latency from UI buffer)
         self._render_audio_status_bar()
 
-        # Tabs: System Info + Device Selection (+ Series Settings when available)
+        # Tabs: System Info + Device Selection + Multi-Channel Test (+ Series Settings when available)
         if SERIES_SETTINGS_AVAILABLE and self._series_settings_panel:
-            tab1, tab2, tab3 = st.tabs(["System Info", "Device Selection", "Series Settings"])
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "System Info",
+                "Device Selection",
+                "Multi-Channel Test",
+                "Series Settings"
+            ])
         else:
-            tab1, tab2 = st.tabs(["System Info", "Device Selection"])
-            tab3 = None  # keep a name for type clarity
+            tab1, tab2, tab3 = st.tabs([
+                "System Info",
+                "Device Selection",
+                "Multi-Channel Test"
+            ])
+            tab4 = None
 
         with tab1:
             self._render_system_info()
@@ -127,8 +136,11 @@ class AudioSettingsPanel:
         with tab2:
             self._render_device_selection_tab()
 
-        if tab3:
-            with tab3:
+        with tab3:
+            self._render_multichannel_test_tab()
+
+        if tab4:
+            with tab4:
                 self._render_series_settings_tab()
 
     # -------------------------
@@ -399,6 +411,55 @@ class AudioSettingsPanel:
                     st.warning("Recorder not available")
         else:
             st.warning("AudioDeviceSelector component not available")
+
+    def _render_multichannel_test_tab(self):
+        """Render multi-channel testing tab."""
+        st.subheader("Multi-Channel Audio Testing")
+        st.markdown("Test and verify multi-channel recording capabilities.")
+
+        if not self.recorder:
+            st.error("Recorder not initialized")
+            return
+
+        # Device info
+        st.markdown("#### Selected Device")
+        self._display_current_device_channels()
+
+        st.markdown("---")
+
+        # Multi-channel monitor
+        if hasattr(self._device_selector, '_render_multichannel_monitor'):
+            self._device_selector._render_multichannel_monitor()
+
+        st.markdown("---")
+
+        # Multi-channel test recording
+        if hasattr(self._device_selector, '_render_multichannel_test'):
+            self._device_selector._render_multichannel_test()
+
+    def _display_current_device_channels(self):
+        """Display current device with channel information."""
+        try:
+            devices_info = self.recorder.get_device_info_with_channels()
+            current_id = int(getattr(self.recorder, 'input_device', -1))
+
+            if current_id == -1:
+                st.info("Using system default input device")
+                max_ch = max((d['max_channels'] for d in devices_info['input_devices']), default=1)
+                st.metric("Max Available Channels", max_ch)
+            else:
+                for dev in devices_info['input_devices']:
+                    if dev['device_id'] == current_id:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Device ID", dev['device_id'])
+                        with col2:
+                            st.metric("Device Name", dev['name'])
+                        with col3:
+                            st.metric("Channels", dev['max_channels'])
+                        break
+        except Exception as e:
+            st.error(f"Error getting device info: {e}")
 
     def _render_series_settings_tab(self):
         """Render the series settings if the component is available."""

@@ -100,6 +100,32 @@ class AudioDeviceSelector:
         self._render_speaker_test_controls()
 
     # --------------------
+    # Multi-channel helpers
+    # --------------------
+
+    def _get_selected_device_max_channels(self) -> int:
+        """Get max channels for currently selected input device."""
+        if not self.recorder:
+            return 1
+
+        try:
+            devices_info = self.recorder.get_device_info_with_channels()
+            current_id = int(getattr(self.recorder, 'input_device', -1))
+
+            # Default device: check all devices and return max
+            if current_id == -1:
+                return max((d['max_channels'] for d in devices_info['input_devices']), default=1)
+
+            # Specific device: return its max_channels
+            for dev in devices_info['input_devices']:
+                if dev['device_id'] == current_id:
+                    return dev['max_channels']
+
+            return 1  # Fallback
+        except Exception:
+            return 1
+
+    # --------------------
     # Device scan & helpers
     # --------------------
 
@@ -210,8 +236,22 @@ class AudioDeviceSelector:
     def _render_input_selector(self) -> None:
         st.markdown("**Input Device**")
 
+        # Get device info with channels
+        devices_info = self.recorder.get_device_info_with_channels() if self.recorder else {}
+        input_devices = devices_info.get('input_devices', [])
+
+        # Build options with channel info
         cache = st.session_state['audio_device_cache']
-        options: List[Any] = ["System Default"] + [dev["repr"] for dev in cache['input']]
+        options: List[Any] = ["System Default"]
+
+        # Add devices with channel info if available
+        if input_devices:
+            for dev in input_devices:
+                ch_text = f" ({dev['max_channels']} ch)" if dev['max_channels'] > 1 else ""
+                options.append(f"{dev['name']} (ID: {dev['device_id']}){ch_text}")
+        else:
+            # Fallback to cache without channel info
+            options.extend([dev["repr"] for dev in cache['input']])
 
         # Determine current index from recorder
         current_id = -1
@@ -224,6 +264,12 @@ class AudioDeviceSelector:
         def _index_for_id(dev_id: int) -> int:
             if dev_id == -1:
                 return 0
+            # Try to find in devices_info first
+            if input_devices:
+                for i, dev in enumerate(input_devices):
+                    if int(dev["device_id"]) == dev_id:
+                        return i + 1
+            # Fallback to cache
             for i, dev in enumerate(cache['input']):
                 if int(dev["device_id"]) == dev_id:
                     return i + 1  # +1 for "System Default"
@@ -240,13 +286,30 @@ class AudioDeviceSelector:
             except Exception as e:
                 st.error(f"Failed to set input device: {e}")
 
+        # Display max channels info
+        max_ch = self._get_selected_device_max_channels()
+        if max_ch > 1:
+            st.info(f"✓ Multi-channel device: {max_ch} channels available")
+        else:
+            st.caption("Mono device (1 channel)")
+
     # -------------------------
     # Input channel + live monitor
     # -------------------------
 
     def _render_input_channel_picker(self) -> None:
+        # Get max channels for dynamic range
+        max_channels = self._get_selected_device_max_channels()
+
         current_ch = int(st.session_state.get('audio_input_channel', 0))
-        new_ch = st.number_input("Channel (0-based)", min_value=0, max_value=7, value=current_ch, step=1)
+        new_ch = st.number_input(
+            "Channel (0-based)",
+            min_value=0,
+            max_value=max(0, max_channels - 1),
+            value=min(current_ch, max_channels - 1),
+            step=1,
+            help=f"Device supports up to {max_channels} channels"
+        )
         if new_ch != current_ch:
             st.session_state['audio_input_channel'] = int(new_ch)
             if self.recorder and hasattr(self.recorder, "input_channel"):
@@ -436,6 +499,327 @@ class AudioDeviceSelector:
                 rate_text = "Rate: calculating..."
 
         st.caption(f"Age: {age:.1f}s | {rate_text}")
+
+    # -------------------------
+    # Multi-channel monitor
+    # -------------------------
+
+    def _render_multichannel_monitor(self) -> None:
+        """Multi-channel microphone monitor with per-channel meters."""
+        st.markdown("#### Multi-Channel Microphone Monitor")
+
+        # Get available channels
+        max_channels = self._get_selected_device_max_channels()
+
+        # Channel count selector
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            num_channels = st.number_input(
+                "Monitor Channels",
+                min_value=1,
+                max_value=min(max_channels, 8),  # Cap display at 8
+                value=min(2, max_channels),
+                step=1,
+                key="mc_mon_channels"
+            )
+
+        with col2:
+            st.caption(f"Device supports up to {max_channels} channels")
+
+        # Start/Stop controls
+        if not st.session_state.get('multichannel_monitor_running', False):
+            if st.button("Start Multi-Channel Monitor", type="primary", key="mc_start"):
+                self._start_multichannel_monitor(int(num_channels))
+        else:
+            if st.button("Stop Monitor", key="mc_stop"):
+                self._stop_multichannel_monitor()
+
+        # Display per-channel meters
+        if st.session_state.get('multichannel_monitor_running', False):
+            self._render_multichannel_meters()
+
+            # Auto-refresh at 5Hz
+            time.sleep(0.2)
+            st.rerun()
+
+    def _start_multichannel_monitor(self, num_channels: int) -> None:
+        """Start multi-channel monitoring thread."""
+        if not self.recorder or not MICTESTING_AVAILABLE:
+            st.warning("Recorder or MicTesting not available")
+            return
+
+        try:
+            sr = int(getattr(self.recorder, 'sample_rate', 48000))
+            inp = int(getattr(self.recorder, 'input_device', -1))
+
+            # Shared state for all channels
+            shared_state = {
+                'running': True,
+                'num_channels': num_channels,
+                'latest_levels': [-60.0] * num_channels,  # dB per channel
+                'latest_rms': [0.0] * num_channels,
+                'update_count': 0,
+                'last_update': time.time(),
+                'error': None
+            }
+
+            def worker():
+                """Multi-channel monitoring worker."""
+                try:
+                    import sdl_audio_core
+
+                    # Create engine with multi-channel config
+                    engine = sdl_audio_core.AudioEngine()
+                    config = sdl_audio_core.AudioEngineConfig()
+                    config.sample_rate = sr
+                    config.input_channels = num_channels
+
+                    if not engine.initialize(config):
+                        shared_state['error'] = "Failed to initialize audio engine"
+                        shared_state['running'] = False
+                        return
+
+                    engine.set_input_device(inp)
+                    engine.start_recording()
+
+                    while shared_state['running']:
+                        try:
+                            time.sleep(0.1)  # 100ms chunks
+
+                            # Get per-channel data
+                            for ch in range(num_channels):
+                                ch_data = engine.get_recorded_data_channel(ch)
+
+                                if len(ch_data) > 100:  # Need enough samples
+                                    # Take last 100ms worth
+                                    recent = ch_data[-int(sr * 0.1):]
+                                    ch_np = np.array(recent)
+
+                                    rms = np.sqrt(np.mean(ch_np ** 2))
+                                    db = 20 * np.log10(rms) if rms > 1e-10 else -60.0
+
+                                    shared_state['latest_levels'][ch] = float(db)
+                                    shared_state['latest_rms'][ch] = float(rms)
+
+                            shared_state['update_count'] += 1
+                            shared_state['last_update'] = time.time()
+
+                        except Exception as e:
+                            shared_state['error'] = f"Recording error: {e}"
+                            break
+
+                    engine.stop_recording()
+                    engine.shutdown()
+
+                except Exception as e:
+                    shared_state['error'] = f"Worker error: {e}"
+                    shared_state['running'] = False
+
+            # Start worker thread
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+
+            st.session_state['multichannel_monitor_running'] = True
+            st.session_state['multichannel_shared_state'] = shared_state
+            st.session_state['multichannel_thread'] = thread
+
+            st.success(f"Multi-channel monitor started ({num_channels} channels)")
+
+        except Exception as e:
+            st.error(f"Failed to start multi-channel monitor: {e}")
+
+    def _stop_multichannel_monitor(self) -> None:
+        """Stop multi-channel monitoring."""
+        shared_state = st.session_state.get('multichannel_shared_state')
+        if shared_state:
+            shared_state['running'] = False
+
+        thread = st.session_state.get('multichannel_thread')
+        if thread and thread.is_alive():
+            thread.join(timeout=2.0)
+
+        st.session_state['multichannel_monitor_running'] = False
+        st.session_state['multichannel_shared_state'] = None
+        st.session_state['multichannel_thread'] = None
+
+    def _render_multichannel_meters(self) -> None:
+        """Render per-channel level meters."""
+        shared_state = st.session_state.get('multichannel_shared_state')
+
+        if not shared_state:
+            st.warning("No monitoring data")
+            return
+
+        if shared_state.get('error'):
+            st.error(f"Error: {shared_state['error']}")
+            return
+
+        num_channels = shared_state['num_channels']
+        levels_db = shared_state['latest_levels']
+        rms_values = shared_state['latest_rms']
+        update_count = shared_state.get('update_count', 0)
+        last_update = shared_state.get('last_update', 0)
+
+        # Check data freshness
+        age = time.time() - last_update
+        if age > 1.0:
+            st.warning(f"Stale data ({age:.1f}s old)")
+            return
+
+        # Display channels in grid (2 columns)
+        cols_per_row = 2
+        for row_start in range(0, num_channels, cols_per_row):
+            cols = st.columns(cols_per_row)
+
+            for i in range(cols_per_row):
+                ch = row_start + i
+                if ch >= num_channels:
+                    break
+
+                with cols[i]:
+                    self._render_single_channel_meter(ch, levels_db[ch], rms_values[ch])
+
+        # Status bar
+        st.caption(f"Updates: {update_count} | Age: {age:.1f}s | Rate: ~5 Hz")
+
+    def _render_single_channel_meter(self, ch_idx: int, db: float, rms: float) -> None:
+        """Render a single channel's meter."""
+        st.markdown(f"**Channel {ch_idx}**")
+
+        # Progress bar (map -60 to 0 dB → 0 to 100%)
+        rng_db = 60.0
+        percent = max(0.0, min(1.0, (db + rng_db) / rng_db))
+
+        # Color coding
+        if db > -6:
+            bar_text = f"⚠️ {db:+.1f} dB"
+        elif db > -20:
+            bar_text = f"✓ {db:+.1f} dB"
+        else:
+            bar_text = f"{db:+.1f} dB"
+
+        st.progress(percent, text=bar_text)
+
+        # Mini metrics
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption(f"RMS: {rms:.1e}")
+        with col2:
+            # Level assessment
+            if db > -6:
+                st.caption("🔴 LOUD")
+            elif db > -20:
+                st.caption("🟢 Good")
+            elif db > -40:
+                st.caption("🟡 Moderate")
+            else:
+                st.caption("🔵 Low")
+
+    # -------------------------
+    # Multi-channel test recording
+    # -------------------------
+
+    def _render_multichannel_test(self) -> None:
+        """Multi-channel test recording UI."""
+        st.markdown("#### Multi-Channel Test Recording")
+
+        max_channels = self._get_selected_device_max_channels()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            test_channels = st.number_input(
+                "Test Channels",
+                min_value=1,
+                max_value=min(max_channels, 32),
+                value=min(2, max_channels),
+                step=1,
+                key="test_channels"
+            )
+
+        with col2:
+            test_duration = st.slider(
+                "Duration (s)",
+                min_value=0.5,
+                max_value=5.0,
+                value=2.0,
+                step=0.5,
+                key="test_duration"
+            )
+
+        with col3:
+            if st.button("Run Test Recording", type="primary"):
+                self._run_multichannel_test(int(test_channels), float(test_duration))
+
+        # Display last test results
+        if 'last_multichannel_test' in st.session_state:
+            self._display_test_results(st.session_state['last_multichannel_test'])
+
+    def _run_multichannel_test(self, num_channels: int, duration: float) -> None:
+        """Execute multi-channel test recording."""
+        if not self.recorder:
+            st.warning("Recorder not available")
+            return
+
+        with st.spinner(f"Testing {num_channels} channel(s)..."):
+            try:
+                result = self.recorder.test_multichannel_recording(
+                    duration=duration,
+                    num_channels=num_channels
+                )
+
+                st.session_state['last_multichannel_test'] = result
+
+                if result['success']:
+                    st.success(f"✓ Test successful: {num_channels} channels recorded")
+                else:
+                    st.error(f"✗ Test failed: {result.get('error_message', 'Unknown error')}")
+
+            except Exception as e:
+                st.error(f"Test error: {e}")
+
+    def _display_test_results(self, result: dict) -> None:
+        """Display multi-channel test results."""
+        if not result.get('success', False):
+            st.error(f"Last test failed: {result.get('error_message')}")
+            return
+
+        st.markdown("**Last Test Results**")
+
+        num_ch = result['num_channels']
+        samples = result['samples_per_channel']
+
+        st.info(f"Recorded {num_ch} channels × {samples} samples")
+
+        # Per-channel stats table
+        stats = result.get('channel_stats', [])
+        if stats:
+            try:
+                import pandas as pd
+
+                df = pd.DataFrame([
+                    {
+                        'Channel': i,
+                        'Max Amplitude': f"{s['max']:.4f}",
+                        'RMS': f"{s['rms']:.4f}",
+                        'Level (dB)': f"{s['db']:+.1f}"
+                    }
+                    for i, s in enumerate(stats)
+                ])
+
+                st.dataframe(df, use_container_width=True)
+            except ImportError:
+                # Fallback if pandas not available
+                for i, s in enumerate(stats):
+                    st.text(f"Channel {i}: Max={s['max']:.4f}, RMS={s['rms']:.4f}, dB={s['db']:+.1f}")
+
+        # Assessment
+        low_channels = [i for i, s in enumerate(stats) if s['max'] < 0.01]
+        if low_channels:
+            st.warning(f"⚠️ Low signal on channels: {low_channels}")
+        else:
+            st.success("✓ All channels have good signal levels")
+
     # Even simpler alternative using st.empty() placeholder
     def _render_mic_monitor_with_placeholder(self) -> None:
         """Alternative approach using st.empty() for smoother updates."""
