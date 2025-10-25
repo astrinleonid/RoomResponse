@@ -221,14 +221,15 @@ def _is_multichannel_enabled(self) -> bool:
 
 ---
 
-### 🚧 Phase 1.5: GUI Multi-Channel Integration - COMPLETE
+### ✅ Phase 1.5: GUI Multi-Channel Integration - COMPLETE
 
-**Status:** ✅ IMPLEMENTED (Commit: `0cf4a88`)
+**Status:** ✅ IMPLEMENTED (Commits: `0cf4a88`, `6e619f3`)
 **Completion Date:** 2025-10-25
 **Files Modified:**
 - `RoomResponseRecorder.py`
 - `gui_audio_device_selector.py`
 - `gui_audio_settings_panel.py`
+- `MicTesting.py`
 
 **What Was Implemented:**
 1. ✅ RoomResponseRecorder enhancements:
@@ -241,8 +242,27 @@ def _is_multichannel_enabled(self) -> bool:
    - Multi-channel monitor (up to 8 channels at 5Hz)
    - Multi-channel test recording with statistics
 3. ✅ New "Multi-Channel Test" tab in Audio Settings
+4. ✅ **Single-channel monitor channel selection fix** (Commit: `6e619f3`):
+   - MicTesting.AudioRecorder now supports channel selection
+   - Single-channel monitor respects selected channel
+   - Disconnected channels correctly show silence
+   - Display shows active channel: "Channel N: -XX.X dBFS"
 
-**Reference:** See [GUI_MULTICHANNEL_INTEGRATION_PLAN.md](GUI_MULTICHANNEL_INTEGRATION_PLAN.md) for complete implementation details.
+**Issues Fixed:**
+- ❌ **FIXED**: Single-channel monitor showed signal on all channels (including disconnected)
+- ✅ Channel selection now works correctly - each channel shows independent signal
+
+**Testing Status:**
+- ✅ Device channel detection working correctly
+- ✅ Single-channel (backward compatibility) works
+- ✅ Single-channel monitor channel selection verified
+- ⚠️ Multi-channel monitor shows zeros (pending investigation)
+- ⚠️ Multi-channel test recording needs verification
+
+**Reference:**
+- [GUI_MULTICHANNEL_INTEGRATION_PLAN.md](GUI_MULTICHANNEL_INTEGRATION_PLAN.md) - Implementation plan
+- [CHANNEL_SELECTION_FIX.md](CHANNEL_SELECTION_FIX.md) - Channel selection fix details
+- [test_channel_selection.py](test_channel_selection.py) - Automated verification tests
 
 ---
 
