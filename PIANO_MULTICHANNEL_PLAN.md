@@ -5,7 +5,7 @@
 **Created:** 2025-10-25
 **Last Updated:** 2025-10-26
 **Original Timeline:** 7 weeks
-**Status:** Phase 1 ✅ COMPLETE | Phase 1.5 ✅ COMPLETE | Phase 2 ✅ COMPLETE | Phase 3 ✅ COMPLETE | Phase 4-5 📋 PLANNED
+**Status:** Phase 1 ✅ COMPLETE | Phase 1.5 ✅ COMPLETE | Phase 2 ✅ COMPLETE | Phase 3 ✅ COMPLETE | Phase 4 🚧 IN PROGRESS | Phase 5 📋 PLANNED
 
 ---
 
@@ -1929,14 +1929,95 @@ if __name__ == "__main__":
 ## Phase 4: GUI Interface Updates
 
 **Duration:** 2 weeks
-**Status:** 📋 PLANNED (Audio Settings panel partially complete)
+**Status:** 🚧 IN PROGRESS (Calibration Impulse section complete)
 **Files:** `piano_response.py`, `gui_audio_settings_panel.py`, `gui_collect_panel.py`, `gui_audio_panel.py`
 
 **Current Status:**
 - ✅ Audio Settings panel has Multi-Channel Test tab (basic testing UI)
+- ✅ **NEW: Calibration Impulse tab implemented (2025-10-26)**
+  - ✅ Calibration channel selection with save to configuration
+  - ✅ Calibration quality parameters configuration UI
+  - ✅ Calibration impulse test with per-cycle quality metrics display
+  - ✅ Visual feedback for amplitude, duration, double-hit, and tail noise validation
 - ❌ Multi-channel configuration UI NOT YET implemented
 - ❌ Collection panel multi-channel status NOT YET implemented
 - ❌ Audio Analysis panel multi-channel visualization NOT YET implemented
+
+**Completed Work:**
+
+### 4.0 Calibration Impulse Section (✅ COMPLETE - 2025-10-26)
+
+A new "Calibration Impulse" tab has been added to the Audio Settings panel, providing comprehensive tools for configuring and testing calibration channel functionality.
+
+**Implementation: gui_audio_settings_panel.py**
+
+**Features Implemented:**
+
+#### 1. Calibration Channel Selection
+- Dropdown selector showing all available channels with their names
+- Option to disable calibration (set to None)
+- Save button to persist calibration channel to recorder configuration
+- Visual feedback showing current calibration channel configuration
+- Validation: requires at least 2 channels and multi-channel mode enabled
+
+#### 2. Calibration Quality Parameters Configuration
+- Comprehensive UI for all 4 validation criteria:
+  - **Amplitude Validation**: Min/max acceptable peak amplitude (prevents clipping)
+  - **Duration Validation**: Min/max impulse duration in milliseconds, with threshold setting
+  - **Double Hit Detection**: Search window and threshold for detecting secondary impacts
+  - **Tail Noise Validation**: Tail start time and maximum acceptable tail RMS ratio
+- **General Settings**: Minimum number of valid cycles required
+- Expandable panel to reduce UI clutter
+- Save button to persist quality parameters to recorder configuration
+- Default values aligned with existing calibration_validator.py implementation
+
+**Quality Parameters:**
+```python
+{
+    'cal_min_amplitude': 0.1,          # Min peak amplitude (0-1)
+    'cal_max_amplitude': 0.95,         # Max peak amplitude (prevents clipping)
+    'cal_min_duration_ms': 2.0,        # Min impulse duration
+    'cal_max_duration_ms': 20.0,       # Max impulse duration
+    'cal_duration_threshold': 0.3,     # Duration measurement threshold (fraction of peak)
+    'cal_double_hit_window_ms': [10, 50],  # Search window for secondary impacts
+    'cal_double_hit_threshold': 0.3,   # Secondary peak threshold (fraction of main peak)
+    'cal_tail_start_ms': 30.0,         # Where tail region begins
+    'cal_tail_max_rms_ratio': 0.15,    # Max tail noise (fraction of impulse RMS)
+    'min_valid_cycles': 3              # Min valid cycles required
+}
+```
+
+#### 3. Calibration Impulse Testing
+- "Run Calibration Test" button to emit train of impulses
+- Real-time recording and validation
+- Results display with:
+  - Overall summary: total cycles, valid cycles, calibration channel
+  - Per-cycle quality metrics table showing:
+    - Cycle index
+    - Valid/invalid status (✓/✗)
+    - Peak amplitude
+    - Duration (ms)
+    - Secondary peak ratio (double-hit detection)
+    - Tail RMS ratio (noise level)
+    - Issues description for failed cycles
+- Clear results button to reset display
+- Error handling with user-friendly messages
+
+**Integration Points:**
+- Uses `recorder.multichannel_config` to read/write calibration channel
+- Uses `recorder.calibration_quality_config` to store quality parameters
+- Calls `recorder.record_and_process()` to perform actual calibration test
+- Reads validation results from metadata: `calibration_results`, `valid_cycles_after_calibration`
+
+**User Workflow:**
+1. Enable multi-channel recording (Multi-Channel Test tab)
+2. Navigate to Calibration Impulse tab
+3. Select calibration channel (e.g., "Ch 0: Hammer Accelerometer")
+4. Save calibration channel
+5. (Optional) Adjust quality parameters
+6. Run calibration test
+7. Review per-cycle quality metrics
+8. Adjust quality thresholds if needed and retest
 
 **What Remains:**
 
