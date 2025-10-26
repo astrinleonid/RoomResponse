@@ -431,13 +431,24 @@ class AudioSettingsPanel:
         current_num_channels = mc_config.get('num_channels', 1)
         current_channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(current_num_channels)])
         current_ref_channel = mc_config.get('reference_channel', 0)
+        current_cal_channel = mc_config.get('calibration_channel')
 
         # 1. Enable/disable toggle
         multichannel_enabled = st.checkbox(
             "Enable multi-channel recording",
             value=current_enabled,
+            key="multichannel_enabled_checkbox",
             help="Record from multiple input channels simultaneously"
         )
+
+        # Handle enable/disable state change immediately
+        if multichannel_enabled != current_enabled:
+            if not multichannel_enabled:
+                # User wants to disable - do it immediately
+                self.recorder.multichannel_config['enabled'] = False
+                self.recorder.multichannel_config['num_channels'] = 1
+                st.success("✓ Multi-channel recording disabled.")
+                st.rerun()
 
         if multichannel_enabled:
             # 2. Number of channels input
@@ -460,6 +471,26 @@ class AudioSettingsPanel:
                     help="Channel used for onset detection and alignment"
                 )
 
+                # Calibration channel selection
+                cal_options = ["None (Disabled)"] + [f"Ch {i}" for i in range(num_channels)]
+                if current_cal_channel is None:
+                    cal_default_idx = 0
+                else:
+                    cal_default_idx = current_cal_channel + 1 if current_cal_channel < num_channels else 0
+
+                calibration_channel_str = st.selectbox(
+                    "Calibration channel",
+                    options=cal_options,
+                    index=cal_default_idx,
+                    help="Channel with calibration impulse (e.g., hammer accelerometer). Use None for no calibration."
+                )
+
+                # Parse calibration channel
+                if calibration_channel_str == "None (Disabled)":
+                    calibration_channel = None
+                else:
+                    calibration_channel = int(calibration_channel_str.replace("Ch ", ""))
+
             with col2:
                 # 3. Channel naming
                 st.markdown("**Channel Names**")
@@ -481,15 +512,23 @@ class AudioSettingsPanel:
                     self.recorder.multichannel_config['num_channels'] = num_channels
                     self.recorder.multichannel_config['channel_names'] = channel_names
                     self.recorder.multichannel_config['reference_channel'] = reference_channel
+                    self.recorder.multichannel_config['calibration_channel'] = calibration_channel
 
                     # Ensure response_channels list is updated
-                    if 'response_channels' not in self.recorder.multichannel_config:
+                    if calibration_channel is not None:
+                        # If calibration is enabled, response channels exclude calibration channel
+                        self.recorder.multichannel_config['response_channels'] = [
+                            ch for ch in range(num_channels) if ch != calibration_channel
+                        ]
+                    else:
+                        # No calibration, all channels are response channels
                         self.recorder.multichannel_config['response_channels'] = list(range(num_channels))
 
                     # Validate the configuration
                     self.recorder._validate_multichannel_config()
 
-                    st.success(f"✓ Multi-channel configuration saved: {num_channels} channels enabled")
+                    cal_msg = f" | Calibration: Ch {calibration_channel}" if calibration_channel is not None else " | No calibration"
+                    st.success(f"✓ Multi-channel configuration saved: {num_channels} channels{cal_msg}")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save configuration: {e}")
@@ -497,12 +536,24 @@ class AudioSettingsPanel:
             # Show current configuration summary
             st.markdown("---")
             st.markdown("**Current Configuration**")
-            st.info(f"**Enabled:** {num_channels} channels | **Reference:** Ch {reference_channel} ({channel_names[reference_channel]})")
+
+            # Build summary message
+            cal_summary = f" | **Calibration:** Ch {calibration_channel}" if calibration_channel is not None else ""
+            st.info(f"**Enabled:** {num_channels} channels | **Reference:** Ch {reference_channel} ({channel_names[reference_channel]}){cal_summary}")
 
             with st.expander("Channel Details"):
                 for ch_idx, ch_name in enumerate(channel_names):
-                    icon = "🎤" if ch_idx == reference_channel else "🔊"
-                    st.write(f"{icon} **Ch {ch_idx}:** {ch_name}")
+                    # Determine icon based on channel role
+                    if ch_idx == calibration_channel:
+                        icon = "🔨"  # Calibration channel (hammer)
+                        role = "(Calibration)"
+                    elif ch_idx == reference_channel:
+                        icon = "🎤"  # Reference channel
+                        role = "(Reference)"
+                    else:
+                        icon = "🔊"  # Response channel
+                        role = ""
+                    st.write(f"{icon} **Ch {ch_idx}:** {ch_name} {role}")
 
         else:
             # Disable multi-channel mode
@@ -562,52 +613,23 @@ class AudioSettingsPanel:
             st.warning("At least 2 channels required for calibration. Current configuration has only 1 channel.")
             return
 
-        # Section 1: Calibration Channel Selection
-        st.markdown("### 1. Calibration Channel Selection")
-        st.markdown("Select which channel contains the calibration impulse (e.g., hammer accelerometer).")
+        # Get calibration channel (configured in Device Selection tab)
+        selected_cal_ch = mc_config.get('calibration_channel')
+        channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(num_channels)])
 
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            current_cal_ch = mc_config.get('calibration_channel')
-            channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(num_channels)])
-
-            # Create options with channel names
-            cal_options = ["None (Disabled)"] + [f"Ch {i}: {channel_names[i]}" for i in range(num_channels)]
-            default_idx = 0 if current_cal_ch is None else current_cal_ch + 1
-
-            cal_selection = st.selectbox(
-                "Calibration Channel",
-                options=cal_options,
-                index=default_idx,
-                help="The channel that receives the calibration impulse directly (e.g., hammer accelerometer)"
-            )
-
-            # Parse selection
-            if cal_selection == "None (Disabled)":
-                selected_cal_ch = None
-            else:
-                selected_cal_ch = int(cal_selection.split(":")[0].replace("Ch ", ""))
-
-        with col2:
-            if st.button("Save Calibration Channel", type="primary"):
-                try:
-                    self.recorder.multichannel_config['calibration_channel'] = selected_cal_ch
-                    st.success(f"✓ Calibration channel saved: {cal_selection}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to save: {e}")
-
-        # Show current configuration
+        # Show current calibration channel configuration
+        st.markdown("### Current Configuration")
         if selected_cal_ch is not None:
-            st.info(f"Current calibration channel: Ch {selected_cal_ch} ({channel_names[selected_cal_ch]})")
+            st.success(f"✓ Calibration channel: Ch {selected_cal_ch} ({channel_names[selected_cal_ch]})")
         else:
-            st.info("Calibration is currently disabled")
+            st.warning("⚠️ No calibration channel selected. Configure it in the Device Selection tab.")
+            st.info("Go to Device Selection tab → Multi-Channel Configuration → Calibration channel")
+            return
 
         st.markdown("---")
 
-        # Section 2: Calibration Quality Parameters
-        st.markdown("### 2. Calibration Quality Parameters")
+        # Section 1: Calibration Quality Parameters
+        st.markdown("### 1. Calibration Quality Parameters")
         st.markdown("Configure thresholds for validating calibration impulse quality.")
 
         # Get current quality config from recorder
@@ -762,40 +784,37 @@ class AudioSettingsPanel:
 
         st.markdown("---")
 
-        # Section 3: Test Calibration Impulse
-        st.markdown("### 3. Test Calibration Impulse")
+        # Section 2: Test Calibration Impulse
+        st.markdown("### 2. Test Calibration Impulse")
         st.markdown("Emit a train of impulses and check calibration quality for each cycle.")
 
-        if selected_cal_ch is None:
-            st.warning("Please select a calibration channel first.")
-        else:
-            col1, col2 = st.columns([1, 1])
+        col1, col2 = st.columns([1, 1])
 
-            with col1:
-                if st.button("Run Calibration Test", type="primary"):
-                    st.session_state['cal_test_running'] = True
+        with col1:
+            if st.button("Run Calibration Test", type="primary"):
+                st.session_state['cal_test_running'] = True
 
-            with col2:
-                if st.button("Clear Results"):
-                    if 'cal_test_results' in st.session_state:
-                        del st.session_state['cal_test_results']
+        with col2:
+            if st.button("Clear Results"):
+                if 'cal_test_results' in st.session_state:
+                    del st.session_state['cal_test_results']
+                st.session_state['cal_test_running'] = False
+
+        # Run calibration test
+        if st.session_state.get('cal_test_running', False):
+            with st.spinner("Recording calibration impulses..."):
+                try:
+                    results = self._perform_calibration_test()
+                    st.session_state['cal_test_results'] = results
+                    st.session_state['cal_test_running'] = False
+                    st.success("✓ Calibration test completed!")
+                except Exception as e:
+                    st.error(f"Calibration test failed: {e}")
                     st.session_state['cal_test_running'] = False
 
-            # Run calibration test
-            if st.session_state.get('cal_test_running', False):
-                with st.spinner("Recording calibration impulses..."):
-                    try:
-                        results = self._perform_calibration_test()
-                        st.session_state['cal_test_results'] = results
-                        st.session_state['cal_test_running'] = False
-                        st.success("✓ Calibration test completed!")
-                    except Exception as e:
-                        st.error(f"Calibration test failed: {e}")
-                        st.session_state['cal_test_running'] = False
-
-            # Display results
-            if 'cal_test_results' in st.session_state:
-                self._render_calibration_test_results(st.session_state['cal_test_results'])
+        # Display results
+        if 'cal_test_results' in st.session_state:
+            self._render_calibration_test_results(st.session_state['cal_test_results'])
 
     def _perform_calibration_test(self) -> Dict:
         """
