@@ -8,8 +8,10 @@ import time
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from MicTesting import _SDL_AVAILABLE, AudioRecorder, AudioRecordingWorker, AudioProcessingWorker, AudioProcessor, sdl_audio_core
+from calibration_validator import CalibrationValidator
+import random
 
 # try:
 #     import sdl_audio_core as sdl_core
@@ -44,6 +46,39 @@ class RoomResponseRecorder:
         # Multi-channel support (backward compatible default)
         self.input_channels = 1
 
+        # Multi-channel configuration defaults
+        self.multichannel_config = {
+            'enabled': False,
+            'num_channels': 1,
+            'channel_names': ['Channel 0'],
+            'calibration_channel': None,
+            'reference_channel': 0,
+            'response_channels': [0],
+            'channel_calibration': {}
+        }
+
+        # Calibration quality configuration defaults
+        self.calibration_quality_config = {
+            'cal_min_amplitude': 0.1,
+            'cal_max_amplitude': 0.95,
+            'cal_min_duration_ms': 2.0,
+            'cal_max_duration_ms': 20.0,
+            'cal_duration_threshold': 0.3,
+            'cal_double_hit_window_ms': [10, 50],
+            'cal_double_hit_threshold': 0.3,
+            'cal_tail_start_ms': 30.0,
+            'cal_tail_max_rms_ratio': 0.15,
+            'min_valid_cycles': 3
+        }
+
+        # Correlation quality configuration defaults
+        self.correlation_quality_config = {
+            'ref_xcorr_threshold': 0.85,
+            'ref_xcorr_min_pass_fraction': 0.75,
+            'ref_xcorr_max_retries': 3,
+            'min_valid_cycles_after_corr': 3
+        }
+
         # Load configuration from file if provided
         if config_file_path:
             try:
@@ -60,6 +95,18 @@ class RoomResponseRecorder:
                 for key, value in loaded_config.items():
                     if key in default_config:
                         default_config[key] = value
+
+                # Load multi-channel config
+                if 'multichannel' in file_config:
+                    self.multichannel_config.update(file_config['multichannel'])
+
+                # Load calibration quality config
+                if 'calibration_quality' in file_config:
+                    self.calibration_quality_config.update(file_config['calibration_quality'])
+
+                # Load correlation quality config
+                if 'correlation_quality' in file_config:
+                    self.correlation_quality_config.update(file_config['correlation_quality'])
 
             except FileNotFoundError:
                 print(f"Warning: Config file '{config_file_path}' not found. Using default configuration.")
@@ -84,6 +131,11 @@ class RoomResponseRecorder:
 
         # Validate configuration
         self._validate_config()
+
+        # Validate multi-channel config if enabled
+        if self.multichannel_config.get('enabled', False):
+            self._validate_multichannel_config()
+
         self.input_device = -1
         self.output_device = -1
 
@@ -242,6 +294,28 @@ class RoomResponseRecorder:
         if self.impulse_form not in ["square", "sine"]:
             raise ValueError("Impulse form must be 'square' or 'sine'")
 
+    def _validate_multichannel_config(self):
+        """Validate multi-channel configuration"""
+        num_ch = self.multichannel_config['num_channels']
+        ref_ch = self.multichannel_config['reference_channel']
+        cal_ch = self.multichannel_config.get('calibration_channel')
+
+        if num_ch < 1 or num_ch > 32:
+            raise ValueError("num_channels must be between 1 and 32")
+
+        if ref_ch < 0 or ref_ch >= num_ch:
+            raise ValueError(f"reference_channel {ref_ch} out of range [0, {num_ch-1}]")
+
+        if cal_ch is not None and (cal_ch < 0 or cal_ch >= num_ch):
+            raise ValueError(f"calibration_channel {cal_ch} out of range [0, {num_ch-1}]")
+
+        # Ensure channel names list matches num_channels
+        if len(self.multichannel_config['channel_names']) != num_ch:
+            # Auto-generate names if missing
+            self.multichannel_config['channel_names'] = [
+                f"Channel {i}" for i in range(num_ch)
+            ]
+
     def _generate_single_pulse(self, exact_samples: int) -> np.ndarray:
         """Generate a single pulse with exact sample count and smooth envelope"""
         if self.impulse_form == "sine":
@@ -392,35 +466,239 @@ class RoomResponseRecorder:
                 'error_message': f"Multi-channel test failed: {e}"
             }
 
-    def _record_method_2(self) -> Optional[np.ndarray]:
-        """Method 2: Auto device selection with convenience function"""
+    def _select_reference_cycle(self, num_cycles: int, exclude_indices: List[int] = None) -> int:
+        """
+        Select a reference cycle from the middle third.
+
+        Args:
+            num_cycles: Total number of cycles
+            exclude_indices: List of cycle indices to exclude from selection
+
+        Returns:
+            Selected reference cycle index
+        """
+        middle_start = num_cycles // 3
+        middle_end = 2 * num_cycles // 3
+
+        available = [i for i in range(middle_start, middle_end)
+                     if exclude_indices is None or i not in exclude_indices]
+
+        if not available:
+            # Expand to all cycles if middle third exhausted
+            available = [i for i in range(num_cycles)
+                         if exclude_indices is None or i not in exclude_indices]
+
+        if not available:
+            raise ValueError("No available reference cycles")
+
+        return random.choice(available)
+
+    def _normalized_cross_correlation(self, signal1: np.ndarray, signal2: np.ndarray) -> float:
+        """
+        Compute normalized cross-correlation coefficient at zero lag.
+
+        Args:
+            signal1: First signal
+            signal2: Second signal
+
+        Returns:
+            Cross-correlation coefficient (0.0 to 1.0)
+        """
+        # Normalize signals (zero mean, unit variance)
+        s1 = (signal1 - np.mean(signal1)) / (np.std(signal1) + 1e-10)
+        s2 = (signal2 - np.mean(signal2)) / (np.std(signal2) + 1e-10)
+
+        # Cross-correlation at zero lag
+        correlation = np.mean(s1 * s2)
+
+        return float(correlation)
+
+    def _filter_cycles_by_correlation(
+        self,
+        reference_cycles: np.ndarray,  # Shape: (num_cycles, cycle_samples)
+        config: Dict
+    ) -> Tuple[List[int], Dict]:
+        """
+        Optimized O(n) correlation filtering using single reference cycle.
+
+        Args:
+            reference_cycles: Array of cycles to validate
+            config: Correlation quality configuration
+
+        Returns:
+            (valid_cycle_indices, correlation_metadata)
+
+        Raises:
+            ValueError: If all retries fail (measurement should be rejected)
+        """
+        threshold = config['ref_xcorr_threshold']
+        min_pass_fraction = config['ref_xcorr_min_pass_fraction']
+        max_retries = config['ref_xcorr_max_retries']
+
+        num_cycles = len(reference_cycles)
+        excluded_refs = []
+
+        for attempt in range(max_retries):
+            # Select reference cycle
+            ref_idx = self._select_reference_cycle(num_cycles, excluded_refs)
+            ref_cycle = reference_cycles[ref_idx]
+
+            # Compute correlations with all cycles
+            correlations = np.zeros(num_cycles)
+            for i in range(num_cycles):
+                correlations[i] = self._normalized_cross_correlation(
+                    ref_cycle, reference_cycles[i]
+                )
+
+            # Check pass/fail
+            passing_mask = correlations >= threshold
+            num_passing = np.sum(passing_mask)
+            pass_fraction = num_passing / num_cycles
+
+            if pass_fraction >= min_pass_fraction:
+                # Success
+                valid_indices = [i for i in range(num_cycles) if passing_mask[i]]
+
+                metadata = {
+                    'reference_cycle_index': ref_idx,
+                    'correlations': correlations.tolist(),
+                    'num_passing': int(num_passing),
+                    'pass_fraction': float(pass_fraction),
+                    'num_retries': attempt,
+                    'excluded_references': excluded_refs.copy(),
+                    'success': True
+                }
+
+                print(f"  Correlation validation passed: {num_passing}/{num_cycles} cycles "
+                      f"({pass_fraction:.1%}) on attempt {attempt + 1}")
+
+                return valid_indices, metadata
+
+            # Failed: reference cycle may be outlier
+            excluded_refs.append(ref_idx)
+            print(f"  Correlation attempt {attempt + 1} failed: "
+                  f"only {num_passing}/{num_cycles} ({pass_fraction:.1%}) passed. "
+                  f"Retrying with new reference...")
+
+        # All retries exhausted
+        raise ValueError(
+            f"Cross-correlation failed after {max_retries} attempts. "
+            f"Tried references: {excluded_refs}. "
+            f"Measurement inconsistent, rejecting entire recording."
+        )
+
+    def _normalize_by_calibration(
+        self,
+        response_cycles: np.ndarray,  # Shape: (num_cycles, cycle_samples, num_response_channels)
+        calibration_cycles: np.ndarray,  # Shape: (num_cycles, cycle_samples)
+        valid_indices: List[int]
+    ) -> np.ndarray:
+        """
+        Normalize response cycles by calibration peak magnitudes.
+
+        Args:
+            response_cycles: Response channel cycles (3D array)
+            calibration_cycles: Calibration channel cycles (2D array)
+            valid_indices: List of valid cycle indices to normalize
+
+        Returns:
+            Normalized response cycles (same shape as input)
+        """
+        normalized = response_cycles.copy()
+
+        for cycle_idx in valid_indices:
+            cal_peak = np.max(np.abs(calibration_cycles[cycle_idx]))
+
+            if cal_peak > 1e-10:  # Avoid division by zero
+                normalized[cycle_idx, :, :] /= cal_peak
+                print(f"  Cycle {cycle_idx}: normalized by cal_peak={cal_peak:.4f}")
+            else:
+                print(f"  Warning: Cycle {cycle_idx} has near-zero calibration peak")
+
+        return normalized
+
+    def _record_method_2(self):
+        """
+        Method 2: Auto device selection with multi-channel support
+
+        Returns:
+            If single-channel: np.ndarray
+            If multi-channel: Dict[int, np.ndarray] mapping channel index to data
+        """
         print("Recording Method 2: Auto Device Selection")
 
         try:
-            result = sdl_audio_core.measure_room_response_auto(
-                self.playback_signal,
-                volume=self.volume,
-                input_device =self.input_device,
-                output_device =self.output_device
-            )
+            is_multichannel = self.multichannel_config.get('enabled', False)
+            num_channels = self.multichannel_config.get('num_channels', 1) if is_multichannel else 1
+
+            if is_multichannel:
+                # Use new multi-channel function
+                result = sdl_audio_core.measure_room_response_auto_multichannel(
+                    self.playback_signal,
+                    volume=self.volume,
+                    input_device=self.input_device,
+                    output_device=self.output_device,
+                    input_channels=num_channels
+                )
+            else:
+                # Legacy single-channel function
+                result = sdl_audio_core.measure_room_response_auto(
+                    self.playback_signal,
+                    volume=self.volume,
+                    input_device=self.input_device,
+                    output_device=self.output_device
+                )
 
             if not result['success']:
                 print(f"Measurement failed: {result.get('error_message', 'Unknown error')}")
                 return None
 
-            recorded_data = result['recorded_data']
-            print(f"Recorded {result['recorded_samples']} samples")
-
-            return np.array(recorded_data, dtype=np.float32) if recorded_data else None
+            # Process result based on mode
+            if is_multichannel:
+                # Convert list of lists to dict of numpy arrays
+                multichannel_data = result['multichannel_data']
+                channel_dict = {
+                    ch: np.array(multichannel_data[ch], dtype=np.float32)
+                    for ch in range(num_channels)
+                }
+                print(f"Recorded {num_channels} channels, {len(multichannel_data[0])} samples each")
+                return channel_dict
+            else:
+                # Legacy single-channel return
+                recorded_data = result['recorded_data']
+                print(f"Recorded {result['recorded_samples']} samples")
+                return np.array(recorded_data, dtype=np.float32) if recorded_data else None
 
         except Exception as e:
-            print(f"Error in method 2: {e}")
+            print(f"Error in recording: {e}")
             return None
 
-    def _process_recorded_signal(self, recorded_audio: np.ndarray) -> Dict[str, np.ndarray]:
-        """Process recorded signal to extract room response and impulse response"""
+    def _process_recorded_signal(self, recorded_audio) -> Dict[str, Any]:
+        """
+        Process recorded signal - supports both single and multi-channel
+
+        Args:
+            recorded_audio: Either np.ndarray (single-channel) or Dict[int, np.ndarray] (multi-channel)
+
+        Returns:
+            Dict with processed data for all channels
+        """
         print("Processing recorded signal...")
 
+        is_multichannel = isinstance(recorded_audio, dict)
+
+        if is_multichannel:
+            # Check if calibration is enabled
+            cal_ch = self.multichannel_config.get('calibration_channel')
+            if cal_ch is not None:
+                return self._process_multichannel_signal_with_calibration(recorded_audio)
+            else:
+                return self._process_multichannel_signal(recorded_audio)
+        else:
+            return self._process_single_channel_signal(recorded_audio)
+
+    def _process_single_channel_signal(self, recorded_audio: np.ndarray) -> Dict[str, Any]:
+        """Legacy single-channel processing"""
         expected_samples = self.cycle_samples * self.num_pulses
 
         # Pad or trim to expected length
@@ -453,6 +731,258 @@ class RoomResponseRecorder:
             'room_response': room_response,
             'impulse': impulse_response
         }
+
+    def _process_multichannel_signal(self, multichannel_audio: Dict[int, np.ndarray]) -> Dict[str, Any]:
+        """
+        Process multi-channel recording with synchronized alignment (no calibration)
+
+        CRITICAL: All channels are aligned using the SAME shift calculated from reference channel
+        """
+        num_channels = len(multichannel_audio)
+        ref_channel = self.multichannel_config.get('reference_channel', 0)
+        expected_samples = self.cycle_samples * self.num_pulses
+
+        print(f"Processing {num_channels} channels (reference: {ref_channel})")
+
+        # 1. Pad/trim all channels to expected length
+        processed_channels = {}
+        for ch_idx, audio in multichannel_audio.items():
+            if len(audio) < expected_samples:
+                padded = np.zeros(expected_samples)
+                padded[:len(audio)] = audio
+                processed_channels[ch_idx] = padded
+            else:
+                processed_channels[ch_idx] = audio[:expected_samples]
+
+        # 2. Apply cycle averaging to reference channel
+        ref_audio = processed_channels[ref_channel]
+        ref_reshaped = ref_audio.reshape(self.num_pulses, self.cycle_samples)
+        start_cycle = max(1, self.num_pulses // 4)
+        ref_room_response = np.mean(ref_reshaped[start_cycle:], axis=0)
+
+        # 3. Find onset in reference channel
+        onset_sample = self._find_onset_in_room_response(ref_room_response)
+        print(f"Found onset at sample {onset_sample} in reference channel {ref_channel}")
+
+        # 4. Calculate shift amount from reference channel
+        shift_amount = -onset_sample  # Negative to move onset to beginning
+
+        # 5. Apply cycle averaging to ALL channels and align with SAME shift
+        result = {
+            'raw': {},
+            'room_response': {},
+            'impulse': {},
+            'metadata': {
+                'num_channels': num_channels,
+                'reference_channel': ref_channel,
+                'onset_sample': onset_sample,
+                'shift_applied': shift_amount
+            }
+        }
+
+        for ch_idx, audio in processed_channels.items():
+            # Cycle averaging for this channel
+            reshaped = audio.reshape(self.num_pulses, self.cycle_samples)
+            room_response = np.mean(reshaped[start_cycle:], axis=0)
+
+            # Apply THE SAME shift to this channel (critical for synchronization)
+            impulse_response = np.roll(room_response, shift_amount)
+
+            result['raw'][ch_idx] = audio
+            result['room_response'][ch_idx] = room_response
+            result['impulse'][ch_idx] = impulse_response
+
+            print(f"  Channel {ch_idx}: aligned with shift={shift_amount}")
+
+        return result
+
+    def _process_multichannel_signal_with_calibration(
+        self,
+        multichannel_audio: Dict[int, np.ndarray]
+    ) -> Dict[str, Any]:
+        """
+        Process multi-channel recording with calibration quality validation.
+
+        Pipeline:
+        1. Reshape into cycles
+        2. Validate calibration cycles
+        3. Normalize by calibration
+        4. Cross-correlation validation
+        5. Per-channel averaging
+        6. Unified onset alignment
+        """
+        num_channels = len(multichannel_audio)
+        cal_channel_idx = self.multichannel_config['calibration_channel']
+        ref_channel_idx = self.multichannel_config['reference_channel']
+        response_channel_indices = self.multichannel_config['response_channels']
+
+        print(f"\n{'='*60}")
+        print(f"Processing multi-channel with calibration")
+        print(f"  Channels: {num_channels}")
+        print(f"  Calibration channel: {cal_channel_idx}")
+        print(f"  Reference channel: {ref_channel_idx}")
+        print(f"  Response channels: {response_channel_indices}")
+        print(f"{'='*60}\n")
+
+        expected_samples = self.cycle_samples * self.num_pulses
+
+        # Step 1: Pad/trim and reshape all channels
+        calibration_cycles = None
+        response_cycles_dict = {}
+
+        for ch_idx, audio in multichannel_audio.items():
+            # Pad or trim
+            if len(audio) < expected_samples:
+                padded = np.zeros(expected_samples)
+                padded[:len(audio)] = audio
+                audio = padded
+            else:
+                audio = audio[:expected_samples]
+
+            # Reshape into cycles
+            reshaped = audio.reshape(self.num_pulses, self.cycle_samples)
+
+            if ch_idx == cal_channel_idx:
+                calibration_cycles = reshaped
+            else:
+                response_cycles_dict[ch_idx] = reshaped
+
+        # Step 2: Calibration quality validation
+        print("Step 2: Calibration Quality Validation")
+        print("-" * 40)
+
+        validator = CalibrationValidator(
+            self.calibration_quality_config,
+            self.sample_rate
+        )
+
+        validation_results = []
+        valid_cycle_indices = []
+
+        for cycle_idx in range(self.num_pulses):
+            validation = validator.validate_cycle(
+                calibration_cycles[cycle_idx],
+                cycle_idx
+            )
+            validation_results.append(validation)
+
+            if validation.calibration_valid:
+                valid_cycle_indices.append(cycle_idx)
+                print(f"  ✓ Cycle {cycle_idx}: PASS")
+            else:
+                print(f"  ✗ Cycle {cycle_idx}: FAIL - {', '.join(validation.calibration_failures)}")
+
+        print(f"\nCalibration filtering: {len(valid_cycle_indices)}/{self.num_pulses} cycles valid")
+
+        # Check minimum cycles
+        min_cycles = self.calibration_quality_config.get('min_valid_cycles', 3)
+        if len(valid_cycle_indices) < min_cycles:
+            raise ValueError(
+                f"Insufficient valid cycles after calibration filtering: "
+                f"{len(valid_cycle_indices)} < {min_cycles}"
+            )
+
+        # Step 3: Calibration normalization
+        print("\nStep 3: Calibration Normalization")
+        print("-" * 40)
+
+        # Stack response channels into 3D array
+        num_response_ch = len(response_cycles_dict)
+        response_cycles_3d = np.zeros((self.num_pulses, self.cycle_samples, num_response_ch))
+
+        for resp_idx, ch_idx in enumerate(sorted(response_cycles_dict.keys())):
+            response_cycles_3d[:, :, resp_idx] = response_cycles_dict[ch_idx]
+
+        normalized_cycles = self._normalize_by_calibration(
+            response_cycles_3d,
+            calibration_cycles,
+            valid_cycle_indices
+        )
+
+        # Step 4: Cross-correlation validation
+        print("\nStep 4: Cross-Correlation Validation")
+        print("-" * 40)
+
+        # Extract reference channel (find index in response_channels list)
+        ref_resp_idx = sorted(response_cycles_dict.keys()).index(ref_channel_idx)
+        ref_cycles_for_corr = normalized_cycles[valid_cycle_indices, :, ref_resp_idx]
+
+        try:
+            valid_after_corr_local, corr_metadata = self._filter_cycles_by_correlation(
+                ref_cycles_for_corr,
+                self.correlation_quality_config
+            )
+
+            # Map back to global cycle indices
+            valid_after_corr_global = [valid_cycle_indices[i] for i in valid_after_corr_local]
+
+            print(f"Correlation filtering: {len(valid_after_corr_global)}/{len(valid_cycle_indices)} cycles valid")
+
+        except ValueError as e:
+            print(f"ERROR: {e}")
+            raise
+
+        # Step 5: Per-channel averaging
+        print("\nStep 5: Per-Channel Averaging")
+        print("-" * 40)
+
+        room_responses = {}
+        for resp_idx, ch_idx in enumerate(sorted(response_cycles_dict.keys())):
+            valid_data = normalized_cycles[valid_after_corr_global, :, resp_idx]
+            room_response = np.mean(valid_data, axis=0)
+            room_responses[ch_idx] = room_response
+            print(f"  Channel {ch_idx}: averaged {len(valid_after_corr_global)} cycles")
+
+        # Step 6: Unified onset alignment
+        print("\nStep 6: Unified Onset Alignment")
+        print("-" * 40)
+
+        ref_room_response = room_responses[ref_channel_idx]
+        onset_sample = self._find_onset_in_room_response(ref_room_response)
+        print(f"  Onset detected at sample {onset_sample} in reference channel {ref_channel_idx}")
+
+        impulse_responses = {}
+        for ch_idx, room_response in room_responses.items():
+            impulse_response = np.roll(room_response, -onset_sample)
+            impulse_responses[ch_idx] = impulse_response
+            print(f"  Channel {ch_idx}: applied shift of {-onset_sample} samples")
+
+        # Return results
+        return {
+            'raw': multichannel_audio,
+            'room_response': room_responses,
+            'impulse': impulse_responses,
+            'calibration_cycles': calibration_cycles,
+            'validation_results': validation_results,
+            'valid_cycle_indices': valid_after_corr_global,
+            'correlation_metadata': corr_metadata,
+            'onset_sample': onset_sample,
+            'metadata': {
+                'num_channels': num_channels,
+                'calibration_channel': cal_channel_idx,
+                'reference_channel': ref_channel_idx,
+                'response_channels': response_channel_indices,
+                'valid_cycles_after_calibration': valid_cycle_indices,
+                'valid_cycles_after_correlation': valid_after_corr_global,
+                'onset_sample': onset_sample
+            }
+        }
+
+    def _find_onset_in_room_response(self, room_response: np.ndarray) -> int:
+        """
+        Find onset position in a room response (extracted helper method)
+        """
+        max_index = np.argmax(np.abs(room_response))
+
+        if max_index > 50:
+            search_start = max(0, max_index - 100)
+            search_window = room_response[search_start:max_index + 50]
+            onset_in_window = self._find_sound_onset(search_window)
+            onset = search_start + onset_in_window
+        else:
+            onset = 0
+
+        return onset
 
     def _extract_impulse_response(self, room_response: np.ndarray) -> np.ndarray:
         """Extract impulse response by finding onset and rotating signal"""
@@ -537,7 +1067,7 @@ class RoomResponseRecorder:
     def take_record(self,
                     output_file: str,
                     impulse_file: str,
-                    method: int = 2) -> Optional[np.ndarray]:
+                    method: int = 2):
         """
         Main API method to record room response
 
@@ -545,16 +1075,15 @@ class RoomResponseRecorder:
             output_file: Filename for raw recording
             impulse_file: Filename for impulse response
             method: Recording method (1=manual, 2=auto, 3=specific devices)
-            interactive: Whether to use interactive device selection (method 1 only)
-
 
         Returns:
-            Recorded audio data as numpy array, or None if failed
+            Single-channel: np.ndarray
+            Multi-channel: Dict[int, np.ndarray]
         """
         print(f"\n{'=' * 60}")
         print(f"Room Response Recording")
         print(f"{'=' * 60}")
-        # self._generate_complete_signal()
+
         try:
             recorded_audio = self._record_method_2()
             if recorded_audio is None:
@@ -564,44 +1093,103 @@ class RoomResponseRecorder:
             # Process the recorded signal
             processed_data = self._process_recorded_signal(recorded_audio)
 
-            # Save files
-            self._save_wav(processed_data['raw'], output_file)
-            self._save_wav(processed_data['impulse'], impulse_file)
+            is_multichannel = isinstance(recorded_audio, dict)
 
-            # Also save room response - create proper filename
-            output_path = Path(output_file)
-            room_response_file = str(output_path.parent / f"room_{output_path.stem}_room.wav")
-            self._save_wav(processed_data['room_response'], room_response_file)
+            if is_multichannel:
+                self._save_multichannel_files(output_file, impulse_file, processed_data)
+            else:
+                self._save_single_channel_files(output_file, impulse_file, processed_data)
 
             # Print success summary
             print(f"\n🎉 Recording completed successfully!")
-            print(f"- Raw recording: {output_file}")
-            print(f"- Impulse response: {impulse_file}")
-            print(f"- Room response: {room_response_file}")
-
-            # Signal quality info and diagnostics
-            max_amplitude = np.max(np.abs(recorded_audio))
-            rms_level = np.sqrt(np.mean(recorded_audio ** 2))
-            print(f"- Recorded samples: {len(recorded_audio)}")
-            print(f"- Max amplitude: {max_amplitude:.4f}")
-            print(f"- RMS level: {rms_level:.4f}")
-
-            # Audio quality diagnostics
-            if max_amplitude < 0.01:
-                print("⚠️  WARNING: Very low signal level detected!")
-                print("   Try: Increase microphone gain or move closer to speaker")
-            elif max_amplitude > 0.95:
-                print("⚠️  WARNING: Signal may be clipping!")
-                print("   Try: Reduce volume or speaker level")
-
-            if rms_level < 0.005:
-                print("⚠️  WARNING: Low RMS level - check audio connections")
 
             return recorded_audio
 
         except Exception as e:
             print(f"Error during recording: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+
+    def _save_multichannel_files(self, output_file: str, impulse_file: str, processed_data: Dict):
+        """Save multi-channel measurement files"""
+        # Get number of channels from processed data
+        if 'raw' in processed_data and isinstance(processed_data['raw'], dict):
+            num_channels = len(processed_data['raw'])
+            channel_indices = sorted(processed_data['raw'].keys())
+        else:
+            num_channels = len(processed_data['impulse'])
+            channel_indices = sorted(processed_data['impulse'].keys())
+
+        print(f"\nSaving {num_channels} channel files...")
+
+        for ch_idx in channel_indices:
+            # Generate per-channel filenames
+            raw_ch_file = self._make_channel_filename(output_file, ch_idx)
+            impulse_ch_file = self._make_channel_filename(impulse_file, ch_idx)
+
+            # Generate room response filename
+            output_path = Path(output_file)
+            room_base = str(output_path.parent / f"room_{output_path.stem}_room.wav")
+            room_ch_file = self._make_channel_filename(room_base, ch_idx)
+
+            # Save files for this channel
+            if 'raw' in processed_data and ch_idx in processed_data['raw']:
+                self._save_wav(processed_data['raw'][ch_idx], raw_ch_file)
+            if 'impulse' in processed_data and ch_idx in processed_data['impulse']:
+                self._save_wav(processed_data['impulse'][ch_idx], impulse_ch_file)
+            if 'room_response' in processed_data and ch_idx in processed_data['room_response']:
+                self._save_wav(processed_data['room_response'][ch_idx], room_ch_file)
+
+            ch_name = self.multichannel_config['channel_names'][ch_idx]
+            print(f"  Channel {ch_idx} ({ch_name}): saved 3 files")
+
+    def _save_single_channel_files(self, output_file: str, impulse_file: str, processed_data: Dict):
+        """Save single-channel measurement files (legacy)"""
+        self._save_wav(processed_data['raw'], output_file)
+        self._save_wav(processed_data['impulse'], impulse_file)
+
+        output_path = Path(output_file)
+        room_response_file = str(output_path.parent / f"room_{output_path.stem}_room.wav")
+        self._save_wav(processed_data['room_response'], room_response_file)
+
+        print(f"- Raw recording: {output_file}")
+        print(f"- Impulse response: {impulse_file}")
+        print(f"- Room response: {room_response_file}")
+
+        # Signal quality info and diagnostics
+        max_amplitude = np.max(np.abs(processed_data['raw']))
+        rms_level = np.sqrt(np.mean(processed_data['raw'] ** 2))
+        print(f"- Recorded samples: {len(processed_data['raw'])}")
+        print(f"- Max amplitude: {max_amplitude:.4f}")
+        print(f"- RMS level: {rms_level:.4f}")
+
+        # Audio quality diagnostics
+        if max_amplitude < 0.01:
+            print("⚠️  WARNING: Very low signal level detected!")
+            print("   Try: Increase microphone gain or move closer to speaker")
+        elif max_amplitude > 0.95:
+            print("⚠️  WARNING: Signal may be clipping!")
+            print("   Try: Reduce volume or speaker level")
+
+        if rms_level < 0.005:
+            print("⚠️  WARNING: Low RMS level - check audio connections")
+
+    def _make_channel_filename(self, base_filename: str, channel_index: int) -> str:
+        """
+        Generate filename with channel suffix
+
+        Examples:
+            _make_channel_filename("impulse_000_20251025.wav", 0)
+            -> "impulse_000_20251025_ch0.wav"
+        """
+        path = Path(base_filename)
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+
+        new_filename = f"{stem}_ch{channel_index}{suffix}"
+        return str(parent / new_filename)
 
     # Updated RoomResponseRecorder methods
     def test_mic(self, duration: float = 10.0, chunk_duration: float = 0.1):
