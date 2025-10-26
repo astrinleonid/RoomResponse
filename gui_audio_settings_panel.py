@@ -113,23 +113,21 @@ class AudioSettingsPanel:
         # Quick status bar (IDs + derived latency from UI buffer)
         self._render_audio_status_bar()
 
-        # Tabs: System Info + Device Selection + Multi-Channel Test + Calibration Impulse (+ Series Settings when available)
+        # Tabs: System Info + Device Selection + Calibration Impulse (+ Series Settings when available)
         if SERIES_SETTINGS_AVAILABLE and self._series_settings_panel:
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            tab1, tab2, tab3, tab4 = st.tabs([
                 "System Info",
                 "Device Selection",
-                "Multi-Channel Test",
                 "Calibration Impulse",
                 "Series Settings"
             ])
         else:
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3 = st.tabs([
                 "System Info",
                 "Device Selection",
-                "Multi-Channel Test",
                 "Calibration Impulse"
             ])
-            tab5 = None
+            tab4 = None
 
         with tab1:
             self._render_system_info()
@@ -139,13 +137,10 @@ class AudioSettingsPanel:
             self._render_device_selection_tab()
 
         with tab3:
-            self._render_multichannel_test_tab()
-
-        with tab4:
             self._render_calibration_impulse_tab()
 
-        if tab5:
-            with tab5:
+        if tab4:
+            with tab4:
                 self._render_series_settings_tab()
 
     # -------------------------
@@ -417,30 +412,110 @@ class AudioSettingsPanel:
         else:
             st.warning("AudioDeviceSelector component not available")
 
-    def _render_multichannel_test_tab(self):
-        """Render multi-channel testing tab."""
-        st.subheader("Multi-Channel Audio Testing")
-        st.markdown("Test and verify multi-channel recording capabilities.")
+        # Multi-channel configuration section
+        st.markdown("---")
+        self._render_multichannel_configuration()
+
+    def _render_multichannel_configuration(self):
+        """Render multi-channel configuration UI."""
+        st.subheader("Multi-Channel Configuration")
+        st.markdown("Configure multi-channel recording settings.")
 
         if not self.recorder:
-            st.error("Recorder not initialized")
+            st.warning("Recorder not available")
             return
 
-        # Device info
-        st.markdown("#### Selected Device")
-        self._display_current_device_channels()
+        # Get current configuration
+        mc_config = self.recorder.multichannel_config
+        current_enabled = mc_config.get('enabled', False)
+        current_num_channels = mc_config.get('num_channels', 1)
+        current_channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(current_num_channels)])
+        current_ref_channel = mc_config.get('reference_channel', 0)
 
-        st.markdown("---")
+        # 1. Enable/disable toggle
+        multichannel_enabled = st.checkbox(
+            "Enable multi-channel recording",
+            value=current_enabled,
+            help="Record from multiple input channels simultaneously"
+        )
 
-        # Multi-channel monitor
-        if hasattr(self._device_selector, '_render_multichannel_monitor'):
-            self._device_selector._render_multichannel_monitor()
+        if multichannel_enabled:
+            # 2. Number of channels input
+            col1, col2 = st.columns(2)
 
-        st.markdown("---")
+            with col1:
+                num_channels = st.number_input(
+                    "Number of channels",
+                    min_value=1,
+                    max_value=32,
+                    value=current_num_channels,
+                    help="Total number of input channels to record"
+                )
 
-        # Multi-channel test recording
-        if hasattr(self._device_selector, '_render_multichannel_test'):
-            self._device_selector._render_multichannel_test()
+                # 4. Reference channel selection
+                reference_channel = st.selectbox(
+                    "Reference channel",
+                    options=list(range(num_channels)),
+                    index=min(current_ref_channel, num_channels - 1),
+                    help="Channel used for onset detection and alignment"
+                )
+
+            with col2:
+                # 3. Channel naming
+                st.markdown("**Channel Names**")
+                channel_names = []
+                for ch in range(num_channels):
+                    default_name = current_channel_names[ch] if ch < len(current_channel_names) else f"Channel {ch}"
+                    name = st.text_input(
+                        f"Ch {ch}",
+                        value=default_name,
+                        key=f"ch_name_{ch}"
+                    )
+                    channel_names.append(name)
+
+            # 5. Save configuration button
+            if st.button("Save Multi-Channel Configuration", type="primary"):
+                try:
+                    # Update configuration
+                    self.recorder.multichannel_config['enabled'] = True
+                    self.recorder.multichannel_config['num_channels'] = num_channels
+                    self.recorder.multichannel_config['channel_names'] = channel_names
+                    self.recorder.multichannel_config['reference_channel'] = reference_channel
+
+                    # Ensure response_channels list is updated
+                    if 'response_channels' not in self.recorder.multichannel_config:
+                        self.recorder.multichannel_config['response_channels'] = list(range(num_channels))
+
+                    # Validate the configuration
+                    self.recorder._validate_multichannel_config()
+
+                    st.success(f"✓ Multi-channel configuration saved: {num_channels} channels enabled")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save configuration: {e}")
+
+            # Show current configuration summary
+            st.markdown("---")
+            st.markdown("**Current Configuration**")
+            st.info(f"**Enabled:** {num_channels} channels | **Reference:** Ch {reference_channel} ({channel_names[reference_channel]})")
+
+            with st.expander("Channel Details"):
+                for ch_idx, ch_name in enumerate(channel_names):
+                    icon = "🎤" if ch_idx == reference_channel else "🔊"
+                    st.write(f"{icon} **Ch {ch_idx}:** {ch_name}")
+
+        else:
+            # Disable multi-channel mode
+            if st.button("Save Configuration (Disable Multi-Channel)"):
+                try:
+                    self.recorder.multichannel_config['enabled'] = False
+                    self.recorder.multichannel_config['num_channels'] = 1
+                    st.success("✓ Multi-channel recording disabled. Using single-channel mode.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save configuration: {e}")
+
+            st.info("Multi-channel recording is disabled. Enable it to record from multiple channels simultaneously.")
 
     def _display_current_device_channels(self):
         """Display current device with channel information."""
@@ -479,7 +554,7 @@ class AudioSettingsPanel:
         mc_config = self.recorder.multichannel_config
         if not mc_config.get('enabled', False):
             st.warning("Multi-channel recording is not enabled. Calibration is only available in multi-channel mode.")
-            st.info("Enable multi-channel recording in the Multi-Channel Test tab first.")
+            st.info("Enable multi-channel recording in the Device Selection tab first.")
             return
 
         num_channels = mc_config.get('num_channels', 1)
