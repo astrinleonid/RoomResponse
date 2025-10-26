@@ -113,21 +113,23 @@ class AudioSettingsPanel:
         # Quick status bar (IDs + derived latency from UI buffer)
         self._render_audio_status_bar()
 
-        # Tabs: System Info + Device Selection + Multi-Channel Test (+ Series Settings when available)
+        # Tabs: System Info + Device Selection + Multi-Channel Test + Calibration Impulse (+ Series Settings when available)
         if SERIES_SETTINGS_AVAILABLE and self._series_settings_panel:
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "System Info",
+                "Device Selection",
+                "Multi-Channel Test",
+                "Calibration Impulse",
+                "Series Settings"
+            ])
+        else:
             tab1, tab2, tab3, tab4 = st.tabs([
                 "System Info",
                 "Device Selection",
                 "Multi-Channel Test",
-                "Series Settings"
+                "Calibration Impulse"
             ])
-        else:
-            tab1, tab2, tab3 = st.tabs([
-                "System Info",
-                "Device Selection",
-                "Multi-Channel Test"
-            ])
-            tab4 = None
+            tab5 = None
 
         with tab1:
             self._render_system_info()
@@ -139,8 +141,11 @@ class AudioSettingsPanel:
         with tab3:
             self._render_multichannel_test_tab()
 
-        if tab4:
-            with tab4:
+        with tab4:
+            self._render_calibration_impulse_tab()
+
+        if tab5:
+            with tab5:
                 self._render_series_settings_tab()
 
     # -------------------------
@@ -460,6 +465,349 @@ class AudioSettingsPanel:
                         break
         except Exception as e:
             st.error(f"Error getting device info: {e}")
+
+    def _render_calibration_impulse_tab(self):
+        """Render calibration impulse configuration and testing tab."""
+        st.subheader("Calibration Impulse")
+        st.markdown("Configure and test calibration channel for multi-channel impulse response recording.")
+
+        if not self.recorder:
+            st.error("Recorder not initialized")
+            return
+
+        # Check if multi-channel is enabled
+        mc_config = self.recorder.multichannel_config
+        if not mc_config.get('enabled', False):
+            st.warning("Multi-channel recording is not enabled. Calibration is only available in multi-channel mode.")
+            st.info("Enable multi-channel recording in the Multi-Channel Test tab first.")
+            return
+
+        num_channels = mc_config.get('num_channels', 1)
+        if num_channels < 2:
+            st.warning("At least 2 channels required for calibration. Current configuration has only 1 channel.")
+            return
+
+        # Section 1: Calibration Channel Selection
+        st.markdown("### 1. Calibration Channel Selection")
+        st.markdown("Select which channel contains the calibration impulse (e.g., hammer accelerometer).")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            current_cal_ch = mc_config.get('calibration_channel')
+            channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(num_channels)])
+
+            # Create options with channel names
+            cal_options = ["None (Disabled)"] + [f"Ch {i}: {channel_names[i]}" for i in range(num_channels)]
+            default_idx = 0 if current_cal_ch is None else current_cal_ch + 1
+
+            cal_selection = st.selectbox(
+                "Calibration Channel",
+                options=cal_options,
+                index=default_idx,
+                help="The channel that receives the calibration impulse directly (e.g., hammer accelerometer)"
+            )
+
+            # Parse selection
+            if cal_selection == "None (Disabled)":
+                selected_cal_ch = None
+            else:
+                selected_cal_ch = int(cal_selection.split(":")[0].replace("Ch ", ""))
+
+        with col2:
+            if st.button("Save Calibration Channel", type="primary"):
+                try:
+                    self.recorder.multichannel_config['calibration_channel'] = selected_cal_ch
+                    st.success(f"✓ Calibration channel saved: {cal_selection}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save: {e}")
+
+        # Show current configuration
+        if selected_cal_ch is not None:
+            st.info(f"Current calibration channel: Ch {selected_cal_ch} ({channel_names[selected_cal_ch]})")
+        else:
+            st.info("Calibration is currently disabled")
+
+        st.markdown("---")
+
+        # Section 2: Calibration Quality Parameters
+        st.markdown("### 2. Calibration Quality Parameters")
+        st.markdown("Configure thresholds for validating calibration impulse quality.")
+
+        # Get current quality config from recorder
+        if hasattr(self.recorder, 'calibration_quality_config'):
+            qual_config = self.recorder.calibration_quality_config
+        else:
+            # Default values
+            qual_config = {
+                'cal_min_amplitude': 0.1,
+                'cal_max_amplitude': 0.95,
+                'cal_min_duration_ms': 2.0,
+                'cal_max_duration_ms': 20.0,
+                'cal_duration_threshold': 0.3,
+                'cal_double_hit_window_ms': [10, 50],
+                'cal_double_hit_threshold': 0.3,
+                'cal_tail_start_ms': 30.0,
+                'cal_tail_max_rms_ratio': 0.15,
+                'min_valid_cycles': 3
+            }
+
+        with st.expander("Quality Parameter Settings", expanded=False):
+            st.markdown("#### Amplitude Validation")
+            col1, col2 = st.columns(2)
+            with col1:
+                min_amp = st.number_input(
+                    "Minimum Amplitude",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=float(qual_config.get('cal_min_amplitude', 0.1)),
+                    step=0.01,
+                    help="Minimum acceptable peak amplitude (normalized 0-1)"
+                )
+            with col2:
+                max_amp = st.number_input(
+                    "Maximum Amplitude",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=float(qual_config.get('cal_max_amplitude', 0.95)),
+                    step=0.01,
+                    help="Maximum acceptable peak amplitude (prevents clipping)"
+                )
+
+            st.markdown("#### Duration Validation")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                min_dur = st.number_input(
+                    "Min Duration (ms)",
+                    min_value=0.5,
+                    max_value=50.0,
+                    value=float(qual_config.get('cal_min_duration_ms', 2.0)),
+                    step=0.5,
+                    help="Minimum impulse duration in milliseconds"
+                )
+            with col2:
+                max_dur = st.number_input(
+                    "Max Duration (ms)",
+                    min_value=1.0,
+                    max_value=100.0,
+                    value=float(qual_config.get('cal_max_duration_ms', 20.0)),
+                    step=1.0,
+                    help="Maximum impulse duration in milliseconds"
+                )
+            with col3:
+                dur_thresh = st.number_input(
+                    "Duration Threshold",
+                    min_value=0.1,
+                    max_value=0.9,
+                    value=float(qual_config.get('cal_duration_threshold', 0.3)),
+                    step=0.05,
+                    help="Threshold for measuring duration (fraction of peak)"
+                )
+
+            st.markdown("#### Double Hit Detection")
+            col1, col2 = st.columns(2)
+            with col1:
+                dh_window = st.text_input(
+                    "Search Window [start, end] (ms)",
+                    value=str(qual_config.get('cal_double_hit_window_ms', [10, 50])),
+                    help="Time window to search for secondary impacts, e.g., [10, 50]"
+                )
+            with col2:
+                dh_thresh = st.number_input(
+                    "Double Hit Threshold",
+                    min_value=0.1,
+                    max_value=0.9,
+                    value=float(qual_config.get('cal_double_hit_threshold', 0.3)),
+                    step=0.05,
+                    help="Threshold for detecting double hits (fraction of main peak)"
+                )
+
+            st.markdown("#### Tail Noise Validation")
+            col1, col2 = st.columns(2)
+            with col1:
+                tail_start = st.number_input(
+                    "Tail Start (ms)",
+                    min_value=10.0,
+                    max_value=200.0,
+                    value=float(qual_config.get('cal_tail_start_ms', 30.0)),
+                    step=5.0,
+                    help="Where tail region begins after impulse (milliseconds)"
+                )
+            with col2:
+                tail_max_rms = st.number_input(
+                    "Max Tail RMS Ratio",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=float(qual_config.get('cal_tail_max_rms_ratio', 0.15)),
+                    step=0.01,
+                    help="Maximum acceptable tail noise (fraction of impulse RMS)"
+                )
+
+            st.markdown("#### General Settings")
+            min_valid = st.number_input(
+                "Minimum Valid Cycles",
+                min_value=1,
+                max_value=20,
+                value=int(qual_config.get('min_valid_cycles', 3)),
+                help="Minimum number of valid calibration cycles required"
+            )
+
+            # Save button for quality parameters
+            if st.button("Save Quality Parameters", type="primary"):
+                try:
+                    # Parse double hit window
+                    import ast
+                    dh_window_parsed = ast.literal_eval(dh_window)
+
+                    new_config = {
+                        'cal_min_amplitude': min_amp,
+                        'cal_max_amplitude': max_amp,
+                        'cal_min_duration_ms': min_dur,
+                        'cal_max_duration_ms': max_dur,
+                        'cal_duration_threshold': dur_thresh,
+                        'cal_double_hit_window_ms': dh_window_parsed,
+                        'cal_double_hit_threshold': dh_thresh,
+                        'cal_tail_start_ms': tail_start,
+                        'cal_tail_max_rms_ratio': tail_max_rms,
+                        'min_valid_cycles': min_valid
+                    }
+
+                    # Save to recorder
+                    if hasattr(self.recorder, 'calibration_quality_config'):
+                        self.recorder.calibration_quality_config = new_config
+                    else:
+                        # Store in a custom attribute if not available
+                        self.recorder.calibration_quality_config = new_config
+
+                    st.success("✓ Quality parameters saved successfully!")
+
+                except Exception as e:
+                    st.error(f"Failed to save quality parameters: {e}")
+
+        st.markdown("---")
+
+        # Section 3: Test Calibration Impulse
+        st.markdown("### 3. Test Calibration Impulse")
+        st.markdown("Emit a train of impulses and check calibration quality for each cycle.")
+
+        if selected_cal_ch is None:
+            st.warning("Please select a calibration channel first.")
+        else:
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if st.button("Run Calibration Test", type="primary"):
+                    st.session_state['cal_test_running'] = True
+
+            with col2:
+                if st.button("Clear Results"):
+                    if 'cal_test_results' in st.session_state:
+                        del st.session_state['cal_test_results']
+                    st.session_state['cal_test_running'] = False
+
+            # Run calibration test
+            if st.session_state.get('cal_test_running', False):
+                with st.spinner("Recording calibration impulses..."):
+                    try:
+                        results = self._perform_calibration_test()
+                        st.session_state['cal_test_results'] = results
+                        st.session_state['cal_test_running'] = False
+                        st.success("✓ Calibration test completed!")
+                    except Exception as e:
+                        st.error(f"Calibration test failed: {e}")
+                        st.session_state['cal_test_running'] = False
+
+            # Display results
+            if 'cal_test_results' in st.session_state:
+                self._render_calibration_test_results(st.session_state['cal_test_results'])
+
+    def _perform_calibration_test(self) -> Dict:
+        """
+        Perform a calibration test by recording impulses and validating quality.
+
+        Returns:
+            Dictionary with test results including per-cycle metrics
+        """
+        # Record multi-channel audio
+        result = self.recorder.record_and_process()
+
+        if result is None or 'impulse' not in result:
+            raise ValueError("Recording failed or no impulse data returned")
+
+        # Extract calibration channel data
+        cal_ch = self.recorder.multichannel_config.get('calibration_channel')
+        if cal_ch is None:
+            raise ValueError("Calibration channel not configured")
+
+        # Get metadata about validation
+        metadata = result.get('metadata', {})
+
+        return {
+            'success': True,
+            'num_cycles': self.recorder.num_pulses,
+            'calibration_channel': cal_ch,
+            'metadata': metadata,
+            'result': result
+        }
+
+    def _render_calibration_test_results(self, results: Dict):
+        """Render calibration test results with per-cycle quality metrics."""
+        st.markdown("#### Calibration Test Results")
+
+        metadata = results.get('metadata', {})
+        num_cycles = results.get('num_cycles', 0)
+        cal_ch = results.get('calibration_channel', 0)
+
+        # Overall summary
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Cycles", num_cycles)
+        with col2:
+            valid_cycles = metadata.get('valid_cycles_after_calibration', [])
+            st.metric("Valid Cycles", len(valid_cycles) if valid_cycles else "N/A")
+        with col3:
+            st.metric("Calibration Channel", f"Ch {cal_ch}")
+
+        # Per-cycle quality metrics
+        st.markdown("#### Per-Cycle Quality Metrics")
+
+        if 'calibration_results' in metadata:
+            cal_results = metadata['calibration_results']
+
+            # Create a table of results
+            import pandas as pd
+
+            table_data = []
+            for cycle_result in cal_results:
+                cycle_idx = cycle_result.get('cycle_index', 0)
+                valid = cycle_result.get('calibration_valid', False)
+                metrics = cycle_result.get('calibration_metrics', {})
+                failures = cycle_result.get('calibration_failures', [])
+
+                row = {
+                    'Cycle': cycle_idx,
+                    'Valid': '✓' if valid else '✗',
+                    'Peak Amp': f"{metrics.get('peak_amplitude', 0):.3f}",
+                    'Duration (ms)': f"{metrics.get('duration_ms', 0):.1f}",
+                    'Secondary Peak': f"{metrics.get('secondary_peak_ratio', 0):.2f}",
+                    'Tail RMS': f"{metrics.get('tail_rms_ratio', 0):.3f}",
+                    'Issues': ', '.join(failures) if failures else 'None'
+                }
+                table_data.append(row)
+
+            if table_data:
+                df = pd.DataFrame(table_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No calibration validation data available in results.")
+        else:
+            st.info("Calibration validation not performed. This may be because calibration channel is not enabled or recording failed.")
+
+        # Show any additional warnings or information
+        if metadata.get('calibration_failed', False):
+            st.error("⚠️ Calibration validation failed!")
+            st.write("**Reason:**", metadata.get('calibration_error', 'Unknown error'))
 
     def _render_series_settings_tab(self):
         """Render the series settings if the component is available."""

@@ -1,0 +1,65 @@
+{
+  "recorder_config": {
+    "sample_rate": 48000,
+    "pulse_duration": 0.008,
+    "pulse_fade": 0.0001,
+    "cycle_duration": 0.1,
+    "num_pulses": 8,
+    "volume": 0.4,
+    "pulse_frequency": 1000,
+    "impulse_form": "sine"
+  },
+  "multichannel": {
+    "enabled": true,
+    "num_channels": 4,
+    "channel_names": [
+      "Hammer Accelerometer",
+      "Front Microphone",
+      "Rear Microphone",
+      "Side Microphone"
+    ],
+    "calibration_channel": 0,
+    "reference_channel": 1,
+    "response_channels": [1, 2, 3],
+    "channel_calibration": {
+      "0": {
+        "gain": 1.0,
+        "delay_samples": 0,
+        "notes": "Hammer accelerometer (calibration)"
+      },
+      "1": {
+        "gain": 1.0,
+        "delay_samples": 0,
+        "notes": "Front microphone (reference)"
+      },
+      "2": {
+        "gain": 1.02,
+        "delay_samples": 0,
+        "notes": "Rear microphone"
+      },
+      "3": {
+        "gain": 0.98,
+        "delay_samples": 0,
+        "notes": "Side microphone"
+      }
+    }
+  },
+  "calibration_quality": {
+    "cal_min_amplitude": 0.1,
+    "cal_max_amplitude": 0.95,
+    "cal_min_duration_ms": 2.0,
+    "cal_max_duration_ms": 20.0,
+    "cal_duration_threshold": 0.3,
+    "cal_double_hit_window_ms": [10, 50],
+    "cal_double_hit_threshold": 0.3,
+    "cal_tail_start_ms": 30.0,
+    "cal_tail_max_rms_ratio": 0.15,
+    "min_valid_cycles": 3
+  },
+  "correlation_quality": {
+    "ref_xcorr_threshold": 0.85,
+    "ref_xcorr_min_pass_fraction": 0.75,
+    "ref_xcorr_max_retries": 3,
+    "min_valid_cycles_after_corr": 3
+  }
+}
