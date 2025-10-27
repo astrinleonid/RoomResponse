@@ -823,11 +823,17 @@ class AudioSettingsPanel:
         Returns:
             Dictionary with test results including per-cycle metrics
         """
-        # Record multi-channel audio
-        result = self.recorder.record_and_process()
+        # Record multi-channel audio using internal method
+        recorded_audio = self.recorder._record_method_2()
+
+        if recorded_audio is None:
+            raise ValueError("Recording failed - no data captured")
+
+        # Process the recorded signal
+        result = self.recorder._process_recorded_signal(recorded_audio)
 
         if result is None or 'impulse' not in result:
-            raise ValueError("Recording failed or no impulse data returned")
+            raise ValueError("Processing failed or no impulse data returned")
 
         # Extract calibration channel data
         cal_ch = self.recorder.multichannel_config.get('calibration_channel')
