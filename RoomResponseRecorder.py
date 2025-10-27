@@ -627,9 +627,26 @@ class RoomResponseRecorder:
         """
         print("Recording Method 2: Auto Device Selection")
 
+        # Debug output
+        print(f"\n{'='*60}")
+        print("DEBUG: Recording Configuration")
+        print(f"{'='*60}")
+        print(f"Device Configuration:")
+        print(f"  input_device ID: {self.input_device}")
+        print(f"  output_device ID: {self.output_device}")
+        print(f"\nMulti-channel Configuration:")
+        print(f"  enabled: {self.multichannel_config.get('enabled', False)}")
+        print(f"  num_channels: {self.multichannel_config.get('num_channels', 1)}")
+        print(f"  calibration_channel: {self.multichannel_config.get('calibration_channel')}")
+        print(f"  reference_channel: {self.multichannel_config.get('reference_channel', 0)}")
+        print(f"  channel_names: {self.multichannel_config.get('channel_names', [])}")
+        print(f"{'='*60}\n")
+
         try:
             is_multichannel = self.multichannel_config.get('enabled', False)
             num_channels = self.multichannel_config.get('num_channels', 1) if is_multichannel else 1
+
+            print(f"Will attempt to record: {num_channels} channels (multichannel mode: {is_multichannel})")
 
             if is_multichannel:
                 # Use new multi-channel function
