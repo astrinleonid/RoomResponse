@@ -425,6 +425,31 @@ class AudioSettingsPanel:
             st.warning("Recorder not available")
             return
 
+        # Get device channel capabilities
+        max_device_channels = 1
+        try:
+            devices_info = self.recorder.get_device_info_with_channels()
+            current_device_id = int(getattr(self.recorder, 'input_device', -1))
+
+            if current_device_id == -1:
+                # System default - find max channels from all devices
+                max_device_channels = max((d['max_channels'] for d in devices_info['input_devices']), default=1)
+            else:
+                # Find specific device
+                for dev in devices_info['input_devices']:
+                    if dev['device_id'] == current_device_id:
+                        max_device_channels = dev['max_channels']
+                        break
+        except Exception as e:
+            st.warning(f"Could not detect device capabilities: {e}")
+            max_device_channels = 2  # Safe default
+
+        # Show device capability info
+        if max_device_channels == 1:
+            st.info(f"ℹ️ Selected input device supports **{max_device_channels} channel** (mono only)")
+        else:
+            st.info(f"ℹ️ Selected input device supports up to **{max_device_channels} channels**")
+
         # Get current configuration
         mc_config = self.recorder.multichannel_config
         current_enabled = mc_config.get('enabled', False)
@@ -458,10 +483,14 @@ class AudioSettingsPanel:
                 num_channels = st.number_input(
                     "Number of channels",
                     min_value=1,
-                    max_value=32,
-                    value=current_num_channels,
-                    help="Total number of input channels to record"
+                    max_value=min(32, max_device_channels),
+                    value=min(current_num_channels, max_device_channels),
+                    help=f"Total number of input channels to record (max {max_device_channels} for your device)"
                 )
+
+                # Warning if trying to use more channels than device supports
+                if num_channels > max_device_channels:
+                    st.error(f"⚠️ Your device only supports {max_device_channels} channels! Please reduce the number of channels.")
 
                 # 4. Reference channel selection
                 reference_channel = st.selectbox(
@@ -507,6 +536,12 @@ class AudioSettingsPanel:
             # 5. Save configuration button
             if st.button("Save Multi-Channel Configuration", type="primary"):
                 try:
+                    # Validate channel count against device capabilities
+                    if num_channels > max_device_channels:
+                        st.error(f"❌ Cannot save: Your device only supports {max_device_channels} channels, but you configured {num_channels} channels.")
+                        st.info(f"Please reduce the number of channels to {max_device_channels} or less.")
+                        return
+
                     # Update configuration
                     self.recorder.multichannel_config['enabled'] = True
                     self.recorder.multichannel_config['num_channels'] = num_channels
@@ -823,11 +858,38 @@ class AudioSettingsPanel:
         Returns:
             Dictionary with test results including per-cycle metrics
         """
+        # Validate device capabilities before recording
+        num_channels = self.recorder.multichannel_config.get('num_channels', 1)
+        try:
+            devices_info = self.recorder.get_device_info_with_channels()
+            current_device_id = int(getattr(self.recorder, 'input_device', -1))
+
+            if current_device_id == -1:
+                max_device_channels = max((d['max_channels'] for d in devices_info['input_devices']), default=1)
+            else:
+                max_device_channels = 1
+                for dev in devices_info['input_devices']:
+                    if dev['device_id'] == current_device_id:
+                        max_device_channels = dev['max_channels']
+                        break
+
+            if num_channels > max_device_channels:
+                raise ValueError(
+                    f"Device capability mismatch: Your input device only supports {max_device_channels} channels, "
+                    f"but multi-channel configuration is set to {num_channels} channels. "
+                    f"Please reduce the number of channels in Device Selection tab."
+                )
+        except Exception as e:
+            if "capability mismatch" in str(e):
+                raise
+            # Continue if we can't check (device info might not be available)
+            pass
+
         # Record multi-channel audio using internal method
         recorded_audio = self.recorder._record_method_2()
 
         if recorded_audio is None:
-            raise ValueError("Recording failed - no data captured")
+            raise ValueError("Recording failed - no data captured. Check your audio device connections.")
 
         # Process the recorded signal
         result = self.recorder._process_recorded_signal(recorded_audio)
