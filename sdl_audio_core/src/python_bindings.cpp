@@ -419,25 +419,46 @@ PYBIND11_MODULE(sdl_audio_core, m) {
            int input_channels = 1) {
 
             // DEBUG: Print build version
-            std::cout << "[SDL] BUILD VERSION: 2025-10-27-18:20 - Device IDs set in config" << std::endl;
+            std::cout << "[SDL] BUILD VERSION: 2025-10-27-19:45 - Output device fallback implemented" << std::endl;
             std::cout << "[SDL] Input device: " << input_device << ", Output device: " << output_device
                       << ", Channels: " << input_channels << std::endl;
 
-            AudioEngine engine;
+            // Prepare config
             AudioEngine::Config config;
             config.enable_logging = true;
             config.sample_rate = 48000;
             config.input_channels = input_channels;
             config.output_channels = 1;
-            // FIX: Set device IDs in config BEFORE initialize() so devices open with correct channel count
             config.input_device_id = input_device;
             config.output_device_id = output_device;
 
             std::cout << "[SDL] Config set: input_device_id=" << config.input_device_id
                       << ", output_device_id=" << config.output_device_id << std::endl;
 
-            if (!engine.initialize(config)) {
-                throw std::runtime_error("Failed to initialize audio engine");
+            // Try initializing with requested devices first
+            AudioEngine engine;
+            bool init_success = engine.initialize(config);
+
+            // If initialization failed and we were using default output device (-1),
+            // try falling back to Device 0 (usually built-in audio like Realtek)
+            if (!init_success && output_device == -1) {
+                std::cout << "[SDL] Initialization failed with default output device (-1)" << std::endl;
+                std::cout << "[SDL] Attempting fallback to output Device 0..." << std::endl;
+
+                // Shutdown failed engine and modify config
+                engine.shutdown();
+                config.output_device_id = 0;  // Try Device 0
+
+                if (engine.initialize(config)) {
+                    std::cout << "[SDL] SUCCESS: Fell back to output Device 0" << std::endl;
+                    init_success = true;
+                } else {
+                    std::cout << "[SDL] FAILED: Fallback to Device 0 also failed" << std::endl;
+                }
+            }
+
+            if (!init_success) {
+                throw std::runtime_error("Failed to initialize audio engine (tried default and Device 0 for output)");
             }
 
             if (!engine.start()) {

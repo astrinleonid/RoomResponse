@@ -942,19 +942,46 @@ void AudioEngine::handle_playback_output(float* samples, size_t count) {
         return;
     }
 
-    size_t samples_remaining = signal_size - current_pos;
-    size_t samples_to_copy = std::min(count, samples_remaining);
+    // Determine output channel count from spec
+    int output_channels = output_spec_.channels;
 
-    // Copy samples from playback signal
-    std::memcpy(samples, &playback_signal_[current_pos], samples_to_copy * sizeof(float));
+    if (output_channels == 1) {
+        // Simple mono output - direct copy
+        size_t samples_remaining = signal_size - current_pos;
+        size_t samples_to_copy = std::min(count, samples_remaining);
 
-    // Fill remaining with silence if needed
-    if (samples_to_copy < count) {
-        std::memset(&samples[samples_to_copy], 0, (count - samples_to_copy) * sizeof(float));
-        is_playing_.store(false);  // Mark as completed
+        std::memcpy(samples, &playback_signal_[current_pos], samples_to_copy * sizeof(float));
+
+        if (samples_to_copy < count) {
+            std::memset(&samples[samples_to_copy], 0, (count - samples_to_copy) * sizeof(float));
+            is_playing_.store(false);
+        }
+
+        playback_position_.store(current_pos + samples_to_copy);
+    } else {
+        // Multi-channel output - replicate mono signal to all channels
+        // count = total samples = num_frames * output_channels
+        size_t num_frames = count / output_channels;
+        size_t samples_remaining = signal_size - current_pos;
+        size_t frames_to_copy = std::min(num_frames, samples_remaining);
+
+        // Interleave: replicate each mono sample to all channels
+        for (size_t frame = 0; frame < frames_to_copy; ++frame) {
+            float mono_sample = playback_signal_[current_pos + frame];
+            for (int ch = 0; ch < output_channels; ++ch) {
+                samples[frame * output_channels + ch] = mono_sample;
+            }
+        }
+
+        // Fill remaining frames with silence if needed
+        if (frames_to_copy < num_frames) {
+            std::memset(&samples[frames_to_copy * output_channels], 0,
+                       (num_frames - frames_to_copy) * output_channels * sizeof(float));
+            is_playing_.store(false);
+        }
+
+        playback_position_.store(current_pos + frames_to_copy);
     }
-
-    playback_position_.store(current_pos + samples_to_copy);
 }
 
 // Device initialization
@@ -1036,7 +1063,7 @@ bool AudioEngine::initialize_output_device() {
         0,               // iscapture = 0 for output
         &desired_spec,   // Desired spec
         &obtained_spec,  // Obtained spec
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE
     );
 
     if (output_device_ == 0) {
@@ -1045,6 +1072,11 @@ bool AudioEngine::initialize_output_device() {
     }
 
     output_spec_ = obtained_spec;
+
+    // Log if we got different channel count than requested
+    if (obtained_spec.channels != 1) {
+        log("WARNING: Requested 1 channel (mono) output but device provided " + std::to_string(obtained_spec.channels));
+    }
 
     // Start audio output
     SDL_PauseAudioDevice(output_device_, 0);
