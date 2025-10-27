@@ -975,12 +975,16 @@ bool AudioEngine::initialize_input_device() {
         device_name = SDL_GetAudioDeviceName(config_.input_device_id, 1);
     }
 
+    log("DEBUG: Opening device with SDL_AUDIO_ALLOW_CHANNELS_CHANGE flag");
+    log("  Requesting " + std::to_string(desired_spec.channels) + " channels");
+    log("  Device: " + std::string(device_name ? device_name : "Default"));
+
     input_device_ = SDL_OpenAudioDevice(
         device_name,     // Device name (nullptr for default)
         1,               // iscapture = 1 for input
         &desired_spec,   // Desired spec
         &obtained_spec,  // Obtained spec
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE
     );
 
     if (input_device_ == 0) {
@@ -990,13 +994,12 @@ bool AudioEngine::initialize_input_device() {
 
     input_spec_ = obtained_spec;
 
-    // NEW: Validate obtained channel count
+    // Log if we got different channel count than requested
     if (obtained_spec.channels != num_input_channels_) {
-        log_error("Device does not support " + std::to_string(num_input_channels_) +
-                  " channels (got " + std::to_string(obtained_spec.channels) + ")");
-        SDL_CloseAudioDevice(input_device_);
-        input_device_ = 0;
-        return false;
+        log("WARNING: Requested " + std::to_string(num_input_channels_) +
+            " channels but device provided " + std::to_string(obtained_spec.channels));
+        // Update our channel count to match what device provided
+        num_input_channels_ = obtained_spec.channels;
     }
 
     // Start audio input

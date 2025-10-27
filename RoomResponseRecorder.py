@@ -644,18 +644,42 @@ class RoomResponseRecorder:
 
         try:
             is_multichannel = self.multichannel_config.get('enabled', False)
-            num_channels = self.multichannel_config.get('num_channels', 1) if is_multichannel else 1
+            num_channels_needed = self.multichannel_config.get('num_channels', 1) if is_multichannel else 1
 
-            print(f"Will attempt to record: {num_channels} channels (multichannel mode: {is_multichannel})")
+            print(f"Will attempt to record: {num_channels_needed} channels (multichannel mode: {is_multichannel})")
 
             if is_multichannel:
+                # WORKAROUND: Windows/SDL audio drivers are very picky about channel counts.
+                # Many USB interfaces report N channels but only work when opened with exactly N.
+                # Strategy: Open device with its maximum reported channel count, then extract
+                # the channels we need from the full recording.
+
+                device_max_channels = num_channels_needed
+                try:
+                    devices_info = self.get_device_info_with_channels()
+                    if self.input_device >= 0:
+                        for dev in devices_info.get('input_devices', []):
+                            if dev['device_id'] == self.input_device:
+                                device_max_channels = dev['max_channels']
+                                print(f"Device ID {self.input_device} reports max {device_max_channels} channels")
+                                break
+                except Exception as e:
+                    print(f"Warning: Could not query device channels: {e}")
+
+                # STRATEGY: Always try to open with device's maximum channel count first
+                # This is most likely to succeed with Windows audio drivers
+                actual_device_channels = device_max_channels
+
+                print(f"Opening device with its max capacity: {actual_device_channels} channels")
+                print(f"Will extract {num_channels_needed} channels for processing")
+
                 # Use new multi-channel function
                 result = sdl_audio_core.measure_room_response_auto_multichannel(
                     self.playback_signal,
                     volume=self.volume,
                     input_device=self.input_device,
                     output_device=self.output_device,
-                    input_channels=num_channels
+                    input_channels=actual_device_channels
                 )
             else:
                 # Legacy single-channel function
@@ -674,11 +698,26 @@ class RoomResponseRecorder:
             if is_multichannel:
                 # Convert list of lists to dict of numpy arrays
                 multichannel_data = result['multichannel_data']
-                channel_dict = {
-                    ch: np.array(multichannel_data[ch], dtype=np.float32)
-                    for ch in range(num_channels)
-                }
-                print(f"Recorded {num_channels} channels, {len(multichannel_data[0])} samples each")
+                actual_recorded_channels = len(multichannel_data)
+
+                print(f"Recorded {actual_recorded_channels} channels from device")
+
+                # Extract only the channels we need (0 to num_channels_needed-1)
+                if actual_recorded_channels >= num_channels_needed:
+                    channel_dict = {
+                        ch: np.array(multichannel_data[ch], dtype=np.float32)
+                        for ch in range(num_channels_needed)
+                    }
+                    print(f"Extracted {num_channels_needed} channels for processing")
+                else:
+                    # Device returned fewer channels than expected
+                    print(f"WARNING: Device only returned {actual_recorded_channels} channels, expected at least {num_channels_needed}")
+                    channel_dict = {
+                        ch: np.array(multichannel_data[ch], dtype=np.float32)
+                        for ch in range(actual_recorded_channels)
+                    }
+
+                print(f"Processing {len(channel_dict)} channels, {len(list(channel_dict.values())[0])} samples each")
                 return channel_dict
             else:
                 # Legacy single-channel return

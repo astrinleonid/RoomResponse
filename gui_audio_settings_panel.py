@@ -399,6 +399,22 @@ class AudioSettingsPanel:
         if DEVICE_SELECTOR_AVAILABLE and self._device_selector:
             self._device_selector.render()
 
+            # DEBUG: Show all available devices
+            with st.expander("🔍 DEBUG: All Available Devices", expanded=False):
+                if self.recorder:
+                    try:
+                        devices_info = self.recorder.get_device_info_with_channels()
+
+                        st.markdown("**Input Devices:**")
+                        for dev in devices_info.get('input_devices', []):
+                            st.write(f"- **ID {dev['device_id']}:** {dev.get('name', 'Unknown')} ({dev['max_channels']} channels)")
+
+                        st.markdown("**Output Devices:**")
+                        for dev in devices_info.get('output_devices', []):
+                            st.write(f"- **ID {dev['device_id']}:** {dev.get('name', 'Unknown')} ({dev['max_channels']} channels)")
+                    except Exception as e:
+                        st.error(f"Failed to query devices: {e}")
+
             with st.expander("Current Selection Summary", expanded=False):
                 if self.recorder:
                     input_id = int(getattr(self.recorder, 'input_device', -1))
@@ -425,24 +441,43 @@ class AudioSettingsPanel:
             st.warning("Recorder not available")
             return
 
-        # Get device channel capabilities
+        # Get device channel capabilities and details
         max_device_channels = 1
+        selected_device_name = "Unknown"
+        selected_device_id = -1
+
         try:
             devices_info = self.recorder.get_device_info_with_channels()
             current_device_id = int(getattr(self.recorder, 'input_device', -1))
+            selected_device_id = current_device_id
 
             if current_device_id == -1:
                 # System default - find max channels from all devices
                 max_device_channels = max((d['max_channels'] for d in devices_info['input_devices']), default=1)
+                selected_device_name = "System Default"
             else:
                 # Find specific device
                 for dev in devices_info['input_devices']:
                     if dev['device_id'] == current_device_id:
                         max_device_channels = dev['max_channels']
+                        selected_device_name = dev.get('name', f"Device {current_device_id}")
                         break
         except Exception as e:
             st.warning(f"Could not detect device capabilities: {e}")
             max_device_channels = 2  # Safe default
+
+        # DEBUG: Show current device selection
+        with st.expander("🔍 DEBUG: Current Device Selection", expanded=True):
+            st.markdown("**Selected Input Device:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Device ID", selected_device_id)
+            with col2:
+                st.metric("Max Channels", max_device_channels)
+            with col3:
+                st.code(selected_device_name if len(selected_device_name) < 20 else selected_device_name[:17] + "...")
+
+            st.caption(f"Full device name: {selected_device_name}")
 
         # Show device capability info
         if max_device_channels == 1:
@@ -457,6 +492,17 @@ class AudioSettingsPanel:
         current_channel_names = mc_config.get('channel_names', [f"Channel {i}" for i in range(current_num_channels)])
         current_ref_channel = mc_config.get('reference_channel', 0)
         current_cal_channel = mc_config.get('calibration_channel')
+
+        # DEBUG: Show loaded configuration
+        with st.expander("🔍 DEBUG: Loaded Multi-Channel Configuration", expanded=False):
+            st.json({
+                "enabled": current_enabled,
+                "num_channels": current_num_channels,
+                "reference_channel": current_ref_channel,
+                "calibration_channel": current_cal_channel,
+                "channel_names": current_channel_names,
+                "response_channels": mc_config.get('response_channels', [])
+            })
 
         # 1. Enable/disable toggle
         multichannel_enabled = st.checkbox(
@@ -562,9 +608,26 @@ class AudioSettingsPanel:
                     # Validate the configuration
                     self.recorder._validate_multichannel_config()
 
+                    # DEBUG: Show what was just saved
+                    st.success("✓ Configuration saved successfully!")
+                    with st.expander("🔍 DEBUG: Configuration Saved to recorder.multichannel_config", expanded=True):
+                        st.markdown(f"**Target Device:** {selected_device_name} (ID: {selected_device_id}, Max Channels: {max_device_channels})")
+                        st.json({
+                            "enabled": True,
+                            "num_channels": num_channels,
+                            "reference_channel": reference_channel,
+                            "calibration_channel": calibration_channel,
+                            "channel_names": channel_names,
+                            "response_channels": self.recorder.multichannel_config['response_channels']
+                        })
+                        st.caption("This configuration will be used when recording starts.")
+
                     cal_msg = f" | Calibration: Ch {calibration_channel}" if calibration_channel is not None else " | No calibration"
-                    st.success(f"✓ Multi-channel configuration saved: {num_channels} channels{cal_msg}")
-                    st.rerun()
+                    st.info(f"Multi-channel configuration: {num_channels} channels{cal_msg}")
+
+                    # Don't rerun immediately - let user see the debug output
+                    if st.button("Continue", type="secondary"):
+                        st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save configuration: {e}")
 

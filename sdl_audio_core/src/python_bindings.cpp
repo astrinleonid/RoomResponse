@@ -418,12 +418,23 @@ PYBIND11_MODULE(sdl_audio_core, m) {
            int output_device = -1,
            int input_channels = 1) {
 
+            // DEBUG: Print build version
+            std::cout << "[SDL] BUILD VERSION: 2025-10-27-18:20 - Device IDs set in config" << std::endl;
+            std::cout << "[SDL] Input device: " << input_device << ", Output device: " << output_device
+                      << ", Channels: " << input_channels << std::endl;
+
             AudioEngine engine;
             AudioEngine::Config config;
             config.enable_logging = true;
             config.sample_rate = 48000;
             config.input_channels = input_channels;
             config.output_channels = 1;
+            // FIX: Set device IDs in config BEFORE initialize() so devices open with correct channel count
+            config.input_device_id = input_device;
+            config.output_device_id = output_device;
+
+            std::cout << "[SDL] Config set: input_device_id=" << config.input_device_id
+                      << ", output_device_id=" << config.output_device_id << std::endl;
 
             if (!engine.initialize(config)) {
                 throw std::runtime_error("Failed to initialize audio engine");
