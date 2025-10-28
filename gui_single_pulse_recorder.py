@@ -165,10 +165,16 @@ class SinglePulseRecorder:
                 help="Volume level for the test pulse"
             )
             
+            waveform_options = ["sine", "square", "voice_coil"]
+            current_form = st.session_state.get('pulse_form', 'sine')
+            if current_form in waveform_options:
+                default_idx = waveform_options.index(current_form)
+            else:
+                default_idx = 0
             st.session_state['pulse_form'] = st.selectbox(
                 "Waveform",
-                ["sine", "square"],
-                index=0 if st.session_state.get('pulse_form', 'sine') == 'sine' else 1,
+                waveform_options,
+                index=default_idx,
                 help="Waveform shape for the test pulse"
             )
         

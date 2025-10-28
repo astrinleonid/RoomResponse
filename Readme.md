@@ -163,7 +163,7 @@ Minimal example:
   "num_pulses": 8,
   "volume": 0.4,
   "pulse_frequency": 1000,
-  "impulse_form": "sine",
+  "impulse_form": "sine",  // Options: "sine", "square", "voice_coil"
   "computer": "MyLaptop",
   "room": "LivingRoom"
 }
@@ -294,13 +294,64 @@ python collect_dataset.py \
 
 ---
 
+## 🎵 Multi-Channel Audio Support
+
+This system supports **multi-channel audio recording** (up to 32 channels) for professional audio interfaces:
+
+**Features:**
+* Record from multiple input channels simultaneously
+* Automatic channel negotiation (SDL will use the best available format)
+* Per-channel configuration and calibration
+* Compatible with professional USB audio interfaces
+
+**Supported Devices:**
+* Standard stereo devices (2 channels)
+* Professional multi-channel interfaces (8, 10, 18+ channels)
+* Examples: Behringer UMC1820 (10 input channels), Focusrite, PreSonus, etc.
+
+### Important: Multi-Channel Device Drivers
+
+**For Behringer UMC1820 and similar professional interfaces:**
+
+Professional audio interfaces require **native drivers** for multi-channel operation:
+
+* ✗ **Windows generic USB Audio driver**: Limited to 2 channels (stereo) only
+* ✓ **Behringer native driver**: Full multi-channel access (18 input / 20 output)
+
+**If you're using a Behringer UMC1820:**
+1. Check your driver status: `python check_umc_driver.py`
+2. If using generic driver, install Behringer driver: See [`install_behringer_driver.md`](install_behringer_driver.md)
+3. Download from: https://www.behringer.com/downloads.html (search "UMC1820")
+4. After installation, all 10 input channels will be accessible
+
+**Other Professional Interfaces:**
+Check manufacturer's website for native ASIO/WDM drivers. Windows generic drivers typically limit multi-channel devices to stereo.
+
+---
+
 ## 🧪 Tips & Troubleshooting
 
 * **DLLs on Windows**: ensure `SDL2.dll` (or `SDL.dll`) is next to your working script (`gui_launcher.py`, etc.) or on `PATH`.
 * **Low SNR warnings**: reduce noise, adjust volume, improve mic/speaker placement.
 * **Device issues**: try interactive selection (`-i`) or a different driver; verify devices via `sdl.list_all_devices()`.
+* **Multi-channel issues**: For professional interfaces (UMC1820, etc.), install manufacturer's native driver - see [Multi-Channel Audio Support](#-multi-channel-audio-support) above.
+* **"Invalid source channels" error**: This typically means you're using Windows generic driver with a professional interface. Install the native driver (see [`TROUBLESHOOTING_UMC1820.md`](TROUBLESHOOTING_UMC1820.md)).
 * **Irregular intervals**: choose **End→Start** mode in GUI to guarantee cool‑down ≥ interval; warm‑up can be disabled or spaced.
 * **Stuck recordings**: the worker uses a watchdog timeout; if it triggers repeatedly, recheck driver, buffer size, and SDL init.
+
+### Quick Diagnostics
+
+**Check SDL and device status:**
+```bash
+python check_umc_driver.py          # Check UMC1820 driver status
+python test_umc_multichannel.py     # Test multi-channel device combinations
+python test_device_enumeration.py   # Test SDL device detection
+```
+
+**Test multi-channel recording:**
+```bash
+python test_umc_input_detailed.py   # Test specific device with various channel counts
+```
 
 ---
 

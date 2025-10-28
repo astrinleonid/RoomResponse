@@ -192,10 +192,16 @@ class SeriesSettingsPanel:
 
         with col3:
             st.markdown("**Waveform & Analysis**")
+            waveform_options = ["sine", "square", "voice_coil"]
+            current_form = st.session_state['series_pulse_form']
+            if current_form in waveform_options:
+                default_idx = waveform_options.index(current_form)
+            else:
+                default_idx = 0
             pulse_form = st.selectbox(
                 "Pulse waveform",
-                ["sine", "square"],
-                index=0 if st.session_state['series_pulse_form'] == 'sine' else 1
+                waveform_options,
+                index=default_idx
             )
             extra_ms = st.number_input(
                 "Extra record time (ms)",

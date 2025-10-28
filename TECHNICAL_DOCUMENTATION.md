@@ -142,9 +142,10 @@ High-level Python interface for room impulse response measurement. Abstracts SDL
    - Manage audio device selection
 
 2. **Signal Generation**
-   - Generate pulse trains (sine or square waves)
+   - Generate pulse trains (sine, square, or voice_coil waveforms)
    - Apply fade envelopes to prevent clicks
    - Ensure exact sample-level timing
+   - Voice coil mode: combines positive pulse with negative pull-back for actuator control
 
 3. **Audio Recording**
    - Coordinate simultaneous playback and recording
@@ -236,7 +237,7 @@ impulse_response = concatenate([room_response[onset_index:],
   "num_pulses": 8,
   "volume": 0.4,
   "pulse_frequency": 1000,
-  "impulse_form": "sine"
+  "impulse_form": "sine"  // Options: "sine", "square", "voice_coil"
 }
 ```
 
@@ -2128,6 +2129,179 @@ class MyPanel:
 
 **Reference**: See [GUI_MULTICHANNEL_INTEGRATION_PLAN.md](GUI_MULTICHANNEL_INTEGRATION_PLAN.md) for complete implementation details.
 
+### 10.5 Multi-Channel Device Driver Requirements
+
+**Critical Finding**: Professional audio interfaces require **native manufacturer drivers** for multi-channel operation.
+
+#### 10.5.1 Driver Architecture Issue
+
+**Windows Generic USB Audio Class 2.0 Driver Limitations:**
+
+The Windows generic USB Audio driver has a fundamental limitation:
+- **Device Enumeration**: Correctly reports device capabilities (e.g., "10 input channels available")
+- **WDM/WASAPI Interface**: **Hardcoded to stereo (2 channels)** only
+- **Result**: SDL can enumerate the device with correct channel count, but `IAudioClient::Initialize()` fails with "Invalid source channels"
+
+**Technical Root Cause:**
+```
+Device Capabilities (USB descriptor)     ✓ Correct: Reports 10 channels
+    ↓
+SDL_GetAudioDeviceSpec()                ✓ Correct: Returns 10 max_channels
+    ↓
+IAudioClient::GetMixFormat()            ✗ WRONG: Returns 2-channel format only
+    ↓
+IAudioClient::Initialize()              ✗ FAILS: "Invalid source channels"
+```
+
+**Why This Happens:**
+- Generic driver implements USB Audio Class 2.0 spec for basic compatibility
+- WDM/WASAPI kernel interface is limited to stereo for generic devices
+- Microsoft prioritizes broad compatibility over advanced features
+- Multi-channel access requires manufacturer-specific WDM driver
+
+#### 10.5.2 Native Driver Solution
+
+**Native manufacturer drivers provide:**
+- ✓ Full multi-channel WDM/WASAPI access (all input/output channels)
+- ✓ ASIO driver for professional low-latency operation
+- ✓ Proper channel mask and format reporting to Windows
+- ✓ Device-specific control panel and configuration
+- ✓ Better audio quality and stability
+
+**Example: Behringer UMC1820**
+
+| Driver Type | Input Channels | Output Channels | WDM/WASAPI | ASIO |
+|-------------|----------------|-----------------|------------|------|
+| Generic USB | Reports: 10    | Reports: 12     | ✗ Limited to 2 | ✗ Not available |
+| Behringer Native | 18 | 20 | ✓ Full access | ✓ Available |
+
+#### 10.5.3 Device-Specific Installation Guides
+
+**Behringer UMC1820:**
+- **Detection Script**: `python check_umc_driver.py`
+- **Installation Guide**: [install_behringer_driver.md](install_behringer_driver.md)
+- **Driver Download**: https://www.behringer.com/downloads.html
+- **Recommended Version**: 4.59.0 or 5.57.0
+- **Test Script**: `python test_umc_input_detailed.py`
+
+**Other Professional Interfaces:**
+
+| Manufacturer | Driver Name | Max Channels | Download |
+|--------------|-------------|--------------|----------|
+| Focusrite | Focusrite Control + ASIO | 2-18 (model dependent) | https://focusrite.com/downloads |
+| PreSonus | Universal Control + ASIO | 2-32 (model dependent) | https://www.presonus.com/products |
+| MOTU | MOTU AVB/USB Driver | 6-64 (model dependent) | https://motu.com/download |
+| RME | RME ASIO + TotalMix FX | 8-192 (model dependent) | https://www.rme-audio.de/downloads |
+
+#### 10.5.4 Diagnostic Tools
+
+**Check Current Driver Status:**
+```bash
+python check_umc_driver.py
+```
+
+**Output Example (Generic Driver):**
+```
+CHECKING DEVICE MANAGER
+✗ Using generic USB Audio driver (NEEDS FIXING)
+
+CHECKING SDL AUDIO DEVICES
+→ UMC1820 (10 channels) detected
+
+DIAGNOSIS & RECOMMENDATIONS
+✗ STATUS: PROBLEM - Using generic Windows USB Audio driver
+Multi-channel recording (10 channels) will NOT work.
+
+SOLUTION: Install Behringer native driver
+1. Read: install_behringer_driver.md
+2. Download from: https://www.behringer.com/downloads.html
+3. Restart computer after installation
+```
+
+**Test Multi-Channel Functionality:**
+```bash
+# Test 9 device combinations (input/output, various channel counts)
+python test_umc_multichannel.py
+
+# Test detailed channel counts (1, 2, 4, 6, 8, 10 channels)
+python test_umc_input_detailed.py
+
+# Test SDL device enumeration
+python test_device_enumeration.py
+```
+
+#### 10.5.5 Technical Deep Dive
+
+**SDL2 WASAPI Backend Limitation:**
+
+SDL 2.30.0 WASAPI backend (`src/audio/wasapi/SDL_wasapi.c`) uses `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` flag only for **sample rate** mismatches, not **channel count** mismatches.
+
+**Current SDL Code (line 740-750):**
+```c
+DWORD streamflags = 0;
+if ((DWORD)device->spec.freq != waveformat->nSamplesPerSec) {
+    streamflags |= (AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY);
+    waveformat->nSamplesPerSec = device->spec.freq;
+}
+// ❌ No channel count check here!
+```
+
+**Why This Matters:**
+- Even with `SDL_AUDIO_ALLOW_CHANNELS_CHANGE` flag, SDL won't request channel conversion
+- Generic driver returns incompatible channel format via `GetMixFormat()`
+- `IAudioClient::Initialize()` fails because formats don't match
+
+**Proposed SDL Fix (not implemented):**
+```c
+if ((DWORD)device->spec.freq != waveformat->nSamplesPerSec ||
+    device->spec.channels != waveformat->nChannels) {
+    streamflags |= (AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY);
+    // ... set both sample rate and channel count
+}
+```
+
+**Solution Status**: Native drivers bypass this issue entirely by providing correct multi-channel WDM/WASAPI interface.
+
+#### 10.5.6 Implementation Changes for Driver Support
+
+**Files Modified:**
+- `sdl_audio_core/src/audio_engine.cpp`:
+  - Added `SDL_AUDIO_ALLOW_CHANNELS_CHANGE` to both input and output devices
+  - Implemented multi-channel output playback (mono-to-multichannel replication)
+  - Added channel negotiation logging
+
+- `sdl_audio_core/src/python_bindings.cpp`:
+  - Added output device fallback mechanism (default → Device 0)
+  - Improved error reporting for device initialization failures
+
+**Files Created:**
+- `SOLUTION_INSTALL_BEHRINGER_DRIVER.md` - Complete driver installation guide
+- `SOLUTION_UMC1820_WASAPI.md` - Technical analysis of SDL/WASAPI limitations
+- `TROUBLESHOOTING_UMC1820.md` - User-focused troubleshooting
+- `install_behringer_driver.md` - Step-by-step installation instructions
+- `check_umc_driver.py` - Driver status detection script
+- `test_umc_multichannel.py` - Comprehensive device combination tests
+- `test_umc_input_detailed.py` - Detailed channel count tests
+
+**Expected Behavior After Native Driver Installation:**
+```bash
+python test_umc_input_detailed.py
+
+# With native driver:
+Testing with 1 channels...  ✓ SUCCESS - got 1 channels
+Testing with 2 channels...  ✓ SUCCESS - got 2 channels
+Testing with 4 channels...  ✓ SUCCESS - got 4 channels
+Testing with 8 channels...  ✓ SUCCESS - got 8 channels
+Testing with 10 channels... ✓ SUCCESS - got 10 channels
+```
+
+**Reference Documents:**
+- [SOLUTION_INSTALL_BEHRINGER_DRIVER.md](SOLUTION_INSTALL_BEHRINGER_DRIVER.md) - Complete solution guide
+- [SOLUTION_UMC1820_WASAPI.md](SOLUTION_UMC1820_WASAPI.md) - Technical deep-dive
+- [install_behringer_driver.md](install_behringer_driver.md) - Installation instructions
+
 ---
 
 ## 11. Configuration & Metadata
@@ -2144,7 +2318,7 @@ class MyPanel:
   "num_pulses": 8,               // Number of pulses in train
   "volume": 0.4,                 // Playback amplitude (0.0-1.0)
   "pulse_frequency": 1000,       // Carrier frequency for sine (Hz)
-  "impulse_form": "sine"         // "sine" or "square"
+  "impulse_form": "sine"         // Options: "sine", "square", "voice_coil"
 }
 ```
 
@@ -2153,7 +2327,16 @@ class MyPanel:
 - `cycle_duration >= pulse_duration`
 - `pulse_fade < pulse_duration / 2`
 - `volume` in `[0.0, 1.0]`
-- `impulse_form` in `["sine", "square"]`
+- `impulse_form` in `["sine", "square", "voice_coil"]`
+
+**Impulse Form Details**:
+- **sine**: Sinusoidal pulse at `pulse_frequency` Hz with fade in/out
+- **square**: Rectangular pulse with fade in/out to prevent clicks
+- **voice_coil**: Square pulse with negative pull-back for voice coil actuator control
+  - Main pulse duration controlled by `pulse_duration`
+  - Pull-back duration controlled by `pulse_fade` parameter
+  - Pull-back structure: 1/3 delay (zeros) + 2/3 negative ramp (-0.5 to 0)
+  - Optimized for electromagnetic actuator control with proper retraction
 
 ### 11.2 Session Metadata (session_metadata.json)
 
@@ -2254,8 +2437,8 @@ def _validate_config(self):
     if not 0.0 <= self.volume <= 1.0:
         errors.append("Volume must be between 0.0 and 1.0")
 
-    if self.impulse_form not in ["square", "sine"]:
-        errors.append("Impulse form must be 'square' or 'sine'")
+    if self.impulse_form not in ["square", "sine", "voice_coil"]:
+        errors.append("Impulse form must be 'square', 'sine', or 'voice_coil'")
 
     if errors:
         raise ValueError(f"Configuration errors: {'; '.join(errors)}")
@@ -2534,24 +2717,46 @@ if last_root != resolved:
 
 ### 14.3 Custom Signal Forms
 
-**Steps**:
-1. **Add new impulse form** in `RoomResponseRecorder`:
+**Built-in Impulse Forms**:
+
+The system currently supports three impulse forms:
+
+1. **sine**: Sinusoidal carrier wave at `pulse_frequency` Hz
+2. **square**: Rectangular pulse with fade in/out
+3. **voice_coil**: Square pulse with negative pull-back for actuator control
+   - Main pulse + 1/3 delay + 2/3 negative ramp
+   - Optimized for electromagnetic voice coil actuators
+
+**Adding New Impulse Forms**:
+
+To add a new impulse form (e.g., "chirp"):
+
+1. **Add new impulse form** in `RoomResponseRecorder._generate_single_pulse()`:
    ```python
    def _generate_single_pulse(self, exact_samples: int) -> np.ndarray:
-       if self.impulse_form == "chirp":
+       if self.impulse_form == "sine":
+           # ... existing sine code
+       elif self.impulse_form == "voice_coil":
+           # ... existing voice_coil code
+       elif self.impulse_form == "chirp":
            # Linear frequency sweep
            t = np.linspace(0, exact_samples / self.sample_rate, exact_samples)
            f0, f1 = 500, 2000  # 500Hz to 2000Hz sweep
            phase = 2 * np.pi * (f0 * t + (f1 - f0) * t**2 / (2 * exact_samples / self.sample_rate))
            pulse = np.sin(phase)
-       ...
+       else:  # square
+           # ... existing square code
    ```
 
-2. **Update configuration schema** validation:
+2. **Update configuration validation** in `_validate_config()`:
    ```python
-   if self.impulse_form not in ["square", "sine", "chirp"]:
-       raise ValueError("...")
+   if self.impulse_form not in ["square", "sine", "voice_coil", "chirp"]:
+       raise ValueError("Impulse form must be 'square', 'sine', 'voice_coil', or 'chirp'")
    ```
+
+3. **Update GUI panels** to include new option:
+   - `gui_series_settings_panel.py`: Add to waveform_options list
+   - `gui_single_pulse_recorder.py`: Add to waveform_options list
 
 ### 14.4 Additional GUI Panels
 

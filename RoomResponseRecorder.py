@@ -291,8 +291,8 @@ class RoomResponseRecorder:
             raise ValueError("Fade duration too long for pulse duration")
         if not 0.0 <= self.volume <= 1.0:
             raise ValueError("Volume must be between 0.0 and 1.0")
-        if self.impulse_form not in ["square", "sine"]:
-            raise ValueError("Impulse form must be 'square' or 'sine'")
+        if self.impulse_form not in ["square", "sine", "voice_coil"]:
+            raise ValueError("Impulse form must be 'square', 'sine', or 'voice_coil'")
 
     def _validate_multichannel_config(self):
         """Validate multi-channel configuration"""
@@ -321,15 +321,46 @@ class RoomResponseRecorder:
         if self.impulse_form == "sine":
             t = np.linspace(0, exact_samples / self.sample_rate, exact_samples, endpoint=False)
             pulse = np.sin(2 * np.pi * self.pulse_frequency * t)
+
+            # Apply fade in/out to prevent clicks
+            if self.fade_samples > 0:
+                fade_in = np.linspace(0, 1, self.fade_samples)
+                fade_out = np.linspace(1, 0, self.fade_samples)
+                pulse[:self.fade_samples] *= fade_in
+                pulse[-self.fade_samples:] *= fade_out
+
+        elif self.impulse_form == "voice_coil":
+            # Voice coil actuator impulse: square pulse + negative pull-back
+            # pulse_duration controls the main positive pulse
+            # fade controls the pull-back negative signal duration
+
+            # Main positive square pulse
+            pulse = np.ones(exact_samples)
+
+            # Add pull-back negative signal at the end
+            if self.fade_samples > 0 and self.fade_samples < exact_samples:
+                # Pull-back signal: negative square wave
+                # Position it at the end of the pulse
+                pullback_samples = np.zeros(self.fade_samples)
+                pullback_impulse_start = self.fade_samples//3
+                pullback_impulse_samples = self.fade_samples - pullback_impulse_start
+                pullback_samples[pullback_impulse_start:] = np.linspace(-0.5, 0, pullback_impulse_samples)
+                pullback_start = exact_samples - self.fade_samples
+                pulse[pullback_start:] = pullback_samples
+                #-0.5  # Negative pull-back at half amplitude
+
+
+
+
         else:  # square
             pulse = np.ones(exact_samples)
 
-        # Apply fade in/out to prevent clicks
-        if self.fade_samples > 0:
-            fade_in = np.linspace(0, 1, self.fade_samples)
-            fade_out = np.linspace(1, 0, self.fade_samples)
-            pulse[:self.fade_samples] *= fade_in
-            pulse[-self.fade_samples:] *= fade_out
+            # Apply fade in/out to prevent clicks
+            if self.fade_samples > 0:
+                fade_in = np.linspace(0, 1, self.fade_samples)
+                fade_out = np.linspace(1, 0, self.fade_samples)
+                pulse[:self.fade_samples] *= fade_in
+                pulse[-self.fade_samples:] *= fade_out
 
         return pulse * self.volume
 
