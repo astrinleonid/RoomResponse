@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import numpy as np
 from typing import Dict, Optional, Any
 
 # Streamlit imports
@@ -49,6 +50,14 @@ try:
 except ImportError:
     SeriesSettingsPanel = None  # type: ignore
     SERIES_SETTINGS_AVAILABLE = False
+
+# Audio visualizer (modular)
+try:
+    from gui_audio_visualizer import AudioVisualizer
+    AUDIO_VISUALIZER_AVAILABLE = True
+except ImportError:
+    AudioVisualizer = None  # type: ignore
+    AUDIO_VISUALIZER_AVAILABLE = False
 
 
 class AudioSettingsPanel:
@@ -918,8 +927,14 @@ class AudioSettingsPanel:
         """
         Perform a calibration test by recording impulses and validating quality.
 
+        This method now records ALL impulses regardless of quality, extracts
+        per-cycle waveforms and metrics, and returns them for user exploration.
+
         Returns:
-            Dictionary with test results including per-cycle metrics
+            Dictionary with test results including:
+            - all_calibration_cycles: Raw waveforms for each cycle (np.ndarray)
+            - validation_results: Quality metrics for each cycle
+            - sample_rate: Sample rate for waveform playback
         """
         # Validate device capabilities before recording
         num_channels = self.recorder.multichannel_config.get('num_channels', 1)
@@ -954,85 +969,261 @@ class AudioSettingsPanel:
         if recorded_audio is None:
             raise ValueError("Recording failed - no data captured. Check your audio device connections.")
 
-        # Process the recorded signal
-        result = self.recorder._process_recorded_signal(recorded_audio)
-
-        if result is None or 'impulse' not in result:
-            raise ValueError("Processing failed or no impulse data returned")
-
-        # Extract calibration channel data
+        # Extract calibration channel raw data
         cal_ch = self.recorder.multichannel_config.get('calibration_channel')
         if cal_ch is None:
             raise ValueError("Calibration channel not configured")
 
-        # Get metadata about validation
-        metadata = result.get('metadata', {})
+        # For multi-channel, recorded_audio is a dict
+        if isinstance(recorded_audio, dict):
+            cal_raw = recorded_audio.get(cal_ch)
+        else:
+            # Single channel fallback
+            cal_raw = recorded_audio
+
+        if cal_raw is None:
+            raise ValueError(f"Calibration channel {cal_ch} not found in recorded data")
+
+        # Reshape calibration data into cycles
+        expected_samples = self.recorder.cycle_samples * self.recorder.num_pulses
+
+        # Pad or trim to expected length
+        if len(cal_raw) < expected_samples:
+            padded = np.zeros(expected_samples)
+            padded[:len(cal_raw)] = cal_raw
+            cal_raw = padded
+        else:
+            cal_raw = cal_raw[:expected_samples]
+
+        # Reshape into individual cycles
+        calibration_cycles = cal_raw.reshape(self.recorder.num_pulses, self.recorder.cycle_samples)
+
+        # Run validation on each cycle (but don't filter them out)
+        from calibration_validator import CalibrationValidator
+        validator = CalibrationValidator(
+            self.recorder.calibration_quality_config,
+            self.recorder.sample_rate
+        )
+
+        validation_results = []
+        for cycle_idx in range(self.recorder.num_pulses):
+            validation = validator.validate_cycle(
+                calibration_cycles[cycle_idx],
+                cycle_idx
+            )
+            # Convert to dict for easier handling in UI
+            validation_dict = {
+                'cycle_index': cycle_idx,
+                'calibration_valid': validation.calibration_valid,
+                'calibration_metrics': validation.calibration_metrics,
+                'calibration_failures': validation.calibration_failures
+            }
+            validation_results.append(validation_dict)
 
         return {
             'success': True,
             'num_cycles': self.recorder.num_pulses,
             'calibration_channel': cal_ch,
-            'metadata': metadata,
-            'result': result
+            'sample_rate': self.recorder.sample_rate,
+            'all_calibration_cycles': calibration_cycles,  # All raw cycles (num_pulses x cycle_samples)
+            'validation_results': validation_results,  # Per-cycle quality metrics
+            'cycle_duration_s': self.recorder.cycle_samples / self.recorder.sample_rate
         }
 
     def _render_calibration_test_results(self, results: Dict):
-        """Render calibration test results with per-cycle quality metrics."""
+        """
+        Render calibration test results with per-cycle waveform visualization.
+
+        Uses AudioVisualizer to display each calibration impulse cycle with
+        quality metrics overlaid, allowing the user to explore and decide
+        upon quality criteria.
+        """
         st.markdown("#### Calibration Test Results")
 
-        metadata = results.get('metadata', {})
+        # Extract data
         num_cycles = results.get('num_cycles', 0)
         cal_ch = results.get('calibration_channel', 0)
+        sample_rate = results.get('sample_rate', 48000)
+        calibration_cycles = results.get('all_calibration_cycles')  # Shape: (num_cycles, cycle_samples)
+        validation_results = results.get('validation_results', [])
+        cycle_duration_s = results.get('cycle_duration_s', 0.1)
+
+        if calibration_cycles is None or len(validation_results) == 0:
+            st.warning("No calibration data available. Please run the calibration test.")
+            return
 
         # Overall summary
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Cycles", num_cycles)
+            st.metric("Total Cycles Recorded", num_cycles)
         with col2:
-            valid_cycles = metadata.get('valid_cycles_after_calibration', [])
-            st.metric("Valid Cycles", len(valid_cycles) if valid_cycles else "N/A")
+            valid_count = sum(1 for v in validation_results if v.get('calibration_valid', False))
+            st.metric("Valid Cycles", valid_count)
         with col3:
             st.metric("Calibration Channel", f"Ch {cal_ch}")
 
-        # Per-cycle quality metrics
-        st.markdown("#### Per-Cycle Quality Metrics")
+        st.markdown("---")
 
-        if 'calibration_results' in metadata:
-            cal_results = metadata['calibration_results']
+        # Create a summary table
+        st.markdown("#### Quality Metrics Summary")
+        import pandas as pd
 
-            # Create a table of results
-            import pandas as pd
+        table_data = []
+        for v_result in validation_results:
+            cycle_idx = v_result.get('cycle_index', 0)
+            valid = v_result.get('calibration_valid', False)
+            metrics = v_result.get('calibration_metrics', {})
+            failures = v_result.get('calibration_failures', [])
 
-            table_data = []
-            for cycle_result in cal_results:
-                cycle_idx = cycle_result.get('cycle_index', 0)
-                valid = cycle_result.get('calibration_valid', False)
-                metrics = cycle_result.get('calibration_metrics', {})
-                failures = cycle_result.get('calibration_failures', [])
+            row = {
+                'Cycle': cycle_idx,
+                'Valid': '✓' if valid else '✗',
+                'Peak Amp': f"{metrics.get('peak_amplitude', 0):.3f}",
+                'Duration (ms)': f"{metrics.get('duration_ms', 0):.1f}",
+                'Secondary Peak': f"{metrics.get('secondary_peak_ratio', 0):.2f}",
+                'Tail RMS': f"{metrics.get('tail_rms_ratio', 0):.3f}",
+                'Issues': ', '.join(failures) if failures else 'None'
+            }
+            table_data.append(row)
 
-                row = {
-                    'Cycle': cycle_idx,
-                    'Valid': '✓' if valid else '✗',
-                    'Peak Amp': f"{metrics.get('peak_amplitude', 0):.3f}",
-                    'Duration (ms)': f"{metrics.get('duration_ms', 0):.1f}",
-                    'Secondary Peak': f"{metrics.get('secondary_peak_ratio', 0):.2f}",
-                    'Tail RMS': f"{metrics.get('tail_rms_ratio', 0):.3f}",
-                    'Issues': ', '.join(failures) if failures else 'None'
-                }
-                table_data.append(row)
+        if table_data:
+            df = pd.DataFrame(table_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
-            if table_data:
-                df = pd.DataFrame(table_data)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown("---")
+
+        # Per-cycle visualization section
+        st.markdown("#### Per-Cycle Waveform Analysis")
+        st.markdown("Explore individual calibration impulse cycles to assess quality and adjust thresholds.")
+
+        # Cycle selector
+        selected_cycle = st.selectbox(
+            "Select Cycle to Visualize",
+            options=list(range(num_cycles)),
+            format_func=lambda x: f"Cycle {x} {'✓ Valid' if validation_results[x].get('calibration_valid', False) else '✗ Invalid'}",
+            key="cal_test_cycle_selector"
+        )
+
+        # Get data for selected cycle
+        cycle_waveform = calibration_cycles[selected_cycle]
+        cycle_validation = validation_results[selected_cycle]
+        cycle_metrics = cycle_validation.get('calibration_metrics', {})
+        cycle_failures = cycle_validation.get('calibration_failures', [])
+        is_valid = cycle_validation.get('calibration_valid', False)
+
+        # Display cycle info
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            if is_valid:
+                st.success(f"✓ Cycle {selected_cycle}: **VALID**")
             else:
-                st.info("No calibration validation data available in results.")
-        else:
-            st.info("Calibration validation not performed. This may be because calibration channel is not enabled or recording failed.")
+                st.error(f"✗ Cycle {selected_cycle}: **INVALID** - {', '.join(cycle_failures)}")
 
-        # Show any additional warnings or information
-        if metadata.get('calibration_failed', False):
-            st.error("⚠️ Calibration validation failed!")
-            st.write("**Reason:**", metadata.get('calibration_error', 'Unknown error'))
+        with col2:
+            st.info(f"Duration: {cycle_duration_s * 1000:.1f} ms")
+
+        # Display metrics in columns
+        st.markdown("**Quality Metrics:**")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Peak Amplitude", f"{cycle_metrics.get('peak_amplitude', 0):.3f}")
+        with col2:
+            st.metric("Duration (ms)", f"{cycle_metrics.get('duration_ms', 0):.1f}")
+        with col3:
+            st.metric("Secondary Peak", f"{cycle_metrics.get('secondary_peak_ratio', 0):.2f}")
+        with col4:
+            st.metric("Tail RMS Ratio", f"{cycle_metrics.get('tail_rms_ratio', 0):.3f}")
+
+        # Visualize the waveform using AudioVisualizer
+        if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
+            st.markdown("**Waveform:**")
+
+            # Create a unique visualizer for this cycle
+            visualizer = AudioVisualizer(component_id=f"cal_cycle_{selected_cycle}")
+
+            # Render with compact settings (no export/analysis tabs for cleaner UI)
+            visualizer.render(
+                audio_data=cycle_waveform,
+                sample_rate=sample_rate,
+                title=f"Calibration Impulse - Cycle {selected_cycle}",
+                show_controls=True,
+                show_analysis=True,
+                height=300
+            )
+        else:
+            st.warning("AudioVisualizer not available - cannot display waveform")
+            st.info("Install gui_audio_visualizer.py to enable waveform visualization")
+
+        st.markdown("---")
+
+        # Comparison view - overlay multiple cycles
+        st.markdown("#### Compare Multiple Cycles")
+        st.markdown("Overlay multiple cycles to compare their waveforms and identify outliers.")
+
+        # Multi-select for cycles to compare
+        cycles_to_compare = st.multiselect(
+            "Select cycles to overlay",
+            options=list(range(num_cycles)),
+            default=[0] if num_cycles > 0 else [],
+            format_func=lambda x: f"Cycle {x} {'✓' if validation_results[x].get('calibration_valid', False) else '✗'}",
+            key="cal_test_cycles_compare"
+        )
+
+        if len(cycles_to_compare) > 0:
+            # Use AudioVisualizer static method for overlay plotting
+            if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
+                signals = [calibration_cycles[i] for i in cycles_to_compare]
+                labels = [f"Cycle {i} {'✓' if validation_results[i].get('calibration_valid', False) else '✗'}"
+                         for i in cycles_to_compare]
+
+                fig = AudioVisualizer.render_overlay_plot(
+                    audio_signals=signals,
+                    sample_rate=sample_rate,
+                    title="Calibration Impulse Comparison",
+                    labels=labels,
+                    normalize=True,
+                    max_signals=8,
+                    show_legend=True,
+                    figsize=(12, 5),
+                    alpha=0.7,
+                    linewidth=1.2
+                )
+
+                st.pyplot(fig, use_container_width=True)
+            else:
+                st.info("Select AudioVisualizer component to enable overlay comparison")
+        else:
+            st.info("Select one or more cycles above to compare their waveforms")
+
+        st.markdown("---")
+
+        # User guidance
+        with st.expander("💡 How to Use This Tool", expanded=False):
+            st.markdown("""
+            **Purpose:** This tool helps you explore recorded calibration impulses and adjust quality thresholds.
+
+            **Workflow:**
+            1. **Run Test:** Click "Run Calibration Test" to record a series of calibration impulses
+            2. **Review Summary:** Check the summary table to see which cycles passed/failed validation
+            3. **Inspect Individual Cycles:** Use the cycle selector to examine each impulse waveform
+            4. **Compare Cycles:** Use the overlay feature to visually compare multiple cycles
+            5. **Adjust Thresholds:** Based on your observations, adjust the quality parameters above
+            6. **Re-run Test:** Run another test to verify your new thresholds work correctly
+
+            **Quality Criteria:**
+            - **Peak Amplitude:** Should be strong but not clipping (typically 0.1 - 0.95)
+            - **Duration:** Impulse should be sharp (typically 2-20 ms)
+            - **Secondary Peak:** No double-hits or echoes (typically < 0.3)
+            - **Tail RMS:** Low noise in the tail region (typically < 0.15)
+
+            **Tips:**
+            - Invalid cycles may indicate inconsistent hammer strikes
+            - Use the waveform zoom to examine details
+            - The overlay plot helps identify outliers
+            - Adjust quality parameters based on your specific measurement setup
+            """)
 
     def _render_series_settings_tab(self):
         """Render the series settings if the component is available."""
