@@ -139,11 +139,30 @@ class CollectionPanel:
 
     def _render_mode_selection(self) -> str:
         st.markdown("### Collection Mode")
-        return st.radio(
+
+        # Check if mode was set by navigation
+        nav_mode = st.session_state.get('collect_mode', None)
+        if nav_mode:
+            # Use the navigation-specified mode as default
+            default_index = 0 if nav_mode == "Single Scenario" else 1
+        else:
+            default_index = 0
+
+        # Callback to update mode immediately
+        def on_mode_change():
+            """Update collect_mode when user changes selection."""
+            st.session_state['collect_mode'] = st.session_state.collect_mode_radio
+
+        mode = st.radio(
             "Choose collection mode:",
-            options=["Single Scenario", "Series"], index=0,
+            options=["Single Scenario", "Series"],
+            index=default_index,
+            key="collect_mode_radio",
+            on_change=on_mode_change,
             help="Single: blocking. Series: background worker.",
         )
+
+        return mode
 
     def _render_common_configuration(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
         st.markdown("### Common Configuration")

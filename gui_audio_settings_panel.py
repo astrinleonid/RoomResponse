@@ -108,7 +108,7 @@ class AudioSettingsPanel:
     def render(self):
         st.header("Audio Settings")
 
-        # Top status (recorder + SDL readiness)
+        # Top status (recorder + SDL readiness + critical system info)
         self._render_recorder_status()
 
         if not self.recorder:
@@ -122,59 +122,122 @@ class AudioSettingsPanel:
         # Quick status bar (IDs + derived latency from UI buffer)
         self._render_audio_status_bar()
 
-        # Tabs: System Info + Device Selection + Calibration Impulse (+ Series Settings when available)
+        # Determine which focus area was requested from navigation
+        focus = st.session_state.get('audio_settings_focus', '')
+
+        # Build tab structure
         if SERIES_SETTINGS_AVAILABLE and self._series_settings_panel:
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "System Info",
-                "Device Selection",
+            tab_names = [
+                "Device Selection & Testing",
                 "Calibration Impulse",
                 "Series Settings"
-            ])
+            ]
+            # Map focus to tab index and section
+            focus_map = {
+                'device_selection': (0, None),
+                'multichannel': (0, 'multichannel'),  # Tab 0, multichannel section
+                'calibration': (1, None),
+                'series_settings': (2, None)
+            }
         else:
-            tab1, tab2, tab3 = st.tabs([
-                "System Info",
-                "Device Selection",
+            tab_names = [
+                "Device Selection & Testing",
                 "Calibration Impulse"
-            ])
-            tab4 = None
+            ]
+            # Map focus to tab index and section (no Series Settings tab)
+            focus_map = {
+                'device_selection': (0, None),
+                'multichannel': (0, 'multichannel'),  # Tab 0, multichannel section
+                'calibration': (1, None),
+                'series_settings': (None, None)  # Not available
+            }
 
-        with tab1:
-            self._render_system_info()
-            self._render_paths_and_modules()
+        # Determine which tab to show based on focus
+        if focus and focus in focus_map:
+            tab_idx, section = focus_map[focus]
+            if tab_idx is not None:
+                default_tab = tab_idx
+            else:
+                default_tab = 0
+        else:
+            default_tab = 0
 
-        with tab2:
-            self._render_device_selection_tab()
+        # Initialize or get current tab selection from session state
+        if 'audio_settings_current_tab' not in st.session_state:
+            st.session_state['audio_settings_current_tab'] = default_tab
+        elif focus:  # If focus was set by navigation, override current tab
+            st.session_state['audio_settings_current_tab'] = default_tab
 
-        with tab3:
+        # Tab selector (radio buttons for programmatic control)
+        st.markdown("---")
+
+        # Use the session state value as the current tab index
+        current_tab_idx = st.session_state['audio_settings_current_tab']
+
+        # Callback to update tab selection immediately
+        def on_tab_change():
+            """Update current tab index when user selects a new tab."""
+            selected_tab_name = st.session_state.audio_settings_tab_selector
+            selected_idx = tab_names.index(selected_tab_name)
+            st.session_state['audio_settings_current_tab'] = selected_idx
+
+        selected_tab_name = st.radio(
+            "Section:",
+            options=tab_names,
+            index=current_tab_idx,
+            key="audio_settings_tab_selector",
+            on_change=on_tab_change,
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+        # Use the current index from session state (updated by callback)
+        current_tab_idx = st.session_state['audio_settings_current_tab']
+
+        st.markdown("---")
+
+        # Show subsection indicator if navigating to multichannel
+        subsection = None
+        if focus == 'multichannel' and current_tab_idx == 0:
+            st.info(f"📍 **Multi-Channel Configuration** section")
+            subsection = 'multichannel'
+
+        # Render the selected tab content
+        if current_tab_idx == 0:
+            self._render_device_selection_tab(focus_subsection=subsection)
+        elif current_tab_idx == 1:
             self._render_calibration_impulse_tab()
+        elif current_tab_idx == 2 and len(tab_names) > 2:
+            self._render_series_settings_tab()
 
-        if tab4:
-            with tab4:
-                self._render_series_settings_tab()
+        # Clear focus after rendering so it doesn't persist
+        if 'audio_settings_focus' in st.session_state:
+            del st.session_state['audio_settings_focus']
 
     # -------------------------
     # Internal helpers
     # -------------------------
 
     def _render_recorder_status(self):
-        """Top status panel for recorder and SDL."""
-        cols = st.columns(3)
+        """Top status panel for recorder, SDL, and critical system info."""
+        # Row 1: Core status
+        cols = st.columns(5)
 
         with cols[0]:
             st.markdown("**Recorder**")
             if self.recorder:
-                st.success("RoomResponseRecorder ready")
+                st.success("Ready")
             elif RECORDER_AVAILABLE:
-                st.warning("Recorder module available but instance not created")
+                st.warning("Not created")
             else:
-                st.error("Recorder module missing")
+                st.error("Missing")
 
         with cols[1]:
             st.markdown("**SDL Core**")
             if self.sdl_ready:
-                st.success("SDL Ready")
+                st.success("Ready")
             else:
-                st.error("SDL Missing")
+                st.error("Missing")
 
         with cols[2]:
             st.markdown("**Drivers**")
@@ -183,11 +246,35 @@ class AudioSettingsPanel:
                     core = self.recorder.get_sdl_core_info()
                     drivers = core.get("drivers", []) or []
                     if drivers:
-                        st.info(f"{len(drivers)} drivers")
+                        st.info(f"{len(drivers)} avail")
                     else:
-                        st.warning("No drivers found")
+                        st.warning("None")
                 except Exception as e:
-                    st.warning(f"Drivers unavailable: {e}")
+                    st.warning("N/A")
+            else:
+                st.info("N/A")
+
+        with cols[3]:
+            st.markdown("**Devices**")
+            if self.recorder:
+                try:
+                    core = self.recorder.get_sdl_core_info()
+                    counts = core.get("device_counts", {"input": 0, "output": 0})
+                    st.info(f"{counts.get('input', 0)} in / {counts.get('output', 0)} out")
+                except Exception:
+                    st.info("N/A")
+            else:
+                st.info("N/A")
+
+        with cols[4]:
+            st.markdown("**Version**")
+            if self.recorder:
+                try:
+                    core = self.recorder.get_sdl_core_info()
+                    mod_ver = core.get("module_version", "?")
+                    st.info(f"v{mod_ver}")
+                except Exception:
+                    st.info("N/A")
             else:
                 st.info("N/A")
 
@@ -401,8 +488,12 @@ class AudioSettingsPanel:
                     st.write("Python files in current directory:")
                     st.code('\n'.join(sorted(files)))
 
-    def _render_device_selection_tab(self):
-        """Render device selection using the modular component with shared recorder."""
+    def _render_device_selection_tab(self, focus_subsection=None):
+        """Render device selection using the modular component with shared recorder.
+
+        Args:
+            focus_subsection: Optional subsection to highlight ('multichannel' for multi-channel config)
+        """
         st.subheader("Device Selection")
 
         if DEVICE_SELECTOR_AVAILABLE and self._device_selector:
@@ -439,10 +530,18 @@ class AudioSettingsPanel:
 
         # Multi-channel configuration section
         st.markdown("---")
-        self._render_multichannel_configuration()
+        self._render_multichannel_configuration(focus_subsection=focus_subsection)
 
-    def _render_multichannel_configuration(self):
-        """Render multi-channel configuration UI."""
+    def _render_multichannel_configuration(self, focus_subsection=None):
+        """Render multi-channel configuration UI.
+
+        Args:
+            focus_subsection: Optional subsection focus indicator
+        """
+        # Highlight this section if it's the focused subsection
+        if focus_subsection == 'multichannel':
+            st.success("📍 **Multi-Channel Configuration** ← You are here")
+
         st.subheader("Multi-Channel Configuration")
         st.markdown("Configure multi-channel recording settings.")
 

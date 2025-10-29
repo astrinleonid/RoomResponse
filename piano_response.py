@@ -124,7 +124,7 @@ class AudioCollectionGUI:
 
     def _ensure_dataset_root_ui(self) -> str:
         """Dataset root selection interface."""
-        st.sidebar.markdown("### Dataset Location")
+        st.sidebar.markdown("### Dataset")
 
         current_root = st.session_state.get(SK_DATASET_ROOT,
                                           os.path.join(os.getcwd(), SK_DEFAULT_DATASET_ROOT))
@@ -134,10 +134,10 @@ class AudioCollectionGUI:
 
         # Compact folder input
         st.sidebar.text_input(
-            "Dataset folder (name or path)",
+            "Folder",
             key=SK_DATASET_NAME,
             value=st.session_state[SK_DATASET_NAME],
-            help="Enter folder name (creates subfolder in working directory) or full path"
+            help="Folder name or full path"
         )
 
         typed = (st.session_state.get(SK_DATASET_NAME) or "").strip()
@@ -150,15 +150,13 @@ class AudioCollectionGUI:
         else:
             resolved = os.path.abspath(os.path.join(os.getcwd(), typed))
 
-        # Validation and status
+        # Validation and status (compact)
         if self.scenario_manager is not None:
             ok, msg = self.scenario_manager.validate_dataset_root(resolved)
-            icon = "OK" if ok else "ERROR"
-            (st.sidebar.success if ok else st.sidebar.error)(f"{icon} {msg}")
-
-        # Show resolved path
-        st.sidebar.caption("Resolved path:")
-        st.sidebar.code(resolved, language=None)
+            if ok:
+                st.sidebar.success("✓ Valid")
+            else:
+                st.sidebar.error(f"✗ {msg}")
 
         # Handle root changes
         if self.scenario_manager is not None:
@@ -179,42 +177,105 @@ class AudioCollectionGUI:
                 (len(s) >= 2 and s[1] == ":"))  # Windows drive letter
 
     def _render_sidebar_navigation(self) -> str:
-        """Render navigation menu focused on audio workflow."""
+        """Render hierarchical navigation menu using radio buttons."""
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### Audio Tools")
+        st.sidebar.markdown("### Navigation")
 
-        # Check SDL audio core status
-        try:
-            import sdl_audio_core as sdl
-            st.sidebar.success("Audio engine ready")
-            # Show basic audio info
-            with st.sidebar.expander("Audio System Info"):
-                    try:
-                        drivers = sdl.AudioEngine.get_audio_drivers()  # was sdl.get_audio_drivers()
-                        st.write(f"**Available drivers:** {', '.join(drivers)}")
+        # Initialize selected_panel if not set
+        if 'selected_panel' not in st.session_state:
+            st.session_state['selected_panel'] = "Collect"
+            st.session_state['selected_section'] = "Single Scenario"
 
-                        devices = sdl.list_all_devices()
-                        st.write(
-                            f"**Total devices:** "
-                            f"{len(devices.get('input_devices', []))} input, "
-                            f"{len(devices.get('output_devices', []))} output"
-                        )
-                    except Exception as e:
-                        st.write(f"Info unavailable: {e}")
-        except ImportError:
-            st.sidebar.error("SDL audio core not available")
-            st.sidebar.caption("Run build script to compile audio engine")
+        # Build hierarchical navigation options
+        nav_options = [
+            ("📁 Collect", [
+                ("  → Single Scenario", "Collect", "Single Scenario"),
+                ("  → Series", "Collect", "Series"),
+            ]),
+            ("⚙️ Audio Settings", [
+                ("  → Device Selection & Testing", "Audio Settings", "device_selection"),
+                ("  → Multi-Channel Configuration", "Audio Settings", "multichannel"),
+                ("  → Calibration Impulse", "Audio Settings", "calibration"),
+                ("  → Series Settings", "Audio Settings", "series_settings"),
+            ]),
+            ("🎬 Scenarios", []),
+            ("📊 Audio Analysis", []),
+        ]
 
-        # Main panel selection
-        options = ["Scenarios", "Collect", "Audio Settings", "Audio Analysis"]
+        # Flatten options for radio button
+        radio_options = []
+        option_map = {}  # Map display text to (panel, section)
+
+        for group_name, subitems in nav_options:
+            if subitems:
+                # Group header (non-selectable, shown with bold)
+                radio_options.append(f"**{group_name}**")
+                option_map[f"**{group_name}**"] = (None, None)  # Header, not selectable
+
+                # Sub-items
+                for display, panel, section in subitems:
+                    radio_options.append(display)
+                    option_map[display] = (panel, section)
+            else:
+                # Top-level item (no sub-items)
+                radio_options.append(group_name)
+                # Extract panel name from group_name (remove emoji)
+                panel_name = group_name.split(" ", 1)[1] if " " in group_name else group_name
+                option_map[group_name] = (panel_name, None)
+
+        # Determine current selection for radio button default
+        current_panel = st.session_state.get('selected_panel', "Collect")
+        current_section = st.session_state.get('selected_section', "Single Scenario")
+
+        # Find matching radio option
+        default_idx = 0
+        for idx, opt in enumerate(radio_options):
+            if opt in option_map:
+                panel, section = option_map[opt]
+                if panel == current_panel and section == current_section:
+                    default_idx = idx
+                    break
+                elif panel == current_panel and section is None:
+                    default_idx = idx
+
+        # Render radio button navigation with callback
+        def on_nav_change():
+            """Callback to handle navigation changes immediately."""
+            selected = st.session_state.nav_radio_selection
+
+            if selected in option_map:
+                panel, section = option_map[selected]
+
+                # Skip if it's a header
+                if panel is None:
+                    return
+
+                # Update session state based on selection
+                st.session_state['selected_panel'] = panel
+                st.session_state['selected_section'] = section
+
+                # Handle specific panel/section routing
+                if panel == "Collect":
+                    st.session_state['collect_mode'] = section
+                elif panel == "Audio Settings":
+                    st.session_state['audio_settings_focus'] = section
+                else:
+                    # Clear any focus for other panels
+                    if 'audio_settings_focus' in st.session_state:
+                        del st.session_state['audio_settings_focus']
+                    if 'collect_mode' in st.session_state:
+                        del st.session_state['collect_mode']
+
         selected = st.sidebar.radio(
-            "Select panel",
-            options=options,
-            index=0,
-            help="Choose your workflow step"
+            "Select section:",
+            options=radio_options,
+            index=default_idx,
+            key="nav_radio_selection",
+            on_change=on_nav_change,
+            label_visibility="collapsed"
         )
 
-        return selected
+        return st.session_state['selected_panel']
 
     def _render_panel(self, panel: str):
         """Render the selected panel."""
