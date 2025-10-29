@@ -1267,86 +1267,85 @@ class AudioSettingsPanel:
             else:
                 st.metric("User Marked", "Not marked")
 
-        # Visualize the waveform using AudioVisualizer with quality criteria overlay
+        # Visualize the waveform using AudioVisualizer
         if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
-            st.markdown("**Waveform with Quality Criteria:**")
+            st.markdown("**Waveform:**")
 
-            # Create annotated waveform with quality markers
-            import matplotlib.pyplot as plt
+            # Primary visualization - AudioVisualizer (this was working correctly)
+            visualizer = AudioVisualizer(component_id=f"cal_cycle_{selected_cycle}")
+            visualizer.render(
+                audio_data=cycle_waveform,
+                sample_rate=sample_rate,
+                title=f"Calibration Impulse - Cycle {selected_cycle}",
+                show_controls=True,
+                show_analysis=True,
+                height=300
+            )
 
-            fig, ax = plt.subplots(figsize=(14, 6))
-
-            # Time axis
-            time_ms = np.arange(len(cycle_waveform)) / sample_rate * 1000
-
-            # Plot waveform
-            ax.plot(time_ms, cycle_waveform, 'b-', linewidth=1.5, label='Calibration Impulse', alpha=0.8)
-            ax.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.3)
-            ax.grid(True, alpha=0.2)
-
-            # Mark negative peak
-            neg_peak_idx = cycle_metrics.get('negative_peak_idx', np.argmin(cycle_waveform))
-            neg_peak_time_ms = neg_peak_idx / sample_rate * 1000
-            neg_peak_val = cycle_waveform[neg_peak_idx]
-            ax.plot(neg_peak_time_ms, neg_peak_val, 'ro', markersize=10, label=f'Negative Peak: {abs(neg_peak_val):.3f}')
-
-            # Mark aftershock window (2-10ms after peak)
-            aftershock_start_ms = neg_peak_time_ms + 2.0
-            aftershock_end_ms = neg_peak_time_ms + 10.0
-            ax.axvspan(aftershock_start_ms, aftershock_end_ms, alpha=0.2, color='orange',
-                      label=f'Aftershock Window (2-10ms)')
-
-            # Show thresholds if available
+            # Optional: Quality criteria overlay (if thresholds calculated)
             learned_thresholds = st.session_state.get('cal_test_learned_thresholds')
             if learned_thresholds:
-                # Min/max negative peak thresholds
-                ax.axhline(y=-learned_thresholds.min_negative_peak, color='g', linestyle='--',
-                          linewidth=2, alpha=0.6, label=f'Min Neg Peak: {learned_thresholds.min_negative_peak:.3f}')
-                ax.axhline(y=-learned_thresholds.max_negative_peak, color='r', linestyle='--',
-                          linewidth=2, alpha=0.6, label=f'Max Neg Peak: {learned_thresholds.max_negative_peak:.3f}')
+                with st.expander("📊 Quality Criteria Overlay", expanded=False):
+                    import matplotlib.pyplot as plt
 
-                # Aftershock threshold
-                aftershock_threshold_val = learned_thresholds.max_aftershock_ratio * abs(neg_peak_val)
-                ax.axhline(y=aftershock_threshold_val, color='orange', linestyle=':',
-                          linewidth=2, alpha=0.6, label=f'Aftershock Limit: {aftershock_threshold_val:.3f}')
-                ax.axhline(y=-aftershock_threshold_val, color='orange', linestyle=':',
-                          linewidth=2, alpha=0.6)
+                    fig, ax = plt.subplots(figsize=(14, 6))
 
-                st.info("Green dashed line: Minimum acceptable negative peak | Red dashed line: Maximum (clipping risk) | Orange region: Aftershock detection window")
+                    # Time axis
+                    time_ms = np.arange(len(cycle_waveform)) / sample_rate * 1000
+
+                    # Plot waveform
+                    ax.plot(time_ms, cycle_waveform, 'b-', linewidth=1.5, label='Calibration Impulse', alpha=0.8)
+                    ax.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.3)
+                    ax.grid(True, alpha=0.2)
+
+                    # Mark negative peak
+                    neg_peak_idx = cycle_metrics.get('negative_peak_idx', np.argmin(cycle_waveform))
+                    neg_peak_time_ms = neg_peak_idx / sample_rate * 1000
+                    neg_peak_val = cycle_waveform[neg_peak_idx]
+                    ax.plot(neg_peak_time_ms, neg_peak_val, 'ro', markersize=10, label=f'Negative Peak: {abs(neg_peak_val):.3f}')
+
+                    # Mark aftershock window (2-10ms after peak)
+                    aftershock_start_ms = neg_peak_time_ms + 2.0
+                    aftershock_end_ms = neg_peak_time_ms + 10.0
+                    ax.axvspan(aftershock_start_ms, aftershock_end_ms, alpha=0.2, color='orange',
+                              label=f'Aftershock Window (2-10ms)')
+
+                    # Min/max negative peak thresholds
+                    ax.axhline(y=-learned_thresholds.min_negative_peak, color='g', linestyle='--',
+                              linewidth=2, alpha=0.6, label=f'Min Neg Peak: {learned_thresholds.min_negative_peak:.3f}')
+                    ax.axhline(y=-learned_thresholds.max_negative_peak, color='r', linestyle='--',
+                              linewidth=2, alpha=0.6, label=f'Max Neg Peak: {learned_thresholds.max_negative_peak:.3f}')
+
+                    # Aftershock threshold
+                    aftershock_threshold_val = learned_thresholds.max_aftershock_ratio * abs(neg_peak_val)
+                    ax.axhline(y=aftershock_threshold_val, color='orange', linestyle=':',
+                              linewidth=2, alpha=0.6, label=f'Aftershock Limit: {aftershock_threshold_val:.3f}')
+                    ax.axhline(y=-aftershock_threshold_val, color='orange', linestyle=':',
+                              linewidth=2, alpha=0.6)
+
+                    # Labels and title
+                    ax.set_xlabel('Time (ms)', fontsize=12)
+                    ax.set_ylabel('Amplitude', fontsize=12)
+                    ax.set_title(f'Cycle {selected_cycle} - Quality Criteria Overlay',
+                                fontsize=14, fontweight='bold')
+                    ax.legend(loc='upper right', fontsize=9)
+
+                    # Set y-axis limits with some padding
+                    y_min = min(cycle_waveform.min() * 1.2, -0.1)
+                    y_max = max(cycle_waveform.max() * 1.2, 0.1)
+                    ax.set_ylim(y_min, y_max)
+
+                    # Zoom to relevant portion (first 20ms typically contains the impulse)
+                    ax.set_xlim(0, min(20, time_ms[-1]))
+
+                    plt.tight_layout()
+                    st.pyplot(fig, use_container_width=True)
+                    plt.close(fig)
+
+                    st.info("🟢 Green line: Min acceptable peak | 🔴 Red line: Max acceptable peak | 🟠 Orange region: Aftershock window (2-10ms)")
             else:
-                st.info("💡 Calculate thresholds above to see quality criteria overlaid on waveform")
+                st.info("💡 Calculate thresholds above to enable quality criteria overlay visualization")
 
-            # Labels and title
-            ax.set_xlabel('Time (ms)', fontsize=12)
-            ax.set_ylabel('Amplitude', fontsize=12)
-            ax.set_title(f'Cycle {selected_cycle} - {"✓ VALID" if is_valid else "✗ INVALID"}',
-                        fontsize=14, fontweight='bold',
-                        color='green' if is_valid else 'red')
-            ax.legend(loc='upper right', fontsize=9)
-
-            # Set y-axis limits with some padding
-            y_min = min(cycle_waveform.min() * 1.2, -0.1)
-            y_max = max(cycle_waveform.max() * 1.2, 0.1)
-            ax.set_ylim(y_min, y_max)
-
-            # Zoom to relevant portion (first 20ms typically contains the impulse)
-            ax.set_xlim(0, min(20, time_ms[-1]))
-
-            plt.tight_layout()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-
-            # Also show AudioVisualizer for interactive exploration
-            with st.expander("🔍 Interactive Waveform Explorer (Full Duration)", expanded=False):
-                visualizer = AudioVisualizer(component_id=f"cal_cycle_{selected_cycle}")
-                visualizer.render(
-                    audio_data=cycle_waveform,
-                    sample_rate=sample_rate,
-                    title=f"Calibration Impulse - Cycle {selected_cycle}",
-                    show_controls=True,
-                    show_analysis=True,
-                    height=300
-                )
         else:
             st.warning("AudioVisualizer not available - cannot display waveform")
             st.info("Install gui_audio_visualizer.py to enable waveform visualization")
