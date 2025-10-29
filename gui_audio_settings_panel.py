@@ -999,11 +999,12 @@ class AudioSettingsPanel:
         calibration_cycles = cal_raw.reshape(self.recorder.num_pulses, self.recorder.cycle_samples)
 
         # Run validation on each cycle (but don't filter them out)
-        from calibration_validator import CalibrationValidator
-        validator = CalibrationValidator(
-            self.recorder.calibration_quality_config,
-            self.recorder.sample_rate
-        )
+        # Use V2 validator with negative pulse detection
+        from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
+
+        # Create thresholds from config
+        thresholds = QualityThresholds.from_config(self.recorder.calibration_quality_config)
+        validator = CalibrationValidatorV2(thresholds, self.recorder.sample_rate)
 
         validation_results = []
         for cycle_idx in range(self.recorder.num_pulses):
@@ -1016,7 +1017,8 @@ class AudioSettingsPanel:
                 'cycle_index': cycle_idx,
                 'calibration_valid': validation.calibration_valid,
                 'calibration_metrics': validation.calibration_metrics,
-                'calibration_failures': validation.calibration_failures
+                'calibration_failures': validation.calibration_failures,
+                'is_user_marked_good': False  # Will be set by user in UI
             }
             validation_results.append(validation_dict)
 
@@ -1064,6 +1066,69 @@ class AudioSettingsPanel:
 
         st.markdown("---")
 
+        # User marking interface for automatic threshold learning
+        st.markdown("#### Mark Good Cycles for Automatic Threshold Learning")
+        st.markdown("Select cycles that represent **good quality** calibration impulses. "
+                   "The system will calculate quality thresholds based on your selection.")
+
+        # Initialize session state for user markings if not exists
+        if 'cal_test_marked_good' not in st.session_state:
+            st.session_state['cal_test_marked_good'] = []
+
+        # Multi-select for marking good cycles
+        marked_good = st.multiselect(
+            "Mark Good Cycles (will be used to calculate thresholds)",
+            options=list(range(num_cycles)),
+            default=st.session_state.get('cal_test_marked_good', []),
+            format_func=lambda x: f"Cycle {x}",
+            key="cal_test_marked_good_selector",
+            help="Select cycles that represent ideal calibration impulses"
+        )
+
+        # Update session state
+        st.session_state['cal_test_marked_good'] = marked_good
+
+        # Button to calculate thresholds
+        if len(marked_good) > 0:
+            if st.button("🎯 Calculate Thresholds from Marked Cycles", type="primary"):
+                try:
+                    from calibration_validator_v2 import calculate_thresholds_from_marked_cycles
+
+                    # Calculate thresholds
+                    learned_thresholds = calculate_thresholds_from_marked_cycles(
+                        calibration_cycles,
+                        marked_good,
+                        sample_rate,
+                        safety_margin=0.2  # 20% margin
+                    )
+
+                    # Display calculated thresholds
+                    st.success(f"✓ Thresholds calculated from {len(marked_good)} marked cycles!")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Calculated Thresholds:**")
+                        st.write(f"Min Negative Peak: {learned_thresholds.min_negative_peak:.3f}")
+                        st.write(f"Max Negative Peak: {learned_thresholds.max_negative_peak:.3f}")
+                        st.write(f"Max Aftershock Ratio: {learned_thresholds.max_aftershock_ratio:.3f}")
+                        st.write(f"Max Positive Peak Ratio: {learned_thresholds.max_positive_peak_ratio:.3f}")
+
+                    with col2:
+                        st.markdown("**Apply Thresholds:**")
+                        if st.button("Apply to Configuration", type="secondary"):
+                            # Update recorder config
+                            self.recorder.calibration_quality_config.update(learned_thresholds.to_dict())
+                            st.success("Thresholds applied to configuration!")
+                            st.info("Re-run the calibration test to validate with new thresholds")
+
+                except Exception as e:
+                    st.error(f"Failed to calculate thresholds: {e}")
+        else:
+            st.info("👆 Select at least one good cycle to calculate thresholds")
+
+        st.markdown("---")
+
         # Create a summary table
         st.markdown("#### Quality Metrics Summary")
         import pandas as pd
@@ -1074,14 +1139,15 @@ class AudioSettingsPanel:
             valid = v_result.get('calibration_valid', False)
             metrics = v_result.get('calibration_metrics', {})
             failures = v_result.get('calibration_failures', [])
+            is_marked = cycle_idx in marked_good
 
             row = {
                 'Cycle': cycle_idx,
+                'Marked': '⭐' if is_marked else '',
                 'Valid': '✓' if valid else '✗',
-                'Peak Amp': f"{metrics.get('peak_amplitude', 0):.3f}",
-                'Duration (ms)': f"{metrics.get('duration_ms', 0):.1f}",
-                'Secondary Peak': f"{metrics.get('secondary_peak_ratio', 0):.2f}",
-                'Tail RMS': f"{metrics.get('tail_rms_ratio', 0):.3f}",
+                'Neg Peak': f"{metrics.get('negative_peak', metrics.get('peak_amplitude', 0)):.3f}",
+                'Aftershock': f"{metrics.get('aftershock_ratio', metrics.get('secondary_peak_ratio', 0)):.2f}",
+                'Pos/Neg Ratio': f"{metrics.get('positive_peak_ratio', 0):.2f}",
                 'Issues': ', '.join(failures) if failures else 'None'
             }
             table_data.append(row)
@@ -1128,13 +1194,21 @@ class AudioSettingsPanel:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            st.metric("Peak Amplitude", f"{cycle_metrics.get('peak_amplitude', 0):.3f}")
+            neg_peak = cycle_metrics.get('negative_peak', cycle_metrics.get('peak_amplitude', 0))
+            st.metric("Negative Peak", f"{neg_peak:.3f}")
         with col2:
-            st.metric("Duration (ms)", f"{cycle_metrics.get('duration_ms', 0):.1f}")
+            aftershock = cycle_metrics.get('aftershock_ratio', cycle_metrics.get('secondary_peak_ratio', 0))
+            st.metric("Aftershock Ratio", f"{aftershock:.3f}")
         with col3:
-            st.metric("Secondary Peak", f"{cycle_metrics.get('secondary_peak_ratio', 0):.2f}")
+            pos_ratio = cycle_metrics.get('positive_peak_ratio', 0)
+            st.metric("Positive/Negative", f"{pos_ratio:.3f}")
         with col4:
-            st.metric("Tail RMS Ratio", f"{cycle_metrics.get('tail_rms_ratio', 0):.3f}")
+            # Show if cycle is user-marked
+            is_marked = selected_cycle in st.session_state.get('cal_test_marked_good', [])
+            if is_marked:
+                st.metric("User Marked", "⭐ Good")
+            else:
+                st.metric("User Marked", "Not marked")
 
         # Visualize the waveform using AudioVisualizer
         if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
@@ -1202,27 +1276,34 @@ class AudioSettingsPanel:
         # User guidance
         with st.expander("💡 How to Use This Tool", expanded=False):
             st.markdown("""
-            **Purpose:** This tool helps you explore recorded calibration impulses and adjust quality thresholds.
+            **Purpose:** This tool helps you establish quality criteria for calibration impulses based on actual measurements.
 
-            **Workflow:**
-            1. **Run Test:** Click "Run Calibration Test" to record a series of calibration impulses
-            2. **Review Summary:** Check the summary table to see which cycles passed/failed validation
-            3. **Inspect Individual Cycles:** Use the cycle selector to examine each impulse waveform
-            4. **Compare Cycles:** Use the overlay feature to visually compare multiple cycles
-            5. **Adjust Thresholds:** Based on your observations, adjust the quality parameters above
-            6. **Re-run Test:** Run another test to verify your new thresholds work correctly
+            **New Workflow (Automatic Threshold Learning):**
+            1. **Run Test:** Click "Run Calibration Test" to record calibration impulses
+            2. **Review Waveforms:** Examine each cycle using the visualizer and overlay comparison
+            3. **Mark Good Cycles:** Select cycles that represent ideal calibration impulses (consistent, clean hammer strikes)
+            4. **Calculate Thresholds:** Click "Calculate Thresholds from Marked Cycles" - the system automatically determines quality criteria
+            5. **Apply & Validate:** Apply the calculated thresholds and re-run the test to verify
+            6. **Iterate:** Refine your marking if needed and recalculate
 
-            **Quality Criteria:**
-            - **Peak Amplitude:** Should be strong but not clipping (typically 0.1 - 0.95)
-            - **Duration:** Impulse should be sharp (typically 2-20 ms)
-            - **Secondary Peak:** No double-hits or echoes (typically < 0.3)
-            - **Tail RMS:** Low noise in the tail region (typically < 0.15)
+            **Quality Criteria (Automatic Detection):**
+            - **Negative Peak:** Strong negative pulse from hammer impact (NOT normalized - preserves amplitude)
+            - **Aftershock:** No significant rebounds within 10ms of main pulse (should be < 50% of peak)
+            - **Positive/Negative Ratio:** Predominantly negative pulse (positive component should be small)
+
+            **What Makes a Good Calibration Impulse:**
+            - Single strong negative pulse (hammer impact signature)
+            - Sharp, clean waveform with quick decay
+            - No aftershocks or bounces immediately after impact
+            - Minimal positive component
+            - Consistent amplitude across marked cycles
 
             **Tips:**
-            - Invalid cycles may indicate inconsistent hammer strikes
-            - Use the waveform zoom to examine details
-            - The overlay plot helps identify outliers
-            - Adjust quality parameters based on your specific measurement setup
+            - Mark at least 3-5 good cycles for reliable threshold calculation
+            - Good cycles should be similar to each other (use overlay plot to verify)
+            - The system adds 20% safety margin to calculated thresholds
+            - Re-test after applying thresholds to ensure they work correctly
+            - Invalid cycles don't mean bad data - they help identify quality variations
             """)
 
     def _render_series_settings_tab(self):
