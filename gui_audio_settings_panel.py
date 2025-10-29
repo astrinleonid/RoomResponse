@@ -1092,6 +1092,7 @@ class AudioSettingsPanel:
         if len(marked_good) > 0:
             if st.button("🎯 Calculate Thresholds from Marked Cycles", type="primary"):
                 try:
+                    import pandas as pd
                     from calibration_validator_v2 import calculate_thresholds_from_marked_cycles
 
                     # Calculate thresholds
