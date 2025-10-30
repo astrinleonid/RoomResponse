@@ -2449,6 +2449,139 @@ return ValidationResult(
 - Thresholds directly represent observed ranges from good samples
 - Easy to understand: "this value must be between X and Y"
 
+---
+
+### 10.6.4 Cycle Alignment System ✅ NEW (2025-10-30)
+
+**Overview**: Onset-based cycle alignment for multi-channel calibration impulse measurements with uniform cross-channel alignment.
+
+#### Architecture
+
+The system implements a two-stage pipeline:
+
+1. **Stage 1**: Extract and validate cycles (AS-IS logic)
+   - Record multi-channel audio
+   - Extract cycles using simple reshape
+   - Validate each cycle using CalibrationValidatorV2
+
+2. **Stage 2**: Align cycles by onset detection
+   - Filter to only VALID cycles
+   - Detect onset (negative peak) in each cycle
+   - Align all cycles to position 100 samples
+   - Apply SAME shifts to ALL channels
+
+**Core Methods** (`RoomResponseRecorder.py`):
+
+```python
+def align_cycles_by_onset(self, initial_cycles: np.ndarray,
+                         validation_results: list,
+                         correlation_threshold: float = 0.7) -> dict:
+    """
+    Align cycles by detecting onset (negative peak).
+
+    Process:
+    1. Filter: Keep only VALID cycles
+    2. Find onset: np.argmin() locates negative peak
+    3. Align: np.roll() shifts all cycles to position 100
+    4. Correlate: Compare with reference (highest energy)
+    5. Filter: Remove cycles below correlation threshold
+
+    Returns:
+        {
+            'aligned_cycles': Filtered, aligned cycles
+            'valid_cycle_indices': Original indices kept
+            'onset_positions': Original onset positions
+            'aligned_onset_position': 100 (target)
+            'correlations': Quality metrics
+            'reference_cycle_idx': Reference in filtered set
+        }
+    """
+
+def apply_alignment_to_channel(self, channel_raw: np.ndarray,
+                               alignment_metadata: dict) -> np.ndarray:
+    """
+    Apply calibration channel shifts to any channel.
+
+    Ensures all channels aligned uniformly.
+    Preserves inter-channel timing relationships.
+    """
+```
+
+**GUI Integration** (`gui_audio_settings_panel.py`):
+
+**Section 3: Alignment Results Review** (NEW - added at end of panel)
+
+- **Summary Metrics**: Initial cycles vs. Valid & Aligned counts
+- **Aligned Cycles Table**: Only shows valid, aligned cycles
+  - Columns: Select, Cycle #, Original Onset, Aligned Onset, Correlation, Valid, Neg. Peak
+  - Checkbox selection for visualization
+- **Aligned Cycles Overlay**: Multi-waveform visualization
+  - All selected cycles overlaid
+  - Onsets align at position 100 (near beginning)
+  - Demonstrates alignment quality
+
+**Data Flow**:
+
+```python
+# In _perform_calibration_test():
+
+# Step 1-4: Extract and validate (AS-IS)
+recorded_audio = recorder._record_method_2()  # Dict of channels
+initial_cycles = cal_raw.reshape(num_pulses, cycle_samples)
+validation_results = [validator.validate_cycle(c) for c in initial_cycles]
+
+# Step 5: Calculate alignment from calibration channel
+alignment_result = recorder.align_cycles_by_onset(
+    initial_cycles,
+    validation_results,
+    correlation_threshold=0.7
+)
+
+# Step 6: Apply SAME alignment to ALL channels
+aligned_multichannel_cycles = {}
+for channel_name, channel_data in recorded_audio.items():
+    aligned_channel = recorder.apply_alignment_to_channel(
+        channel_data,
+        alignment_result
+    )
+    aligned_multichannel_cycles[channel_name] = aligned_channel
+
+# Return BOTH unaligned (for existing UI) and aligned data
+return {
+    'all_calibration_cycles': initial_cycles,        # ALL cycles
+    'validation_results': validation_results,         # ALL validations
+    'aligned_multichannel_cycles': aligned_multichannel_cycles,  # Filtered+aligned
+    'alignment_metadata': alignment_result
+}
+```
+
+#### Key Features
+
+1. **Invalid Cycles Filtered**: Only valid cycles shown in alignment section
+2. **Onset at Beginning**: All cycles aligned to position 100 samples
+3. **Precise Overlay**: Aligned waveforms overlay exactly at onset
+4. **Multi-Channel Support**: Same shifts applied to all channels uniformly
+5. **Two-Stage Filtering**: Validation (quality) + Correlation (similarity)
+
+#### Technical Specifications
+
+- **Alignment Method**: Direct negative peak detection (np.argmin)
+- **Target Position**: 100 samples (configurable in code)
+- **Shift Method**: Circular shift via np.roll()
+- **Reference Selection**: Highest energy cycle (deterministic)
+- **Correlation**: Normalized at zero lag
+- **Threshold**: 0.7 (default, configurable)
+- **Accuracy**: 0 samples (perfect in tests)
+
+#### Documentation
+
+Complete documentation in:
+- **CYCLE_ALIGNMENT_SUMMARY.md** - Complete architecture guide
+- **MULTICHANNEL_ALIGNMENT.md** - Multi-channel implementation details
+- **ONSET_ALIGNMENT_IMPLEMENTATION.md** - Technical reference
+
+---
+
 ### 10.7 Unified Waveform Visualization Component
 
 **Overview**: Reusable component in `gui_audio_visualizer.py` for displaying single or multiple audio waveforms with persistent zoom controls.
