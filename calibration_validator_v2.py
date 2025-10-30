@@ -39,13 +39,37 @@ class QualityThresholds:
 
     @classmethod
     def from_config(cls, config: Dict) -> 'QualityThresholds':
-        """Create thresholds from configuration dict"""
+        """
+        Create thresholds from configuration dict.
+
+        Supports both old format (min/max ranges) and new format (ratios):
+        - Old: min_positive_peak, max_positive_peak, min_aftershock, max_aftershock
+        - New: max_positive_peak_ratio, max_aftershock_ratio
+        """
+        # Handle max_positive_peak_ratio: try new format first, fallback to old format
+        if 'max_positive_peak_ratio' in config:
+            max_positive_peak_ratio = config['max_positive_peak_ratio']
+        elif 'max_positive_peak' in config:
+            # Old format: convert max_positive_peak to ratio (assuming it's already relative)
+            max_positive_peak_ratio = config['max_positive_peak']
+        else:
+            max_positive_peak_ratio = 0.3
+
+        # Handle max_aftershock_ratio: try new format first, fallback to old format
+        if 'max_aftershock_ratio' in config:
+            max_aftershock_ratio = config['max_aftershock_ratio']
+        elif 'max_aftershock' in config:
+            # Old format: convert max_aftershock to ratio (assuming it's already relative)
+            max_aftershock_ratio = config['max_aftershock']
+        else:
+            max_aftershock_ratio = 0.5
+
         return cls(
             min_negative_peak=config.get('min_negative_peak', 0.1),
             max_negative_peak=config.get('max_negative_peak', 0.95),
-            max_aftershock_ratio=config.get('max_aftershock_ratio', 0.5),
+            max_aftershock_ratio=max_aftershock_ratio,
             aftershock_window_ms=config.get('aftershock_window_ms', 10.0),
-            max_positive_peak_ratio=config.get('max_positive_peak_ratio', 0.3)
+            max_positive_peak_ratio=max_positive_peak_ratio
         )
 
     @classmethod

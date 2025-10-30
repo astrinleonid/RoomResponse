@@ -1100,11 +1100,11 @@ class AudioSettingsPanel:
                                         st.metric("Negative Peak Range",
                                                  f"{learned_thresholds.min_negative_peak:.3f} - {learned_thresholds.max_negative_peak:.3f}")
                                     with col2:
-                                        st.metric("Positive Peak Range",
-                                                 f"{learned_thresholds.min_positive_peak:.3f} - {learned_thresholds.max_positive_peak:.3f}")
+                                        st.metric("Max Positive Peak Ratio",
+                                                 f"{learned_thresholds.max_positive_peak_ratio:.3f}")
                                     with col3:
-                                        st.metric("Aftershock Range",
-                                                 f"{learned_thresholds.min_aftershock:.3f} - {learned_thresholds.max_aftershock:.3f}")
+                                        st.metric("Max Aftershock Ratio",
+                                                 f"{learned_thresholds.max_aftershock_ratio:.3f}")
 
                             except Exception as e:
                                 st.error(f"Failed to calculate thresholds: {e}")
