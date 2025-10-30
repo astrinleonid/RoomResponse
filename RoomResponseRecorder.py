@@ -67,17 +67,20 @@ class RoomResponseRecorder:
             'channel_calibration': {}
         }
 
-        # Calibration quality configuration defaults
+        # Calibration quality configuration defaults (V2 Refactored - min/max ranges)
         self.calibration_quality_config = {
-            'cal_min_amplitude': 0.1,
-            'cal_max_amplitude': 0.95,
-            'cal_min_duration_ms': 2.0,
-            'cal_max_duration_ms': 20.0,
-            'cal_duration_threshold': 0.3,
-            'cal_double_hit_window_ms': [10, 50],
-            'cal_double_hit_threshold': 0.3,
-            'cal_tail_start_ms': 30.0,
-            'cal_tail_max_rms_ratio': 0.15,
+            # Negative peak (absolute value)
+            'min_negative_peak': 0.1,
+            'max_negative_peak': 0.95,
+            # Positive peak (absolute value)
+            'min_positive_peak': 0.0,
+            'max_positive_peak': 0.6,
+            # Aftershock (absolute value)
+            'min_aftershock': 0.0,
+            'max_aftershock': 0.3,
+            # Configuration
+            'aftershock_window_ms': 10.0,
+            'aftershock_skip_ms': 2.0,
             'min_valid_cycles': 3
         }
 
@@ -113,9 +116,27 @@ class RoomResponseRecorder:
                 elif 'multichannel' in file_config:
                     self.multichannel_config.update(file_config['multichannel'])
 
-                # Load calibration quality config
-                if 'calibration_quality' in file_config:
-                    self.calibration_quality_config.update(file_config['calibration_quality'])
+                # Load calibration quality config (support both 'calibration_quality' and 'calibration_quality_config' keys)
+                if 'calibration_quality_config' in file_config:
+                    loaded_cal_config = file_config['calibration_quality_config']
+                    # Check if it's old V1 format and migrate to V2 if needed
+                    if 'cal_min_amplitude' in loaded_cal_config:
+                        # Old V1 format detected - migrate to V2
+                        print("Info: Migrating calibration_quality_config from V1 to V2 format")
+                        self.calibration_quality_config = self._migrate_calibration_config_v1_to_v2(loaded_cal_config)
+                    else:
+                        # V2 format - use as-is
+                        self.calibration_quality_config.update(loaded_cal_config)
+                elif 'calibration_quality' in file_config:
+                    loaded_cal_config = file_config['calibration_quality']
+                    # Check if it's old V1 format and migrate to V2 if needed
+                    if 'cal_min_amplitude' in loaded_cal_config:
+                        # Old V1 format detected - migrate to V2
+                        print("Info: Migrating calibration_quality from V1 to V2 format")
+                        self.calibration_quality_config = self._migrate_calibration_config_v1_to_v2(loaded_cal_config)
+                    else:
+                        # V2 format - use as-is
+                        self.calibration_quality_config.update(loaded_cal_config)
 
                 # Load correlation quality config
                 if 'correlation_quality' in file_config:
@@ -298,6 +319,42 @@ class RoomResponseRecorder:
         except Exception as e:
             print(f"Error getting device info: {e}")
             return {'input_devices': [], 'output_devices': []}
+
+    def _migrate_calibration_config_v1_to_v2(self, v1_config: Dict) -> Dict:
+        """
+        Migrate old V1 calibration config format to V2 format.
+
+        V1 format (CalibrationValidator):
+        - cal_min_amplitude, cal_max_amplitude, cal_min_duration_ms,
+          cal_max_duration_ms, cal_duration_threshold, cal_double_hit_window_ms,
+          cal_double_hit_threshold, cal_tail_start_ms, cal_tail_max_rms_ratio
+
+        V2 format (CalibrationValidatorV2):
+        - min_negative_peak, max_negative_peak, max_aftershock_ratio,
+          aftershock_window_ms, max_positive_peak_ratio
+
+        Args:
+            v1_config: Old V1 format config dict
+
+        Returns:
+            V2 format config dict with migrated values
+        """
+        # Map old V1 keys to new V2 refactored format (min/max ranges)
+        v2_config = {
+            'min_negative_peak': v1_config.get('cal_min_amplitude', 0.1),
+            'max_negative_peak': v1_config.get('cal_max_amplitude', 0.95),
+            'min_positive_peak': 0.0,  # New parameter
+            'max_positive_peak': 0.6,  # New parameter
+            'min_aftershock': 0.0,  # New parameter
+            'max_aftershock': 0.3,  # New parameter
+            'aftershock_window_ms': 10.0,
+            'aftershock_skip_ms': 2.0,  # New parameter
+            'min_valid_cycles': v1_config.get('min_valid_cycles', 3)
+        }
+
+        print(f"  Migrated V1 to V2 ranges: neg=[{v2_config['min_negative_peak']}, {v2_config['max_negative_peak']}]")
+
+        return v2_config
 
     def _validate_config(self):
         """Validate the recorder configuration"""
@@ -1136,6 +1193,535 @@ class RoomResponseRecorder:
 
         onset_candidates = np.where(rms_diff > threshold)[0]
         return onset_candidates[0] if len(onset_candidates) > 0 else 0
+
+    # ========================================================================
+    # Cycle Alignment Methods (for Calibration Test) - Two-Stage Process
+    # ========================================================================
+
+    def align_cycles_by_onset(self, initial_cycles: np.ndarray, validation_results: list,
+                             correlation_threshold: float = 0.7) -> dict:
+        """
+        STEP 5: Align cycles by detecting onset (negative peak) in each cycle.
+
+        Process:
+        1. Filter: Keep only VALID cycles (from validation)
+        2. Find onset: Locate negative peak in each valid cycle
+        3. Align: Shift all cycles so negative peaks align at same position
+        4. Cross-correlation check: Verify aligned cycles correlate well
+        5. Filter again: Remove cycles with poor correlation after alignment
+
+        Args:
+            initial_cycles: 2D array from simple reshape (num_cycles, cycle_samples)
+            validation_results: List of validation dicts from CalibrationValidatorV2
+            correlation_threshold: Minimum correlation after alignment (default 0.7)
+
+        Returns:
+            Dictionary containing:
+                - 'aligned_cycles': 2D array of aligned, filtered cycles
+                - 'valid_cycle_indices': Original indices of cycles kept
+                - 'onset_positions': Onset position found in each original cycle
+                - 'aligned_onset_position': Common onset position in aligned cycles
+                - 'correlations': Cross-correlation values after alignment
+                - 'reference_cycle_idx': Index of reference cycle (in valid set)
+        """
+        if len(initial_cycles) == 0:
+            return {
+                'aligned_cycles': np.array([]),
+                'valid_cycle_indices': [],
+                'onset_positions': [],
+                'aligned_onset_position': 0,
+                'correlations': [],
+                'reference_cycle_idx': 0
+            }
+
+        # STEP 1: Filter - Keep only VALID cycles
+        valid_indices = [i for i, v in enumerate(validation_results) if v.get('calibration_valid', False)]
+
+        if len(valid_indices) == 0:
+            # No valid cycles
+            return {
+                'aligned_cycles': np.array([]),
+                'valid_cycle_indices': [],
+                'onset_positions': [],
+                'aligned_onset_position': 0,
+                'correlations': [],
+                'reference_cycle_idx': 0
+            }
+
+        valid_cycles = initial_cycles[valid_indices]
+
+        # STEP 2: Find onset (negative peak) in each valid cycle
+        onset_positions = []
+        for cycle in valid_cycles:
+            # Find index of negative peak (minimum value)
+            onset_idx = int(np.argmin(cycle))
+            onset_positions.append(onset_idx)
+
+        # STEP 3: Determine common onset position
+        # Use a position near the beginning (e.g., 100 samples) to ensure onset is at chart start
+        # This leaves some space for pre-onset data but puts the peak near the beginning
+        target_onset_position = 100  # Position onset at 100 samples (near beginning)
+        aligned_onset_position = target_onset_position
+
+        # STEP 4: Align all cycles by shifting to common onset position
+        aligned_cycles_list = []
+        for i, cycle in enumerate(valid_cycles):
+            shift_needed = aligned_onset_position - onset_positions[i]
+
+            # Apply circular shift
+            aligned_cycle = np.roll(cycle, shift_needed)
+            aligned_cycles_list.append(aligned_cycle)
+
+        aligned_cycles = np.array(aligned_cycles_list)
+
+        # STEP 5: Select reference (highest energy among aligned)
+        energies = np.sqrt(np.mean(aligned_cycles ** 2, axis=1))
+        reference_idx = int(np.argmax(energies))
+        reference_cycle = aligned_cycles[reference_idx]
+
+        # STEP 6: Calculate cross-correlation with reference
+        correlations = []
+        for i, cycle in enumerate(aligned_cycles):
+            if i == reference_idx:
+                correlations.append(1.0)
+            else:
+                # Compute normalized cross-correlation at zero lag
+                ref_energy = np.sum(reference_cycle ** 2)
+                cyc_energy = np.sum(cycle ** 2)
+                cross_product = np.sum(reference_cycle * cycle)
+
+                if ref_energy > 0 and cyc_energy > 0:
+                    corr_value = float(cross_product / np.sqrt(ref_energy * cyc_energy))
+                else:
+                    corr_value = 0.0
+
+                correlations.append(corr_value)
+
+        # STEP 7: Filter by correlation threshold
+        final_indices = [i for i, corr in enumerate(correlations) if corr >= correlation_threshold]
+
+        if len(final_indices) == 0:
+            # All cycles filtered out
+            return {
+                'aligned_cycles': np.array([]),
+                'valid_cycle_indices': [],
+                'onset_positions': onset_positions,
+                'aligned_onset_position': aligned_onset_position,
+                'correlations': correlations,
+                'reference_cycle_idx': reference_idx
+            }
+
+        # Return only cycles that passed correlation threshold
+        final_aligned_cycles = aligned_cycles[final_indices]
+        final_valid_indices = [valid_indices[i] for i in final_indices]
+        final_correlations = [correlations[i] for i in final_indices]
+        final_onset_positions = [onset_positions[i] for i in final_indices]
+
+        # Adjust reference index to final set
+        if reference_idx in final_indices:
+            final_reference_idx = final_indices.index(reference_idx)
+        else:
+            final_reference_idx = 0
+
+        return {
+            'aligned_cycles': final_aligned_cycles,
+            'valid_cycle_indices': final_valid_indices,
+            'onset_positions': final_onset_positions,  # Only for cycles that passed correlation
+            'aligned_onset_position': aligned_onset_position,
+            'correlations': final_correlations,
+            'reference_cycle_idx': final_reference_idx,
+            'correlation_threshold': correlation_threshold
+        }
+
+    def apply_alignment_to_channel(self, channel_raw: np.ndarray,
+                                   alignment_metadata: dict) -> np.ndarray:
+        """
+        Apply alignment shifts (calculated from calibration channel) to any channel.
+
+        This ensures all channels are aligned uniformly based on calibration channel timing.
+
+        Args:
+            channel_raw: Raw audio from any channel (1D array)
+            alignment_metadata: Alignment metadata from align_cycles_by_onset()
+
+        Returns:
+            2D array of aligned cycles (num_valid_cycles, cycle_samples)
+            Only returns cycles that passed validation and correlation filters.
+        """
+        # Extract alignment info
+        valid_cycle_indices = alignment_metadata.get('valid_cycle_indices', [])
+        onset_positions = alignment_metadata.get('onset_positions', [])
+        aligned_onset_position = alignment_metadata.get('aligned_onset_position', 0)
+
+        if len(valid_cycle_indices) == 0:
+            return np.array([])
+
+        # Pad or trim channel to expected length
+        expected_samples = self.cycle_samples * self.num_pulses
+        if len(channel_raw) < expected_samples:
+            padded = np.zeros(expected_samples)
+            padded[:len(channel_raw)] = channel_raw
+            channel_raw = padded
+        else:
+            channel_raw = channel_raw[:expected_samples]
+
+        # Extract initial cycles using simple reshape
+        initial_cycles = channel_raw.reshape(self.num_pulses, self.cycle_samples)
+
+        # Apply the SAME shifts to this channel's cycles
+        aligned_cycles_list = []
+        for i, original_idx in enumerate(valid_cycle_indices):
+            if original_idx < len(initial_cycles):
+                cycle = initial_cycles[original_idx]
+
+                # Calculate shift (same logic as calibration channel)
+                if i < len(onset_positions):
+                    original_onset = onset_positions[i]
+                    shift_needed = aligned_onset_position - original_onset
+
+                    # Apply circular shift
+                    aligned_cycle = np.roll(cycle, shift_needed)
+                    aligned_cycles_list.append(aligned_cycle)
+
+        return np.array(aligned_cycles_list)
+
+    def extract_cycles_with_shifts(self, raw_audio: np.ndarray, cycle_positions: list,
+                                   cycle_samples: int) -> np.ndarray:
+        """
+        STEP 6: Re-extract cycles from raw audio using calculated positions.
+
+        Args:
+            raw_audio: Full raw recording (1D array)
+            cycle_positions: List of (start_sample, end_sample) tuples from calculate_cycle_shifts
+            cycle_samples: Expected samples per cycle
+
+        Returns:
+            2D array of re-extracted cycles (num_cycles, cycle_samples)
+        """
+        cycles = []
+
+        for start, end in cycle_positions:
+            # Extract cycle at calculated position
+            if start >= 0 and end <= len(raw_audio):
+                # Full cycle available
+                cycle = raw_audio[start:end]
+            elif start >= 0 and start < len(raw_audio):
+                # Partial cycle - pad with zeros
+                available = raw_audio[start:]
+                cycle = np.zeros(cycle_samples)
+                cycle[:len(available)] = available
+            else:
+                # Completely out of bounds - return zeros
+                cycle = np.zeros(cycle_samples)
+
+            cycles.append(cycle)
+
+        return np.array(cycles)
+
+    def extract_and_align_cycles(self, raw_audio: np.ndarray, num_expected_cycles: int = None,
+                                 onset_window_ms: float = 5.0,
+                                 onset_threshold_factor: float = 3.0) -> dict:
+        """
+        Extract and align cycles from impulse train recording using onset detection.
+
+        This replaces the simple reshape approach with robust onset detection and
+        cross-correlation alignment, solving the timing misalignment issues.
+
+        Args:
+            raw_audio: Raw recorded audio (1D array) from calibration channel
+            num_expected_cycles: Expected number of impulses (defaults to self.num_pulses)
+            onset_window_ms: RMS window size for onset detection (default 5ms)
+            onset_threshold_factor: Threshold multiplier for onset detection (default 3.0)
+
+        Returns:
+            Dictionary containing:
+                - 'aligned_cycles': np.ndarray of shape (num_cycles, cycle_samples)
+                - 'onset_positions': List of detected onset sample positions
+                - 'alignment_shifts': List of alignment shifts applied
+                - 'reference_cycle_idx': Index of reference cycle used for alignment
+                - 'quality_metrics': Dictionary of quality metrics
+        """
+        if num_expected_cycles is None:
+            num_expected_cycles = self.num_pulses
+
+        # Step 1: Detect onset positions
+        onset_positions = self._detect_cycle_onsets(
+            raw_audio,
+            num_expected_cycles,
+            onset_window_ms,
+            onset_threshold_factor
+        )
+
+        # Step 2: Extract raw cycles at detected positions
+        raw_cycles = self._extract_cycles_at_positions(raw_audio, onset_positions)
+
+        # Step 3: Select reference cycle (highest energy)
+        reference_idx = self._select_reference_cycle(raw_cycles)
+        reference_cycle = raw_cycles[reference_idx]
+
+        # Step 4: Align all cycles to reference using cross-correlation
+        aligned_cycles, alignment_shifts = self._align_cycles_to_reference(
+            raw_cycles,
+            reference_cycle,
+            reference_idx
+        )
+
+        # Step 5: Calculate quality metrics
+        quality_metrics = self._calculate_cycle_extraction_quality(
+            aligned_cycles,
+            onset_positions,
+            alignment_shifts
+        )
+
+        return {
+            'aligned_cycles': aligned_cycles,
+            'onset_positions': onset_positions,
+            'alignment_shifts': alignment_shifts,
+            'reference_cycle_idx': reference_idx,
+            'quality_metrics': quality_metrics
+        }
+
+    def _detect_cycle_onsets(self, audio: np.ndarray, num_expected: int,
+                            onset_window_ms: float = 5.0,
+                            onset_threshold_factor: float = 3.0) -> list:
+        """
+        Detect impulse onset positions using RMS energy analysis.
+
+        Args:
+            audio: Input audio signal
+            num_expected: Expected number of onsets to find
+            onset_window_ms: RMS window size in milliseconds
+            onset_threshold_factor: Threshold multiplier (mean + factor*std)
+
+        Returns:
+            List of sample positions where onsets were detected
+        """
+        onset_window_samples = int(onset_window_ms * self.sample_rate / 1000)
+
+        # Calculate RMS envelope
+        rms = self._calculate_rms_envelope(audio, onset_window_samples)
+
+        # Calculate threshold (mean + threshold_factor * std)
+        rms_mean = np.mean(rms)
+        rms_std = np.std(rms)
+        threshold = rms_mean + onset_threshold_factor * rms_std
+
+        # Find points above threshold
+        above_threshold = rms > threshold
+
+        # Find onset positions (rising edges)
+        onsets = []
+        in_onset = False
+        min_spacing = self.cycle_samples // 2  # Minimum spacing between onsets
+
+        for i in range(len(above_threshold)):
+            if above_threshold[i] and not in_onset:
+                # Check if this is far enough from previous onset
+                if not onsets or (i - onsets[-1]) >= min_spacing:
+                    onsets.append(i)
+                    in_onset = True
+            elif not above_threshold[i]:
+                in_onset = False
+
+        # If we found wrong number, use expected timing as fallback
+        if len(onsets) != num_expected:
+            if len(onsets) > num_expected:
+                # Too many - take first N
+                onsets = onsets[:num_expected]
+            else:
+                # Too few - use fallback positions
+                print(f"Warning: Only found {len(onsets)} onsets, expected {num_expected}. Using fallback positions.")
+                onsets = [i * self.cycle_samples for i in range(num_expected)]
+
+        return onsets
+
+    def _calculate_rms_envelope(self, audio: np.ndarray, window_samples: int) -> np.ndarray:
+        """
+        Calculate RMS envelope of audio signal using convolution.
+
+        Args:
+            audio: Input audio signal
+            window_samples: Window size for RMS calculation
+
+        Returns:
+            RMS envelope (same length as input)
+        """
+        squared = audio ** 2
+        window = np.ones(window_samples) / window_samples
+        rms_squared = np.convolve(squared, window, mode='same')
+        rms = np.sqrt(np.maximum(rms_squared, 0))  # Avoid negative from numerical error
+        return rms
+
+    def _extract_cycles_at_positions(self, audio: np.ndarray, positions: list) -> np.ndarray:
+        """
+        Extract cycle waveforms at specified positions.
+
+        Args:
+            audio: Input audio signal
+            positions: List of cycle start positions
+
+        Returns:
+            2D array of shape (num_cycles, cycle_samples)
+        """
+        cycles = []
+
+        for pos in positions:
+            start = pos
+            end = pos + self.cycle_samples
+
+            if end <= len(audio):
+                # Full cycle available
+                cycle = audio[start:end]
+            else:
+                # Pad with zeros if at end of recording
+                available = audio[start:]
+                cycle = np.zeros(self.cycle_samples)
+                cycle[:len(available)] = available
+
+            cycles.append(cycle)
+
+        return np.array(cycles)
+
+    def _select_reference_cycle(self, cycles: np.ndarray) -> int:
+        """
+        Select the best cycle to use as alignment reference.
+
+        Strategy: Choose cycle with highest RMS energy (strongest impulse).
+
+        Args:
+            cycles: 2D array of cycles (num_cycles, cycle_samples)
+
+        Returns:
+            Index of reference cycle
+        """
+        energies = np.sqrt(np.mean(cycles ** 2, axis=1))
+        return int(np.argmax(energies))
+
+    def _align_cycles_to_reference(self, cycles: np.ndarray, reference_cycle: np.ndarray,
+                                   reference_idx: int) -> tuple:
+        """
+        Align all cycles to reference using cross-correlation.
+
+        Args:
+            cycles: 2D array of cycles (num_cycles, cycle_samples)
+            reference_cycle: Reference cycle to align to
+            reference_idx: Index of reference cycle
+
+        Returns:
+            Tuple of (aligned_cycles, shifts)
+            - aligned_cycles: 2D array of aligned cycles
+            - shifts: List of sample shifts applied to each cycle
+        """
+        aligned_cycles = []
+        shifts = []
+
+        # Limit search window to avoid wrapping artifacts
+        max_shift = self.cycle_samples // 4
+
+        for i, cycle in enumerate(cycles):
+            if i == reference_idx:
+                # Reference cycle: no shift
+                aligned_cycles.append(cycle)
+                shifts.append(0)
+            else:
+                # Find optimal shift using cross-correlation
+                shift = self._find_cycle_alignment_shift(reference_cycle, cycle, max_shift)
+
+                # Apply circular shift
+                aligned_cycle = np.roll(cycle, shift)
+
+                aligned_cycles.append(aligned_cycle)
+                shifts.append(shift)
+
+        return np.array(aligned_cycles), shifts
+
+    def _find_cycle_alignment_shift(self, reference: np.ndarray, signal: np.ndarray,
+                                   max_shift: int) -> int:
+        """
+        Find optimal alignment shift using cross-correlation.
+
+        Args:
+            reference: Reference signal
+            signal: Signal to align
+            max_shift: Maximum shift to search
+
+        Returns:
+            Optimal shift in samples (positive = shift right)
+        """
+        # Compute cross-correlation
+        correlation = np.correlate(reference, signal, mode='full')
+
+        # Find peak within search window
+        center = len(correlation) // 2
+        search_start = max(0, center - max_shift)
+        search_end = min(len(correlation), center + max_shift + 1)
+
+        search_region = correlation[search_start:search_end]
+        peak_idx = np.argmax(np.abs(search_region))
+
+        # Convert to shift value
+        shift = peak_idx + search_start - center
+
+        return shift
+
+    def _calculate_cycle_extraction_quality(self, aligned_cycles: np.ndarray,
+                                           onset_positions: list,
+                                           alignment_shifts: list) -> dict:
+        """
+        Calculate quality metrics for cycle extraction.
+
+        Args:
+            aligned_cycles: Aligned cycle waveforms
+            onset_positions: Detected onset positions
+            alignment_shifts: Applied alignment shifts
+
+        Returns:
+            Dictionary of quality metrics
+        """
+        quality = {}
+
+        # Timing consistency
+        if len(onset_positions) > 1:
+            onset_intervals = np.diff(onset_positions)
+            expected_interval = self.cycle_samples
+            timing_error_samples = onset_intervals - expected_interval
+            timing_error_ms = timing_error_samples / self.sample_rate * 1000
+
+            quality['timing'] = {
+                'mean_error_ms': float(np.mean(np.abs(timing_error_ms))),
+                'max_error_ms': float(np.max(np.abs(timing_error_ms))),
+                'std_error_ms': float(np.std(timing_error_ms))
+            }
+        else:
+            quality['timing'] = {'mean_error_ms': 0.0, 'max_error_ms': 0.0, 'std_error_ms': 0.0}
+
+        # Alignment quality
+        quality['alignment'] = {
+            'mean_shift_samples': float(np.mean(np.abs(alignment_shifts))),
+            'max_shift_samples': float(np.max(np.abs(alignment_shifts))),
+            'std_shift_samples': float(np.std(alignment_shifts))
+        }
+
+        # Cycle consistency (inter-cycle correlation)
+        if len(aligned_cycles) > 1:
+            correlations = []
+            for i in range(len(aligned_cycles)):
+                for j in range(i + 1, len(aligned_cycles)):
+                    corr = np.corrcoef(aligned_cycles[i], aligned_cycles[j])[0, 1]
+                    correlations.append(corr)
+
+            quality['consistency'] = {
+                'mean_correlation': float(np.mean(correlations)),
+                'min_correlation': float(np.min(correlations)),
+                'std_correlation': float(np.std(correlations))
+            }
+        else:
+            quality['consistency'] = {'mean_correlation': 1.0, 'min_correlation': 1.0, 'std_correlation': 0.0}
+
+        quality['num_cycles_extracted'] = len(aligned_cycles)
+        quality['onset_detection_success'] = len(onset_positions) > 0
+
+        return quality
 
     def _save_wav(self, audio_data: np.ndarray, filename: str):
         """Save audio data to WAV file"""

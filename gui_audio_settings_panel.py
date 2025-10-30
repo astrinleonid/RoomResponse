@@ -1257,7 +1257,7 @@ class AudioSettingsPanel:
         if cal_raw is None:
             raise ValueError(f"Calibration channel {cal_ch} not found in recorded data")
 
-        # Reshape calibration data into cycles
+        # STEP 1-4: Initial cycle extraction using simple reshape (AS-IS from document)
         expected_samples = self.recorder.cycle_samples * self.recorder.num_pulses
 
         # Pad or trim to expected length
@@ -1268,40 +1268,75 @@ class AudioSettingsPanel:
         else:
             cal_raw = cal_raw[:expected_samples]
 
-        # Reshape into individual cycles
-        calibration_cycles = cal_raw.reshape(self.recorder.num_pulses, self.recorder.cycle_samples)
+        # Simple reshape into individual cycles (NO alignment yet)
+        initial_cycles = cal_raw.reshape(self.recorder.num_pulses, self.recorder.cycle_samples)
 
-        # Run validation on each cycle (but don't filter them out)
-        # Use V2 validator with negative pulse detection
+        # Run validation on initial cycles (Step 4 from document)
         from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
 
-        # Create thresholds from config
         thresholds = QualityThresholds.from_config(self.recorder.calibration_quality_config)
         validator = CalibrationValidatorV2(thresholds, self.recorder.sample_rate)
 
-        validation_results = []
+        initial_validation_results = []
         for cycle_idx in range(self.recorder.num_pulses):
             validation = validator.validate_cycle(
-                calibration_cycles[cycle_idx],
+                initial_cycles[cycle_idx],
                 cycle_idx
             )
-            # Convert to dict for easier handling in UI
             validation_dict = {
                 'cycle_index': cycle_idx,
                 'calibration_valid': validation.calibration_valid,
                 'calibration_metrics': validation.calibration_metrics,
                 'calibration_failures': validation.calibration_failures,
-                'is_user_marked_good': False  # Will be set by user in UI
+                'is_user_marked_good': False
             }
-            validation_results.append(validation_dict)
+            initial_validation_results.append(validation_dict)
+
+        # STEP 5: Align cycles by onset (negative peak detection)
+        # This filters to valid cycles only and aligns them
+        alignment_result = self.recorder.align_cycles_by_onset(
+            initial_cycles,
+            initial_validation_results,
+            correlation_threshold=0.7
+        )
+
+        aligned_cycles = alignment_result['aligned_cycles']
+        valid_cycle_indices = alignment_result['valid_cycle_indices']
+
+        # Build validation results for aligned cycles
+        aligned_validation_results = []
+        for i, original_idx in enumerate(valid_cycle_indices):
+            # Use validation from original cycle
+            if original_idx < len(initial_validation_results):
+                aligned_validation_results.append(initial_validation_results[original_idx])
+
+        # STEP 6: Apply SAME alignment to ALL channels (multi-channel support)
+        aligned_multichannel_cycles = {}
+        if isinstance(recorded_audio, dict):
+            # Multi-channel recording - apply alignment to each channel
+            for channel_name, channel_data in recorded_audio.items():
+                aligned_channel_cycles = self.recorder.apply_alignment_to_channel(
+                    channel_data,
+                    alignment_result
+                )
+                aligned_multichannel_cycles[channel_name] = aligned_channel_cycles
+        else:
+            # Single channel - just use the calibration cycles
+            aligned_multichannel_cycles[cal_ch] = aligned_cycles
 
         return {
             'success': True,
             'num_cycles': self.recorder.num_pulses,
             'calibration_channel': cal_ch,
             'sample_rate': self.recorder.sample_rate,
-            'all_calibration_cycles': calibration_cycles,  # All raw cycles (num_pulses x cycle_samples)
-            'validation_results': validation_results,  # Per-cycle quality metrics
+            # Initial extraction (Steps 1-4) - FOR EXISTING UI
+            'all_calibration_cycles': initial_cycles,  # ALL cycles for existing quality metrics table
+            'validation_results': initial_validation_results,  # Validation for ALL cycles
+            # Alignment (Step 5-6) - FOR NEW ALIGNMENT SECTION AND DOWNSTREAM USE
+            'alignment_metadata': alignment_result,
+            'aligned_cycles': aligned_cycles,  # Calibration channel aligned cycles
+            'aligned_multichannel_cycles': aligned_multichannel_cycles,  # ALL channels aligned uniformly
+            'aligned_validation_results': aligned_validation_results,  # Validation for aligned cycles
             'cycle_duration_s': self.recorder.cycle_samples / self.recorder.sample_rate
         }
 
@@ -1495,6 +1530,7 @@ class AudioSettingsPanel:
                - **Persistent zoom:** Zoom settings preserved when adding/removing cycles
                - **Reset Zoom:** Button to return to full view
                - All quality metrics are visible in the table above
+               - Cycles shown are **aligned** via cross-correlation for accurate comparison
 
             ---
 
@@ -1517,6 +1553,208 @@ class AudioSettingsPanel:
             - After saving new thresholds, clear results and re-run to validate
             - Invalid cycles aren't bad - they help you understand quality variations
             """)
+
+        # ====================================================================
+        # Alignment Results Review Section (at end of panel)
+        # ====================================================================
+        alignment_metadata = results.get('alignment_metadata')
+        all_cycles = results.get('all_calibration_cycles')  # ALL initial cycles
+        aligned_cycles_data = results.get('aligned_cycles')  # Only filtered, aligned cycles
+        aligned_validation = results.get('aligned_validation_results', [])
+
+        if alignment_metadata and all_cycles is not None:
+            st.markdown("---")
+            st.markdown("#### Alignment Results Review")
+            st.markdown("""
+            **Onset-Based Cycle Alignment:** This section shows valid cycles aligned by their negative peak (hammer impact onset).
+            - Invalid cycles are filtered out (only valid cycles shown)
+            - Negative peak (onset) detected in each valid cycle
+            - All cycles shifted so onsets align at common position
+            - Cycles with poor correlation after alignment are filtered out
+            - Result: All displayed cycles should overlay precisely
+            """)
+
+            # Extract alignment data
+            valid_cycle_indices = alignment_metadata.get('valid_cycle_indices', [])
+            onset_positions = alignment_metadata.get('onset_positions', [])
+            aligned_onset_position = alignment_metadata.get('aligned_onset_position', 0)
+            correlations = alignment_metadata.get('correlations', [])
+            reference_idx = alignment_metadata.get('reference_cycle_idx', 0)
+            correlation_threshold = alignment_metadata.get('correlation_threshold', 0.7)
+
+            num_initial = len(all_cycles)
+            num_aligned = len(aligned_cycles_data) if aligned_cycles_data is not None else 0
+
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Initial Cycles", num_initial)
+            with col2:
+                st.metric("Valid & Aligned", num_aligned)
+            with col3:
+                mean_corr = np.mean(correlations) if correlations else 0
+                st.metric("Mean Correlation", f"{mean_corr:.3f}")
+            with col4:
+                st.metric("Aligned Onset Pos", f"{aligned_onset_position} samples")
+
+            st.markdown("---")
+
+            # Alignment Table with Checkboxes (same pattern as Quality Metrics table)
+            st.markdown("#### Aligned Cycles Table")
+            st.info("💡 Check the boxes to select cycles for overlay visualization - aligned cycles should overlap exactly")
+
+            # Initialize alignment selection state
+            if 'alignment_selected_cycles' not in st.session_state:
+                st.session_state['alignment_selected_cycles'] = []
+
+            alignment_selected_cycles = []
+
+            # Create column headers
+            cols = st.columns([0.5, 0.8, 1.0, 1.0, 1.0, 0.8, 1.0, 0.7])
+            with cols[0]:
+                st.markdown("**Select**")
+            with cols[1]:
+                st.markdown("**Cycle #**")
+            with cols[2]:
+                st.markdown("**Original Onset**")
+            with cols[3]:
+                st.markdown("**Aligned Onset**")
+            with cols[4]:
+                st.markdown("**Correlation**")
+            with cols[5]:
+                st.markdown("**Valid**")
+            with cols[6]:
+                st.markdown("**Neg. Peak**")
+            with cols[7]:
+                st.markdown("**Note**")
+
+            st.markdown("---")
+
+            # Render each row with checkbox - only for aligned cycles
+            for aligned_idx, original_idx in enumerate(valid_cycle_indices):
+                # All cycles here passed validation
+                is_ref = "REF" if aligned_idx == reference_idx else ""
+
+                # Get metrics for aligned cycle
+                aligned_peak = aligned_validation[aligned_idx].get('calibration_metrics', {}).get('negative_peak', 0) if aligned_idx < len(aligned_validation) else 0
+
+                # Get onset positions
+                original_onset = onset_positions[aligned_idx] if aligned_idx < len(onset_positions) else 0
+
+                cols = st.columns([0.5, 0.8, 1.0, 1.0, 1.0, 0.8, 1.0, 0.7])
+
+                with cols[0]:
+                    is_checked = st.checkbox(
+                        "",
+                        value=aligned_idx in st.session_state['alignment_selected_cycles'],
+                        key=f"alignment_checkbox_{aligned_idx}",
+                        label_visibility="collapsed"
+                    )
+                    if is_checked:
+                        if aligned_idx not in alignment_selected_cycles:
+                            alignment_selected_cycles.append(aligned_idx)
+
+                with cols[1]:
+                    st.markdown(f"{original_idx}")
+                with cols[2]:
+                    st.markdown(f"{original_onset} samples")
+                with cols[3]:
+                    st.markdown(f"{aligned_onset_position} samples")
+                with cols[4]:
+                    st.markdown(f"{correlations[aligned_idx]:.3f}" if aligned_idx < len(correlations) else "N/A")
+                with cols[5]:
+                    st.markdown('✓')  # All shown cycles are valid
+                with cols[6]:
+                    st.markdown(f"{aligned_peak:.3f}")
+                with cols[7]:
+                    st.markdown(is_ref)
+
+            # Update session state
+            st.session_state['alignment_selected_cycles'] = sorted(alignment_selected_cycles)
+
+            st.caption(f"Showing {num_aligned} valid, aligned cycles (invalid cycles filtered out)")
+            st.markdown("---")
+
+            # Display selection info
+            if alignment_selected_cycles:
+                original_cycle_numbers = [valid_cycle_indices[idx] for idx in alignment_selected_cycles if idx < len(valid_cycle_indices)]
+                st.success(f"✓ Selected {len(alignment_selected_cycles)} cycle(s) - Original cycle #: {', '.join(map(str, original_cycle_numbers))}")
+                st.info("💡 These aligned cycles will be overlaid in the visualization below - they should overlap exactly at the onset")
+            else:
+                st.info("👆 Check the boxes above to select cycles for visualization")
+
+            st.markdown("---")
+
+            # Visualization: Aligned cycles overlay
+            st.markdown("#### Aligned Cycles Overlay")
+
+            if alignment_selected_cycles:
+                if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
+                    # Prepare signals for visualization
+                    # Show all selected aligned cycles overlaid
+                    signals = []
+                    labels = []
+
+                    for aligned_idx in alignment_selected_cycles:
+                        if aligned_idx < len(aligned_cycles_data):
+                            original_idx = valid_cycle_indices[aligned_idx] if aligned_idx < len(valid_cycle_indices) else aligned_idx
+                            # Add aligned waveform
+                            signals.append(aligned_cycles_data[aligned_idx])
+                            labels.append(f"Cycle {original_idx} (aligned)")
+
+                    # Generate title
+                    if len(alignment_selected_cycles) == 1:
+                        original_idx = valid_cycle_indices[alignment_selected_cycles[0]] if alignment_selected_cycles[0] < len(valid_cycle_indices) else alignment_selected_cycles[0]
+                        title = f"Aligned Cycle {original_idx} - Onset at {aligned_onset_position} samples"
+                    else:
+                        title = f"Aligned Cycles Overlay ({len(alignment_selected_cycles)} cycles) - All onsets aligned at {aligned_onset_position} samples"
+
+                    AudioVisualizer.render_multi_waveform_with_zoom(
+                        audio_signals=signals,
+                        sample_rate=sample_rate,
+                        labels=labels,
+                        title=title,
+                        component_id="alignment_overlay_viz",
+                        height=400,
+                        normalize=False,
+                        show_analysis=True
+                    )
+
+                    st.info("💡 All displayed cycles have been aligned by their negative peak (onset). They should overlap precisely.")
+
+                    # Show detailed metrics for selected cycles
+                    st.markdown("**Selected Cycles Details:**")
+
+                    for aligned_idx in alignment_selected_cycles:
+                        if aligned_idx < len(valid_cycle_indices):
+                            original_idx = valid_cycle_indices[aligned_idx]
+                            with st.expander(f"Cycle {original_idx} Details", expanded=False):
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.markdown("**Aligned Cycle Metrics:**")
+                                    if aligned_idx < len(aligned_validation):
+                                        metrics = aligned_validation[aligned_idx].get('calibration_metrics', {})
+                                        st.write(f"Negative Peak: {metrics.get('negative_peak', 0):.3f}")
+                                        st.write(f"Positive Peak: {metrics.get('positive_peak', 0):.3f}")
+                                        st.write(f"Aftershock: {metrics.get('aftershock', 0):.3f}")
+                                        st.write(f"Valid: ✓")
+
+                                with col2:
+                                    st.markdown("**Alignment Info:**")
+                                    if aligned_idx < len(onset_positions):
+                                        st.write(f"Original Onset Position: {onset_positions[aligned_idx]} samples")
+                                    st.write(f"Aligned Onset Position: {aligned_onset_position} samples")
+                                    if aligned_idx < len(correlations):
+                                        st.write(f"Correlation: {correlations[aligned_idx]:.3f}")
+                                    if aligned_idx == reference_idx:
+                                        st.write("**[REFERENCE CYCLE]**")
+
+                else:
+                    st.warning("AudioVisualizer not available - cannot display overlay")
+                    st.info("Install gui_audio_visualizer.py to enable waveform visualization")
+            else:
+                st.info("👆 Select one or more cycles in the Aligned Cycles Table above to view overlay")
 
     def _render_series_settings_tab(self):
         """Render the series settings if the component is available."""
