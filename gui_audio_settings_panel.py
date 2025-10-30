@@ -1081,7 +1081,7 @@ class AudioSettingsPanel:
                                     calibration_cycles,
                                     marked_good,
                                     sample_rate,
-                                    margin=0.05  # 5% margin on both sides
+                                    safety_margin=0.05  # 5% margin on both sides
                                 )
 
                                 # Store in session state and update the input fields
