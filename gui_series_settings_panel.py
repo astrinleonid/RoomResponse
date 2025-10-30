@@ -421,13 +421,24 @@ class SeriesSettingsPanel:
                     st.error("Recording failed — no audio captured")
                     return
 
-                analysis = self._analyze_series_recording(recorded_audio, self.recorder)
+                # Handle multi-channel vs single-channel
+                if isinstance(recorded_audio, dict):
+                    # Multi-channel: use reference channel for analysis
+                    ref_ch = self.recorder.multichannel_config.get('reference_channel', 0)
+                    analysis_audio = recorded_audio.get(ref_ch, list(recorded_audio.values())[0])
+                    duration = len(analysis_audio) / self.recorder.sample_rate
+                else:
+                    # Single-channel
+                    analysis_audio = recorded_audio
+                    duration = len(recorded_audio) / self.recorder.sample_rate
+
+                analysis = self._analyze_series_recording(analysis_audio, self.recorder)
                 st.session_state['series_recorded_audio'] = recorded_audio
                 st.session_state['series_sample_rate'] = int(self.recorder.sample_rate)
                 st.session_state['series_timestamp'] = time.time()
                 st.session_state['series_analysis_data'] = analysis
 
-                st.success(f"Series recording OK — {len(recorded_audio)/self.recorder.sample_rate:.3f}s")
+                st.success(f"Series recording OK — {duration:.3f}s")
                 st.info(f"Files saved: {raw_path.name}, {imp_path.name}")
                 st.rerun()
 
@@ -597,10 +608,36 @@ class SeriesSettingsPanel:
 
         if VISUALIZER_AVAILABLE:
             st.markdown("**Full Recording**")
+
+            # Handle multi-channel data - extract single channel for visualization
+            if isinstance(audio, dict):
+                # Multi-channel: get reference channel or first available
+                ref_ch = self.recorder.multichannel_config.get('reference_channel', 0)
+                available_channels = list(audio.keys())
+
+                # Allow user to select which channel to visualize
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    selected_ch = st.selectbox(
+                        "Visualize Channel",
+                        available_channels,
+                        index=available_channels.index(ref_ch) if ref_ch in available_channels else 0,
+                        key="series_viz_channel"
+                    )
+                with col2:
+                    st.caption(f"{len(available_channels)} channels")
+
+                viz_audio = audio[selected_ch]
+                viz_title = f"Complete Series Recording - Channel {selected_ch}"
+            else:
+                # Single-channel
+                viz_audio = audio
+                viz_title = "Complete Series Recording"
+
             AudioVisualizer("series_full_recording").render(
-                audio_data=audio,
+                audio_data=viz_audio,
                 sample_rate=sr,
-                title="Complete Series Recording",
+                title=viz_title,
                 show_controls=True,
                 show_analysis=True,
                 height=400
