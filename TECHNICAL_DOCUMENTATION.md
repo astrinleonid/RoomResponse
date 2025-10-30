@@ -2302,6 +2302,297 @@ Testing with 10 channels... ✓ SUCCESS - got 10 channels
 - [SOLUTION_UMC1820_WASAPI.md](SOLUTION_UMC1820_WASAPI.md) - Technical deep-dive
 - [install_behringer_driver.md](install_behringer_driver.md) - Installation instructions
 
+### 10.6 Calibration Quality Management
+
+**Overview**: Comprehensive calibration impulse quality validation system with automatic threshold learning and persistent configuration.
+
+#### 10.6.1 Calibration Architecture
+
+The system validates calibration impulses using measurable quality criteria to ensure accurate room response measurements.
+
+**Key Components**:
+
+1. **CalibrationValidatorV2** (`calibration_validator_v2.py`):
+   ```python
+   @dataclass
+   class QualityThresholds:
+       # Absolute value ranges for all metrics
+       min_negative_peak: float      # Min acceptable negative peak amplitude
+       max_negative_peak: float      # Max acceptable negative peak amplitude
+       min_positive_peak: float      # Min acceptable positive peak amplitude
+       max_positive_peak: float      # Max acceptable positive peak amplitude
+       min_aftershock: float         # Min acceptable aftershock amplitude
+       max_aftershock: float         # Max acceptable aftershock amplitude
+       aftershock_window_ms: float   # Time window to check (default: 10ms)
+       aftershock_skip_ms: float     # Initial skip period (default: 2ms)
+
+   class CalibrationValidatorV2:
+       def validate_cycle(self, cycle_data, sample_rate) -> ValidationResult:
+           """Validate impulse against quality thresholds."""
+           # Extract metrics: negative_peak, positive_peak, aftershock
+           # Compare against min/max ranges
+           # Return ValidationResult with pass/fail and reasons
+   ```
+
+2. **Automatic Threshold Learning**:
+   ```python
+   def calculate_thresholds_from_marked_cycles(
+       calibration_cycles: np.ndarray,
+       marked_good: List[int],
+       sample_rate: int,
+       margin: float = 0.05  # 5% safety margin
+   ) -> QualityThresholds:
+       """
+       Learn optimal thresholds from user-marked good cycles.
+
+       Process:
+       1. Extract metrics from all marked cycles
+       2. Calculate min/max for each metric
+       3. Add 5% margin on both sides for tolerance
+       4. Return QualityThresholds with learned ranges
+       """
+   ```
+
+3. **Configuration Persistence**:
+   ```json
+   // recorderConfig.json
+   {
+     "calibration_quality_config": {
+       "min_negative_peak": 0.589,
+       "max_negative_peak": 0.661,
+       "min_positive_peak": 0.425,
+       "max_positive_peak": 0.473,
+       "min_aftershock": 0.109,
+       "max_aftershock": 0.126,
+       "aftershock_window_ms": 10.0,
+       "aftershock_skip_ms": 2.0,
+       "min_valid_cycles": 3
+     }
+   }
+   ```
+
+#### 10.6.2 GUI Integration (Audio Settings Panel)
+
+**Section 1: Calibration Quality Parameters** (Collapsible)
+
+- **Tool 1 - Manual Configuration**: Tabular form for editing min/max thresholds
+  - Negative Peak range (absolute values)
+  - Positive Peak range (absolute values)
+  - Aftershock range (absolute values)
+  - Configuration parameters (window, skip, min valid cycles)
+
+- **Tool 2 - Automatic Threshold Learning**:
+  1. Run calibration test in Section 2
+  2. Select good quality cycles in multi-select table
+  3. Click "Calculate Thresholds from Selected Cycles"
+  4. Review calculated thresholds in Tool 1
+  5. Click "Save Configuration" to persist
+
+**Section 2: Test Calibration Impulse** (Collapsible)
+
+- **Run Test**: Records calibration impulses, validates each cycle
+- **Quality Metrics Summary**: Table with checkboxes for multi-selection
+  - Columns: Select, Cycle, Valid, Neg Peak, Pos Peak, Aftershock, Issues
+  - Selection used for: waveform visualization, threshold learning
+- **Waveform Analysis**: Unified visualization component (see 10.7)
+
+**Workflow**:
+```
+1. Run Test → Get calibration cycles with quality validation
+2. Review Table → See which cycles passed/failed and why
+3. Select Good Cycles → Check boxes next to high-quality impulses
+4. Go to Section 1 → See selected cycles, click "Calculate Thresholds"
+5. Review & Save → Check calculated ranges, save to configuration
+6. Re-test → Verify new thresholds work correctly
+```
+
+**Key Features**:
+- **Checkbox-based multi-selection**: Persistent across interactions
+- **Quality validation**: V2 refactored with simple min/max range checking
+- **Automatic learning**: 5% safety margins on observed ranges
+- **Backward compatibility**: Migrates old V1 config format
+- **Session persistence**: Configuration saved to `recorderConfig.json`
+
+#### 10.6.3 Quality Validation Logic
+
+**Refactored Approach** (V2):
+- **NO calculations during validation** - just range checks
+- **Thresholds are absolute values** - not ratios or percentages
+- **Simple logic**: `min_value <= measured_value <= max_value`
+- **Consistent extraction**: Same `_extract_metrics()` for learning and testing
+
+**Validation Flow**:
+```python
+# 1. Extract metrics from impulse cycle
+metrics = validator._extract_metrics(cycle_data, sample_rate)
+# → {'negative_peak': 0.627, 'positive_peak': 0.450, 'aftershock': 0.120}
+
+# 2. Check against thresholds
+failures = []
+if metrics['negative_peak'] < thresholds.min_negative_peak:
+    failures.append("Negative peak too low")
+if metrics['negative_peak'] > thresholds.max_negative_peak:
+    failures.append("Negative peak too high")
+# ... repeat for positive_peak, aftershock
+
+# 3. Return result
+return ValidationResult(
+    calibration_valid=len(failures) == 0,
+    calibration_metrics=metrics,
+    calibration_failures=failures
+)
+```
+
+**Benefits**:
+- Eliminates inconsistencies between threshold learning and validation
+- User sees exact values that caused failures
+- Thresholds directly represent observed ranges from good samples
+- Easy to understand: "this value must be between X and Y"
+
+### 10.7 Unified Waveform Visualization Component
+
+**Overview**: Reusable component in `gui_audio_visualizer.py` for displaying single or multiple audio waveforms with persistent zoom controls.
+
+#### 10.7.1 Component Architecture
+
+**Static Method**:
+```python
+AudioVisualizer.render_multi_waveform_with_zoom(
+    audio_signals: list,          # List of numpy arrays (1+ waveforms)
+    sample_rate: int,             # Sample rate in Hz
+    labels: Optional[list],       # Optional labels for each signal
+    title: str,                   # Plot title
+    component_id: str,            # Unique ID for session state isolation
+    height: int = 400,            # Plot height in pixels
+    normalize: bool = False,      # Normalize to [-1, 1]
+    show_analysis: bool = True    # Show statistics
+) -> Dict[str, Any]              # Returns status, zoom state, etc.
+```
+
+**Key Features**:
+1. **Unified Interface**: Handles both single and multiple waveforms seamlessly
+2. **Persistent Zoom**: Session state preserves zoom across waveform changes
+3. **View Modes**: Toggle between waveform and spectrum (FFT) views
+4. **Zoom Controls**: Sliders for precise start/end time selection
+5. **Reset Zoom**: Button to return to full view
+6. **Statistics**: Per-signal max amplitude and RMS for zoomed region
+
+#### 10.7.2 Session State Management
+
+**Per-Component State Keys**:
+```python
+f"{component_id}_zoom_start"    # 0.0 to 1.0 (fraction of duration)
+f"{component_id}_zoom_end"      # 0.0 to 1.0 (fraction of duration)
+f"{component_id}_view_mode"     # "waveform" or "spectrum"
+```
+
+**Persistence Behavior**:
+```
+User Flow:
+1. Check Cycle 0 → Shows single waveform
+2. Zoom to 0-0.02s using sliders
+3. Check Cycle 2 → Switches to overlay, ZOOM PRESERVED at 0-0.02s
+4. Check Cycle 5 → Now 3 cycles, ZOOM STILL at 0-0.02s
+5. Uncheck cycles → Back to fewer, ZOOM MAINTAINED
+6. Click "Reset Zoom" → Returns to full view (0-1.0)
+```
+
+#### 10.7.3 Usage Examples
+
+**Calibration Panel** (Single or Multiple Cycles):
+```python
+# Unified usage for 1 or N cycles
+signals = [calibration_cycles[i] for i in selected_cycles]
+labels = [f"Cycle {i} {'✓' if valid else '✗'}" for i in selected_cycles]
+
+AudioVisualizer.render_multi_waveform_with_zoom(
+    audio_signals=signals,
+    sample_rate=sample_rate,
+    labels=labels,
+    title="Calibration Impulse - N Cycles",
+    component_id="cal_waveform_viz",  # Same ID for all uses
+    height=400
+)
+```
+
+**Other Contexts** (Recording Comparison):
+```python
+# Compare multiple recording takes
+takes = [take1_audio, take2_audio, take3_audio]
+AudioVisualizer.render_multi_waveform_with_zoom(
+    audio_signals=takes,
+    sample_rate=48000,
+    labels=["Take 1", "Take 2", "Take 3"],
+    title="Recording Takes Comparison",
+    component_id="takes_comparison",
+    height=400
+)
+```
+
+#### 10.7.4 Visualization Rendering
+
+**Single Waveform Mode**:
+- Time-domain plot with amplitude on Y-axis
+- Waveform or spectrum view based on toggle
+- Full AudioVisualizer-like controls
+- Statistics: max, RMS for zoomed region
+
+**Multiple Waveform Mode**:
+- Overlaid signals with distinct colors (tab10 colormap)
+- All signals zoomed synchronously
+- Legend shows labels (up to 10 signals)
+- Per-signal statistics (up to 4 displayed)
+- Grid, zero line, axis labels
+
+**Zoom Application**:
+```python
+# Calculate zoom indices for each signal
+start_idx = int(zoom_start * len(signal))
+end_idx = int(zoom_end * len(signal))
+zoomed_signal = signal[start_idx:end_idx]
+
+# Create time axis for zoomed region
+time_axis = np.linspace(
+    zoom_start * len(signal) / sample_rate,
+    zoom_end * len(signal) / sample_rate,
+    len(zoomed_signal)
+)
+
+# Plot zoomed data
+ax.plot(time_axis, zoomed_signal, label=label)
+```
+
+#### 10.7.5 Benefits
+
+**Reusability**:
+- ✓ Static method - no instance needed
+- ✓ Works with any audio signals and sample rate
+- ✓ Component ID prevents state conflicts
+- ✓ Can be used in multiple places simultaneously
+
+**Consistency**:
+- ✓ Same controls for single/multiple waveforms
+- ✓ Identical UI/UX throughout application
+- ✓ Zoom persists across mode switches
+- ✓ User learns controls once, uses everywhere
+
+**Features**:
+- ✓ Precise zoom control with sliders
+- ✓ View mode toggle (waveform/spectrum)
+- ✓ Per-signal statistics
+- ✓ Up to 10 overlaid signals
+- ✓ Reset zoom for quick return
+
+**Integration**:
+- ✓ Used in calibration panel (Section 2)
+- ✓ Ready for room response comparison
+- ✓ Ready for recording takes analysis
+- ✓ Extensible for future use cases
+
+**Files Modified** (2025-10-30):
+- `gui_audio_visualizer.py`: Added `render_multi_waveform_with_zoom()` static method
+- `gui_audio_settings_panel.py`: Unified calibration visualization, reorganized UI, checkbox-based selection
+
 ---
 
 ## 11. Configuration & Metadata

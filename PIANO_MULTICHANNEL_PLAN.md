@@ -1,9 +1,9 @@
 # Multi-Channel Upgrade Plan for Piano Response System
 
-**Document Version:** 1.3
+**Document Version:** 1.4
 **Target System:** piano_response.py (Simplified audio-only pipeline)
 **Created:** 2025-10-25
-**Last Updated:** 2025-10-26
+**Last Updated:** 2025-10-30
 **Original Timeline:** 7 weeks
 **Status:** Phase 1 ✅ COMPLETE | Phase 1.5 ✅ COMPLETE | Phase 2 ✅ COMPLETE | Phase 3 ✅ COMPLETE | Phase 4 🚧 IN PROGRESS | Phase 5 📋 PLANNED
 
@@ -820,12 +820,13 @@ MeasurementResult measure_room_response_auto_multichannel(
 ## Phase 2: Recording Pipeline with Calibration & Averaging
 
 **Duration:** 3 weeks (extended from 1 week to include calibration system)
-**Status:** ✅ COMPLETE (Implemented: 2025-10-26)
-**Files:** `RoomResponseRecorder.py`, `calibration_validator.py`
+**Status:** ✅ COMPLETE (Implemented: 2025-10-26, Refactored: 2025-10-30)
+**Files:** `RoomResponseRecorder.py`, `calibration_validator.py`, `calibration_validator_v2.py`
 
 **Completion Status:**
 - ✅ Configuration loading from JSON (multi-channel, calibration, correlation configs)
-- ✅ Calibration quality validation (4 criteria: magnitude, duration, double-hit, tail noise)
+- ✅ Calibration quality validation V1 (4 criteria: magnitude, duration, double-hit, tail noise)
+- ✅ **Calibration quality validation V2 (2025-10-30)** - Refactored to simple min/max range checking with automatic threshold learning
 - ✅ Calibration normalization (divide response by calibration magnitude)
 - ✅ Cross-correlation filtering (O(n) algorithm with retry mechanism)
 - ✅ Synchronized multi-channel processing (unified onset alignment)
@@ -835,7 +836,8 @@ MeasurementResult measure_room_response_auto_multichannel(
 
 **Deliverables:**
 - ✅ Updated RoomResponseRecorder with multi-channel support
-- ✅ CalibrationValidator module for quality validation
+- ✅ CalibrationValidator module for quality validation (V1)
+- ✅ **CalibrationValidatorV2 module (2025-10-30)** - Simplified validation with user-driven threshold learning
 - ✅ Test configuration files (with/without calibration)
 - ✅ Test suite validating all Phase 2 features
 - ✅ Implementation summary document
@@ -2000,16 +2002,19 @@ if __name__ == "__main__":
 ## Phase 4: GUI Interface Updates
 
 **Duration:** 2 weeks
-**Status:** 🚧 IN PROGRESS (Calibration Impulse section complete)
-**Files:** `piano_response.py`, `gui_audio_settings_panel.py`, `gui_collect_panel.py`, `gui_audio_panel.py`
+**Status:** 🚧 IN PROGRESS (Calibration Quality Management V2 complete)
+**Files:** `piano_response.py`, `gui_audio_settings_panel.py`, `gui_audio_visualizer.py`, `calibration_validator_v2.py`, `gui_collect_panel.py`, `gui_audio_panel.py`
 
 **Current Status:**
 - ✅ Audio Settings panel has Multi-Channel Test tab (basic testing UI)
-- ✅ **NEW: Calibration Impulse tab implemented (2025-10-26)**
-  - ✅ Calibration channel selection with save to configuration
-  - ✅ Calibration quality parameters configuration UI
-  - ✅ Calibration impulse test with per-cycle quality metrics display
-  - ✅ Visual feedback for amplitude, duration, double-hit, and tail noise validation
+- ✅ **Calibration Quality Management V2 (2025-10-30)**
+  - ✅ Refactored CalibrationValidatorV2 with simple min/max range validation
+  - ✅ Automatic threshold learning from user-marked "good" cycles
+  - ✅ Checkbox-based multi-cycle selection with persistent session state
+  - ✅ Unified waveform visualization component with persistent zoom controls
+  - ✅ Reorganized UI with collapsible sections and integrated tools
+  - ✅ Manual threshold editing in tabular form
+  - ✅ Per-cycle validation with detailed failure reporting
 - ❌ Multi-channel configuration UI NOT YET implemented
 - ❌ Collection panel multi-channel status NOT YET implemented
 - ❌ Audio Analysis panel multi-channel visualization NOT YET implemented
@@ -2089,6 +2094,219 @@ A new "Calibration Impulse" tab has been added to the Audio Settings panel, prov
 6. Run calibration test
 7. Review per-cycle quality metrics
 8. Adjust quality thresholds if needed and retest
+
+### 4.0.1 Calibration Quality Management V2 (✅ COMPLETE - 2025-10-30)
+
+**Major Refactoring: Simplified Validation Logic**
+
+The calibration validation system was completely refactored from complex ratio-based calculations to simple min/max range checking. This change dramatically improves reliability and user understanding.
+
+**Files Modified:**
+- `calibration_validator_v2.py` (new implementation)
+- `gui_audio_settings_panel.py` (complete UI reorganization)
+- `gui_audio_visualizer.py` (new unified visualization component)
+- `recorderConfig.json` (updated calibration_quality_config structure)
+
+**Architecture Changes:**
+
+#### 1. CalibrationValidatorV2 - Simplified Validation Logic
+
+**Old Approach (calibration_validator.py):**
+- Complex calculations during testing phase
+- Ratio-based metrics (secondary_peak_ratio, tail_rms_ratio)
+- Amplitude, duration, double-hit detection, tail noise validation
+- Required understanding of signal processing concepts
+
+**New Approach (calibration_validator_v2.py):**
+- **NO calculations during testing** - just range checks
+- Absolute value metrics (negative_peak, positive_peak, aftershock)
+- Simple min/max ranges calculated from user-marked "good" cycles
+- Focus on piano hammer impact signature: negative pulse + aftershock detection
+
+**Validation Metrics:**
+```python
+@dataclass
+class QualityThresholds:
+    # Negative peak magnitude (absolute value)
+    min_negative_peak: float
+    max_negative_peak: float
+
+    # Positive peak (absolute value, not ratio)
+    min_positive_peak: float
+    max_positive_peak: float
+
+    # Aftershock in window (absolute value, not ratio)
+    min_aftershock: float
+    max_aftershock: float
+
+    # Configuration
+    aftershock_window_ms: float  # Default 10ms
+    aftershock_skip_ms: float    # Default 2ms
+```
+
+**Threshold Learning Algorithm:**
+1. User marks 3+ cycles as "good" examples
+2. System extracts metrics from each good cycle
+3. For each metric: `min = lowest * 0.9`, `max = highest * 1.1` (10% margin)
+4. Save thresholds to configuration
+5. All future cycles tested against these fixed ranges
+
+**Benefits:**
+- Eliminates complex ratio calculations that were unreliable
+- User-driven quality definition (not algorithm-driven)
+- Highly predictable validation behavior
+- Debugging is straightforward (just compare values to ranges)
+
+#### 2. GUI Reorganization - Two Collapsible Sections
+
+**Section 1: Calibration Quality Parameters (Collapsible)**
+
+Contains two integrated tools:
+
+**Tool 1: Manual Threshold Editing (Tabular Form)**
+- Compact table layout using `st.columns`
+- Direct editing of min/max values for all 3 metrics
+- Window configuration (aftershock_window_ms, aftershock_skip_ms)
+- Minimum valid cycles requirement
+- Single "Save Quality Parameters" button at bottom
+
+**Tool 2: Automatic Threshold Learning**
+- Run calibration test to capture cycles
+- Mark 3+ cycles as "good" using checkboxes
+- Click "Calculate and Apply Thresholds" button
+- System automatically:
+  1. Extracts metrics from marked cycles
+  2. Calculates min/max ranges with 10% margin
+  3. Applies to configuration (in memory)
+  4. Clears test results to force re-validation
+- User workflow: Mark good → Calculate → Test again → Review results
+
+**Section 2: Test Calibration Impulse (Collapsible)**
+
+Contains:
+- "Run Calibration Test" button
+- Overall statistics (total cycles, valid cycles)
+- Quality Metrics Summary table with checkbox-based multi-selection
+- Unified waveform visualization for selected cycles
+
+#### 3. Checkbox-Based Multi-Selection
+
+**Problem Solved:**
+- Streamlit's `st.dataframe` selection was unreliable (selections reset on interaction)
+- Previous attempts with `st.multiselect` dropdown rejected by user
+
+**Final Solution:**
+```python
+# Create table header with st.columns
+cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
+
+# Render each row with checkbox
+for v_result in validation_results:
+    cycle_idx = v_result.get('cycle_index', 0)
+    cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
+
+    with cols[0]:
+        is_checked = st.checkbox(
+            "",
+            value=cycle_idx in st.session_state['cal_test_selected_cycles'],
+            key=f"cycle_checkbox_{cycle_idx}",
+            label_visibility="collapsed"
+        )
+        if is_checked and cycle_idx not in selected_cycles:
+            selected_cycles.append(cycle_idx)
+
+# Update session state
+st.session_state['cal_test_selected_cycles'] = sorted(selected_cycles)
+```
+
+**Benefits:**
+- Reliable multi-selection that persists across interactions
+- Visually clear (checkbox in each row)
+- No dropdown or modal required
+- Selection state preserved in session state
+
+#### 4. Unified Waveform Visualization Component
+
+**New Component: `gui_audio_visualizer.py`**
+
+Added static method `AudioVisualizer.render_multi_waveform_with_zoom()`:
+
+**Features:**
+- Handles 1 to N waveforms with same component
+- Persistent zoom controls using session state with component_id isolation
+- View mode toggle (waveform / spectrum with FFT)
+- Zoom sliders for precise time range selection (0.0 to 1.0 fraction)
+- Reset button to restore full view
+- Per-signal statistics display
+- Automatic color cycling for multiple signals
+
+**Key Design: Component ID Isolation**
+```python
+# Session state keys unique to this component instance
+zoom_start_key = f"{component_id}_zoom_start"
+zoom_end_key = f"{component_id}_zoom_end"
+view_mode_key = f"{component_id}_view_mode"
+
+# Multiple instances of same component don't interfere
+if zoom_start_key not in st.session_state:
+    st.session_state[zoom_start_key] = 0.0
+if zoom_end_key not in st.session_state:
+    st.session_state[zoom_end_key] = 1.0
+```
+
+**Usage in Calibration Testing:**
+```python
+# Works for single or multiple cycles
+signals = [calibration_cycles[i] for i in selected_cycles]
+labels = [f"Cycle {i} {'✓' if valid else '✗'}" for i in selected_cycles]
+
+AudioVisualizer.render_multi_waveform_with_zoom(
+    audio_signals=signals,
+    sample_rate=sample_rate,
+    labels=labels,
+    title=f"Calibration Impulse - {len(selected_cycles)} Cycles",
+    component_id="cal_waveform_viz",  # Same ID for both single and multiple
+    height=400,
+    normalize=False,
+    show_analysis=True
+)
+```
+
+**Benefits:**
+- Single component for all waveform visualization needs
+- Zoom state persists when switching between single/multiple cycles
+- Reusable across different panels and contexts
+- No code duplication
+- Consistent user experience
+
+#### 5. Configuration Structure
+
+**Updated recorderConfig.json:**
+```json
+{
+  "calibration_quality_config": {
+    "min_negative_peak": 0.5144,
+    "max_negative_peak": 0.7086,
+    "min_positive_peak": 0.3813,
+    "max_positive_peak": 0.5002,
+    "min_aftershock": 0.1001,
+    "max_aftershock": 0.1301,
+    "aftershock_window_ms": 10.0,
+    "aftershock_skip_ms": 2.0,
+    "min_valid_cycles": 3
+  }
+}
+```
+
+**User Workflow with V2:**
+1. Run initial calibration test (no thresholds yet)
+2. Visually inspect waveforms
+3. Check 3-5 cycles that look "good" (strong negative pulse, visible aftershock)
+4. Click "Calculate and Apply Thresholds"
+5. System learns min/max ranges from marked cycles
+6. Run test again - system validates all cycles against learned ranges
+7. If validation too strict/loose: manually edit thresholds in Tool 1
+8. Thresholds persist in configuration for future recordings
 
 **What Remains:**
 
