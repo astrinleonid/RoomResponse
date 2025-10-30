@@ -49,6 +49,8 @@ Tests actual multi-channel recording with real audio hardware. Validates:
 - Audio input device (microphone, audio interface)
 - Audio output device (speakers, headphones)
 - `scipy` package for chirp signal and cross-correlation
+- **For multi-channel testing (4+ channels):** Professional audio interface with native drivers installed
+  - See [Multi-Channel Device Drivers](#multi-channel-device-drivers) section below
 
 **Install scipy (if needed):**
 ```bash
@@ -181,6 +183,72 @@ else:
     print("✗ Failed to initialize")
 ```
 
+## Multi-Channel Device Drivers
+
+**Important:** Professional audio interfaces require **native drivers** for multi-channel operation.
+
+### Why Native Drivers Are Required
+
+Windows generic USB Audio Class 2.0 driver has limitations:
+- Reports device capabilities (e.g., "10 channels available")
+- But WDM/WASAPI interface is **hardcoded to stereo (2 channels)** only
+- Multi-channel recording will fail with "Invalid source channels" error
+
+Native manufacturer drivers provide:
+- ✓ Full multi-channel access through WDM/WASAPI
+- ✓ ASIO support for low-latency professional audio
+- ✓ Proper channel configuration for Windows audio APIs
+- ✓ Better audio quality and stability
+
+### Common Professional Audio Interfaces
+
+| Device | Native Driver Required | Max Channels | Driver Download |
+|--------|------------------------|--------------|-----------------|
+| Behringer UMC1820 | Yes | 18 input / 20 output | https://www.behringer.com/downloads.html |
+| Focusrite Scarlett | Yes | 2-18 (model dependent) | https://focusrite.com/downloads |
+| PreSonus AudioBox | Yes | 2-32 (model dependent) | https://www.presonus.com/products |
+| MOTU Audio Express | Yes | 6 input / 6 output | https://motu.com/download |
+
+### Installation and Verification
+
+**For Behringer UMC1820:**
+
+1. Check current driver status:
+   ```bash
+   python check_umc_driver.py
+   ```
+
+2. If using generic driver, follow installation guide:
+   - See: [install_behringer_driver.md](install_behringer_driver.md)
+   - Download from: https://www.behringer.com/downloads.html
+   - Version 4.59.0 or 5.57.0 recommended
+
+3. Verify installation:
+   ```bash
+   python test_umc_input_detailed.py
+   ```
+
+**Expected results after native driver installation:**
+```
+Testing with 1 channels...  ✓ SUCCESS
+Testing with 2 channels...  ✓ SUCCESS
+Testing with 8 channels...  ✓ SUCCESS
+Testing with 10 channels... ✓ SUCCESS
+```
+
+**For other interfaces:** Check manufacturer's website for:
+- ASIO drivers
+- WDM/WASAPI drivers
+- Device-specific control software
+
+### Testing Without Native Drivers
+
+If native drivers are not installed, tests will be limited to:
+- ✓ 1-2 channel recording (stereo)
+- ✗ Multi-channel recording will fail
+
+This is expected behavior and not a bug in the software.
+
 ## Troubleshooting
 
 ### "No device found supporting N channels"
@@ -200,6 +268,38 @@ else:
 1. Verify device capabilities in Windows Sound Settings or device manager
 2. Some devices advertise max channels but require specific driver configurations
 3. Try a different device or lower channel count
+
+### "Invalid source channels" or Multi-Channel Devices Not Working
+
+**Cause:** Professional audio interfaces (like Behringer UMC1820) require native drivers for multi-channel operation. Windows generic USB Audio driver limits devices to stereo (2 channels) only.
+
+**Solution for Behringer UMC1820:**
+1. Check current driver status:
+   ```bash
+   python check_umc_driver.py
+   ```
+2. If using generic driver, install Behringer native driver
+3. See detailed instructions: [install_behringer_driver.md](install_behringer_driver.md)
+4. Download driver from: https://www.behringer.com/downloads.html
+5. After installation, all input channels will be accessible
+
+**Solution for Other Professional Interfaces:**
+- Check manufacturer's website for native ASIO/WDM drivers
+- Focusrite: Focusrite Control software and ASIO driver
+- PreSonus: Universal Control and ASIO driver
+- MOTU: MOTU AVB/USB driver
+
+**Quick Driver Check:**
+```bash
+# Check UMC1820 driver status and SDL detection
+python check_umc_driver.py
+
+# Test multi-channel device combinations
+python test_umc_multichannel.py
+
+# Test detailed channel counts
+python test_umc_input_detailed.py
+```
 
 ### "Very low signal amplitude - check volume/microphone"
 

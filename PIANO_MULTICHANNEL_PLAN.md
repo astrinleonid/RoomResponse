@@ -178,6 +178,77 @@ files = sm.get_measurement_files_from_scenario(
 
 ---
 
+## Hardware Prerequisites for Multi-Channel Recording
+
+### Critical Requirement: Native Audio Drivers
+
+**Important:** Professional audio interfaces require **native manufacturer drivers** for multi-channel operation. This is not a software limitation - it is a Windows driver architecture requirement.
+
+#### The Driver Issue
+
+**Windows Generic USB Audio Class 2.0 Driver:**
+- ✓ Device is detected and shows correct channel count in enumeration
+- ✗ WDM/WASAPI interface is **hardcoded to stereo (2 channels)** only
+- ✗ Multi-channel recording fails with "Invalid source channels" error
+
+**Native Manufacturer Drivers:**
+- ✓ Full multi-channel WDM/WASAPI access
+- ✓ ASIO support for low-latency professional audio
+- ✓ Proper channel configuration for Windows audio APIs
+- ✓ Better audio quality and stability
+
+#### Device-Specific Installation
+
+**Behringer UMC1820 (Most Common):**
+1. Check current driver status: `python check_umc_driver.py`
+2. If using generic driver, install Behringer native driver
+3. See: [install_behringer_driver.md](install_behringer_driver.md)
+4. Download from: https://www.behringer.com/downloads.html
+5. Recommended version: 4.59.0 or 5.57.0
+6. After installation: Full 18 input / 20 output channel access
+
+**Other Professional Interfaces:**
+
+| Device | Native Driver Required | Download Link |
+|--------|------------------------|---------------|
+| Focusrite Scarlett | Yes | https://focusrite.com/downloads |
+| PreSonus AudioBox | Yes | https://www.presonus.com/products |
+| MOTU Audio Express | Yes | https://motu.com/download |
+| RME Fireface | Yes | https://www.rme-audio.de/downloads |
+
+#### Diagnostic Tools
+
+```bash
+# Check if native driver is installed
+python check_umc_driver.py
+
+# Test multi-channel functionality
+python test_umc_input_detailed.py
+```
+
+**Expected results with native driver:**
+```
+Testing with 1 channels...  ✓ SUCCESS
+Testing with 2 channels...  ✓ SUCCESS
+Testing with 8 channels...  ✓ SUCCESS
+Testing with 10 channels... ✓ SUCCESS
+```
+
+#### Summary
+
+**Before using multi-channel features:**
+1. Verify you have a professional multi-channel audio interface
+2. Install the manufacturer's native driver (not Windows generic)
+3. Run diagnostic scripts to verify proper installation
+4. Only then proceed with multi-channel recording
+
+**Reference Documentation:**
+- [SOLUTION_INSTALL_BEHRINGER_DRIVER.md](SOLUTION_INSTALL_BEHRINGER_DRIVER.md)
+- [SOLUTION_UMC1820_WASAPI.md](SOLUTION_UMC1820_WASAPI.md)
+- [install_behringer_driver.md](install_behringer_driver.md)
+
+---
+
 ## Current System Analysis
 
 ### Piano Response Pipeline Overview

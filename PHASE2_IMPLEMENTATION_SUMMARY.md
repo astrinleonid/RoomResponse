@@ -318,8 +318,9 @@ All Phase 2 tests **PASSED** ✅
 2. **No real hardware testing yet** - Only synthetic data tested
 3. **ScenarioManager not updated** - Can't load multi-channel files yet (Phase 3)
 4. **No metadata JSON saving** - Validation results not persisted to file yet
+5. **Driver Dependency** - Multi-channel recording on professional audio interfaces (e.g., Behringer UMC1820) requires native manufacturer drivers. Windows generic USB Audio driver limits devices to stereo (2 channels) only. See [install_behringer_driver.md](install_behringer_driver.md) for installation instructions.
 
-These will be addressed in subsequent phases.
+These will be addressed in subsequent phases (except #5, which is a hardware/driver requirement).
 
 ---
 

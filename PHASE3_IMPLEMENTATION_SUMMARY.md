@@ -401,6 +401,12 @@ files = sm.get_measurement_files_from_scenario(
    - Assumes `impulse_responses` subfolder by default
    - Configurable but not auto-detected
 
+5. **Driver Dependency for Multi-Channel Recording**
+   - Professional audio interfaces (e.g., Behringer UMC1820) require native manufacturer drivers
+   - Windows generic USB Audio driver limits devices to stereo (2 channels) only
+   - See [install_behringer_driver.md](install_behringer_driver.md) for installation instructions
+   - Without native drivers, multi-channel file parsing works but recording will fail
+
 ---
 
 ## Conclusion
