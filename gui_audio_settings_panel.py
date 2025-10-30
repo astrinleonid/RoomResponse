@@ -300,38 +300,128 @@ class AudioSettingsPanel:
         elif self.recorder is None:
             st.warning("Recorder not created")
 
+    def _load_config_from_file(self):
+        """Load configuration using centralized config manager.
+
+        Returns:
+            Dictionary with configuration values, or empty dict if file doesn't exist
+        """
+        from config_manager import config_manager
+        return config_manager.load_config()
+
+    def _save_config_to_file(self) -> bool:
+        """Save current audio and multichannel settings using centralized config manager.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from config_manager import config_manager
+
+            # Load existing config or create new one
+            config = config_manager.load_config()
+
+            # Update device selection
+            if self.recorder:
+                config['input_device'] = int(getattr(self.recorder, 'input_device', -1))
+                config['output_device'] = int(getattr(self.recorder, 'output_device', -1))
+
+                # Update multichannel configuration
+                mc_config = self.recorder.multichannel_config
+                config['multichannel_config'] = {
+                    'enabled': bool(mc_config.get('enabled', False)),
+                    'num_channels': int(mc_config.get('num_channels', 1)),
+                    'channel_names': list(mc_config.get('channel_names', ['Channel 0'])),
+                    'calibration_channel': mc_config.get('calibration_channel'),  # None or int
+                    'reference_channel': int(mc_config.get('reference_channel', 0)),
+                    'response_channels': list(mc_config.get('response_channels', [0]))
+                }
+
+            # Save using config manager
+            success = config_manager.save_config(config, updated_by="Audio Settings Panel")
+
+            # Debug: Verify what was written
+            if success:
+                st.caption(f"✓ Wrote to: {config_manager.get_config_path()}")
+
+            return success
+        except Exception as e:
+            st.error(f"Failed to save configuration: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            return False
+
     def _init_session_state(self):
-        """Initialize session state variables from recorder if available."""
-        defaults = {
-            'sample_rate': 48000,
-            'buffer_size': 512,  # UI-only, not stored in recorder
-            'input_device': -1,
-            'output_device': -1,
-        }
+        """Initialize session state variables from configuration file and recorder."""
+        # Only load configuration from file on first run (not every render)
+        if 'audio_config_loaded' not in st.session_state:
+            config = self._load_config_from_file()
 
-        if self.recorder:
-            defaults.update({
-                'sample_rate': int(getattr(self.recorder, 'sample_rate', defaults['sample_rate'])),
-                'input_device': int(getattr(self.recorder, 'input_device', defaults['input_device'])),
-                'output_device': int(getattr(self.recorder, 'output_device', defaults['output_device'])),
-            })
-
-        session_defaults = {
-            'audio_selected_input_device': 'System Default',
-            'audio_selected_output_device': 'System Default',
-            'audio_sample_rate': defaults['sample_rate'],
-            'audio_buffer_size': defaults['buffer_size'],
-        }
-
-        for k, v in session_defaults.items():
-            if k not in st.session_state:
-                st.session_state[k] = v
-
-        if 'audio_device_cache' not in st.session_state:
-            st.session_state['audio_device_cache'] = {
-                'input': [],
-                'output': [],
+            defaults = {
+                'sample_rate': 48000,
+                'buffer_size': 512,  # UI-only, not stored in recorder
+                'input_device': config.get('input_device', -1),
+                'output_device': config.get('output_device', -1),
             }
+
+            if self.recorder:
+                # Apply loaded device config to recorder (only on first load)
+                self.recorder.input_device = defaults['input_device']
+                self.recorder.output_device = defaults['output_device']
+
+                # Load and apply multichannel config (only on first load)
+                mc_config_file = config.get('multichannel_config', {})
+                if mc_config_file:
+                    self.recorder.multichannel_config['enabled'] = bool(mc_config_file.get('enabled', False))
+                    self.recorder.multichannel_config['num_channels'] = int(mc_config_file.get('num_channels', 1))
+                    self.recorder.multichannel_config['channel_names'] = list(mc_config_file.get('channel_names', ['Channel 0']))
+                    self.recorder.multichannel_config['calibration_channel'] = mc_config_file.get('calibration_channel')
+                    self.recorder.multichannel_config['reference_channel'] = int(mc_config_file.get('reference_channel', 0))
+                    self.recorder.multichannel_config['response_channels'] = list(mc_config_file.get('response_channels', [0]))
+
+                defaults.update({
+                    'sample_rate': int(getattr(self.recorder, 'sample_rate', defaults['sample_rate'])),
+                    'input_device': int(getattr(self.recorder, 'input_device', defaults['input_device'])),
+                    'output_device': int(getattr(self.recorder, 'output_device', defaults['output_device'])),
+                })
+
+            session_defaults = {
+                'audio_selected_input_device': 'System Default',
+                'audio_selected_output_device': 'System Default',
+                'audio_sample_rate': defaults['sample_rate'],
+                'audio_buffer_size': defaults['buffer_size'],
+            }
+
+            for k, v in session_defaults.items():
+                if k not in st.session_state:
+                    st.session_state[k] = v
+
+            if 'audio_device_cache' not in st.session_state:
+                st.session_state['audio_device_cache'] = {
+                    'input': [],
+                    'output': [],
+                }
+
+            # Mark that configuration has been loaded
+            st.session_state['audio_config_loaded'] = True
+        else:
+            # Config already loaded, just ensure session defaults exist
+            session_defaults = {
+                'audio_selected_input_device': 'System Default',
+                'audio_selected_output_device': 'System Default',
+                'audio_sample_rate': 48000,
+                'audio_buffer_size': 512,
+            }
+
+            for k, v in session_defaults.items():
+                if k not in st.session_state:
+                    st.session_state[k] = v
+
+            if 'audio_device_cache' not in st.session_state:
+                st.session_state['audio_device_cache'] = {
+                    'input': [],
+                    'output': [],
+                }
 
     def _sync_session_state_with_recorder(self):
         """Push/prioritize settings from recorder into session state where necessary."""
@@ -525,6 +615,15 @@ class AudioSettingsPanel:
                         st.info("Using system default for any device set to -1")
                 else:
                     st.warning("Recorder not available")
+
+            # Save device selection button
+            st.markdown("---")
+            if st.button("💾 Save Device Selection to Config File", type="primary", key="save_device_selection"):
+                if self._save_config_to_file():
+                    st.success("✓ Device selection saved to recorderConfig.json")
+                    st.info("Device settings will be loaded automatically on next session")
+                else:
+                    st.error("Failed to save configuration file")
         else:
             st.warning("AudioDeviceSelector component not available")
 
@@ -544,6 +643,15 @@ class AudioSettingsPanel:
 
         st.subheader("Multi-Channel Configuration")
         st.markdown("Configure multi-channel recording settings.")
+
+        # Show config file location
+        import os
+        from config_manager import config_manager
+        config_path = config_manager.get_config_path()
+        with st.expander("📁 Configuration File Location", expanded=False):
+            st.code(f"Config file: {config_path}")
+            st.caption(f"Exists: {config_path.exists()}")
+            st.caption(f"Working directory: {os.getcwd()}")
 
         if not self.recorder:
             st.warning("Recorder not available")
@@ -688,56 +796,70 @@ class AudioSettingsPanel:
                     channel_names.append(name)
 
             # 5. Save configuration button
-            if st.button("Save Multi-Channel Configuration", type="primary"):
-                try:
-                    # Validate channel count against device capabilities
-                    if num_channels > max_device_channels:
-                        st.error(f"❌ Cannot save: Your device only supports {max_device_channels} channels, but you configured {num_channels} channels.")
-                        st.info(f"Please reduce the number of channels to {max_device_channels} or less.")
-                        return
+            col_save1, col_save2 = st.columns(2)
+            with col_save1:
+                if st.button("Apply Multi-Channel Configuration", type="primary"):
+                    try:
+                        # Validate channel count against device capabilities
+                        if num_channels > max_device_channels:
+                            st.error(f"❌ Cannot save: Your device only supports {max_device_channels} channels, but you configured {num_channels} channels.")
+                            st.info(f"Please reduce the number of channels to {max_device_channels} or less.")
+                            return
 
-                    # Update configuration
-                    self.recorder.multichannel_config['enabled'] = True
-                    self.recorder.multichannel_config['num_channels'] = num_channels
-                    self.recorder.multichannel_config['channel_names'] = channel_names
-                    self.recorder.multichannel_config['reference_channel'] = reference_channel
-                    self.recorder.multichannel_config['calibration_channel'] = calibration_channel
+                        # Update configuration
+                        self.recorder.multichannel_config['enabled'] = True
+                        self.recorder.multichannel_config['num_channels'] = num_channels
+                        self.recorder.multichannel_config['channel_names'] = channel_names
+                        self.recorder.multichannel_config['reference_channel'] = reference_channel
+                        self.recorder.multichannel_config['calibration_channel'] = calibration_channel
 
-                    # Ensure response_channels list is updated
-                    if calibration_channel is not None:
-                        # If calibration is enabled, response channels exclude calibration channel
-                        self.recorder.multichannel_config['response_channels'] = [
-                            ch for ch in range(num_channels) if ch != calibration_channel
-                        ]
+                        # Ensure response_channels list is updated
+                        if calibration_channel is not None:
+                            # If calibration is enabled, response channels exclude calibration channel
+                            self.recorder.multichannel_config['response_channels'] = [
+                                ch for ch in range(num_channels) if ch != calibration_channel
+                            ]
+                        else:
+                            # No calibration, all channels are response channels
+                            self.recorder.multichannel_config['response_channels'] = list(range(num_channels))
+
+                        # Validate the configuration
+                        self.recorder._validate_multichannel_config()
+
+                        # DEBUG: Show what was just saved
+                        st.success("✓ Configuration applied to recorder!")
+                        with st.expander("🔍 DEBUG: Configuration Applied to recorder.multichannel_config", expanded=True):
+                            st.markdown(f"**Target Device:** {selected_device_name} (ID: {selected_device_id}, Max Channels: {max_device_channels})")
+                            st.json({
+                                "enabled": True,
+                                "num_channels": num_channels,
+                                "reference_channel": reference_channel,
+                                "calibration_channel": calibration_channel,
+                                "channel_names": channel_names,
+                                "response_channels": self.recorder.multichannel_config['response_channels']
+                            })
+                            st.caption("This configuration is applied to the recorder session.")
+
+                        cal_msg = f" | Calibration: Ch {calibration_channel}" if calibration_channel is not None else " | No calibration"
+                        st.info(f"Multi-channel configuration: {num_channels} channels{cal_msg}")
+                        st.info("💡 Click 'Save to Config File' to persist settings across sessions")
+
+                    except Exception as e:
+                        st.error(f"Failed to apply configuration: {e}")
+
+            with col_save2:
+                if st.button("💾 Save to Config File", type="secondary"):
+                    import os
+                    config_path = os.path.abspath("recorderConfig.json")
+                    if self._save_config_to_file():
+                        st.success(f"✓ Configuration saved to recorderConfig.json")
+                        with st.expander("🔍 DEBUG: Save Details", expanded=True):
+                            st.code(f"File path: {config_path}")
+                            st.markdown("**Saved multichannel_config:**")
+                            st.json(self.recorder.multichannel_config)
+                        st.info("Settings will be loaded automatically on next session")
                     else:
-                        # No calibration, all channels are response channels
-                        self.recorder.multichannel_config['response_channels'] = list(range(num_channels))
-
-                    # Validate the configuration
-                    self.recorder._validate_multichannel_config()
-
-                    # DEBUG: Show what was just saved
-                    st.success("✓ Configuration saved successfully!")
-                    with st.expander("🔍 DEBUG: Configuration Saved to recorder.multichannel_config", expanded=True):
-                        st.markdown(f"**Target Device:** {selected_device_name} (ID: {selected_device_id}, Max Channels: {max_device_channels})")
-                        st.json({
-                            "enabled": True,
-                            "num_channels": num_channels,
-                            "reference_channel": reference_channel,
-                            "calibration_channel": calibration_channel,
-                            "channel_names": channel_names,
-                            "response_channels": self.recorder.multichannel_config['response_channels']
-                        })
-                        st.caption("This configuration will be used when recording starts.")
-
-                    cal_msg = f" | Calibration: Ch {calibration_channel}" if calibration_channel is not None else " | No calibration"
-                    st.info(f"Multi-channel configuration: {num_channels} channels{cal_msg}")
-
-                    # Don't rerun immediately - let user see the debug output
-                    if st.button("Continue", type="secondary"):
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to save configuration: {e}")
+                        st.error("Failed to save configuration file")
 
             # Show current configuration summary
             st.markdown("---")
@@ -763,14 +885,22 @@ class AudioSettingsPanel:
 
         else:
             # Disable multi-channel mode
-            if st.button("Save Configuration (Disable Multi-Channel)"):
-                try:
-                    self.recorder.multichannel_config['enabled'] = False
-                    self.recorder.multichannel_config['num_channels'] = 1
-                    st.success("✓ Multi-channel recording disabled. Using single-channel mode.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to save configuration: {e}")
+            col_dis1, col_dis2 = st.columns(2)
+            with col_dis1:
+                if st.button("Apply (Disable Multi-Channel)", type="primary"):
+                    try:
+                        self.recorder.multichannel_config['enabled'] = False
+                        self.recorder.multichannel_config['num_channels'] = 1
+                        st.success("✓ Multi-channel recording disabled. Using single-channel mode.")
+                        st.info("💡 Click 'Save to Config File' to persist this setting")
+                    except Exception as e:
+                        st.error(f"Failed to apply configuration: {e}")
+
+            with col_dis2:
+                if st.button("💾 Save to Config File", type="secondary", key="save_disabled_mc"):
+                    if self._save_config_to_file():
+                        st.success("✓ Configuration saved to recorderConfig.json")
+                        st.info("Multi-channel disabled setting will be loaded on next session")
 
             st.info("Multi-channel recording is disabled. Enable it to record from multiple channels simultaneously.")
 
@@ -809,9 +939,33 @@ class AudioSettingsPanel:
 
         # Check if multi-channel is enabled
         mc_config = self.recorder.multichannel_config
+
+        # DEBUG: Show current multichannel state
+        with st.expander("🔍 DEBUG: Current Multichannel Configuration", expanded=False):
+            st.json({
+                "enabled": mc_config.get('enabled', False),
+                "num_channels": mc_config.get('num_channels', 1),
+                "channel_names": mc_config.get('channel_names', []),
+                "calibration_channel": mc_config.get('calibration_channel'),
+                "reference_channel": mc_config.get('reference_channel', 0)
+            })
+
+            # Show what's in the config file
+            config_file_data = self._load_config_from_file()
+            st.markdown("**From recorderConfig.json:**")
+            st.json(config_file_data.get('multichannel_config', {}))
+
         if not mc_config.get('enabled', False):
-            st.warning("Multi-channel recording is not enabled. Calibration is only available in multi-channel mode.")
-            st.info("Enable multi-channel recording in the Device Selection tab first.")
+            st.warning("⚠️ Multi-channel recording is not enabled. Calibration is only available in multi-channel mode.")
+            st.info("📍 **To enable multi-channel recording:**")
+            st.markdown("""
+            1. Go to **Device Selection & Testing** tab
+            2. Scroll down to **Multi-Channel Configuration** section
+            3. Check **"Enable multi-channel recording"**
+            4. Configure your channels
+            5. Click **"Apply Multi-Channel Configuration"**
+            6. Click **"💾 Save to Config File"** to persist settings
+            """)
             return
 
         num_channels = mc_config.get('num_channels', 1)
@@ -1035,6 +1189,21 @@ class AudioSettingsPanel:
             - validation_results: Quality metrics for each cycle
             - sample_rate: Sample rate for waveform playback
         """
+        # DEBUG: Show recorder settings before recording
+        st.info("🔍 DEBUG: Recorder settings at calibration test start:")
+        debug_info = {
+            "sample_rate": self.recorder.sample_rate,
+            "pulse_duration": self.recorder.pulse_duration,
+            "cycle_duration": self.recorder.cycle_duration,
+            "num_pulses": self.recorder.num_pulses,
+            "pulse_frequency": self.recorder.pulse_frequency,
+            "impulse_form": self.recorder.impulse_form,
+            "volume": self.recorder.volume,
+            "multichannel_enabled": self.recorder.multichannel_config.get('enabled', False),
+            "num_channels_config": self.recorder.multichannel_config.get('num_channels', 1)
+        }
+        st.json(debug_info)
+
         # Validate device capabilities before recording
         num_channels = self.recorder.multichannel_config.get('num_channels', 1)
         try:

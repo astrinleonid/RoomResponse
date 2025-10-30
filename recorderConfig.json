@@ -1,18 +1,49 @@
 {
   "sample_rate": 48000,
-  "pulse_duration": 0.008,
-  "pulse_fade": 0.0001,
-  "cycle_duration": 0.2,
-  "num_pulses": 6,
-  "volume": 0.4,
+  "pulse_duration": 0.019,
+  "pulse_fade": 0.018,
+  "cycle_duration": 0.5,
+  "num_pulses": 4,
+  "volume": 0.15,
   "pulse_frequency": 1000.0,
-  "impulse_form": "square",
+  "impulse_form": "voice_coil",
   "computer": "System Default",
   "room": "System Default",
+  "input_device": 5,
+  "output_device": 6,
   "series_config": {
     "record_extra_time_ms": 200.0,
     "averaging_start_cycle": 2,
     "created_timestamp": 1758910613.3098996,
-    "created_by": "Series Settings Panel"
-  }
+    "created_by": "Series Settings Panel",
+    "updated_timestamp": 1761825807.7998471,
+    "updated_by": "Series Settings Panel"
+  },
+  "multichannel_config": {
+    "enabled": true,
+    "num_channels": 8,
+    "channel_names": [
+      "Channel 0",
+      "Channel 1",
+      "Channel 2",
+      "Channel 3",
+      "Channel 4",
+      "Channel 5",
+      "Channel 6",
+      "Channel 7"
+    ],
+    "calibration_channel": 2,
+    "reference_channel": 5,
+    "response_channels": [
+      0,
+      1,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "last_updated": 1761828848.2737231,
+  "last_updated_by": "Series Settings Panel"
 }

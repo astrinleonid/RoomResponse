@@ -47,8 +47,11 @@ class CollectionPanel:
     def __init__(self, scenario_manager, recorder: Optional["RoomResponseRecorder"]=None):
         self.scenario_manager = scenario_manager
         self.recorder: Optional[RoomResponseRecorder] = recorder
-        print("/n/n++++++++++++ Debug output of the recorder parameters 3 ++++++++++++++")
-        self.recorder.print_signal_analysis()
+        if self.recorder:
+            print("\n\n++++++++++++ Debug output of the recorder parameters 3 ++++++++++++++")
+            self.recorder.print_signal_analysis()
+        else:
+            print("Warning: CollectionPanel initialized without recorder")
 
     def render(self) -> None:
         st.header("Collect - Data Collection")

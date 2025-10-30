@@ -87,25 +87,30 @@ class SeriesSettingsPanel:
     # Session defaults
     # ----------------------
     def _init_session_state(self) -> None:
-        # Ensure correct base types (ints for counts, floats for durations/freqs)
-        defaults = {
-            'series_num_pulses': int(getattr(self.recorder, 'num_pulses', 8)) if self.recorder else 8,
-            'series_pulse_duration': float(1000.0 * getattr(self.recorder, 'pulse_duration', 0.008)) if self.recorder else 8.0,     # ms
-            'series_cycle_duration': float(1000.0 * getattr(self.recorder, 'cycle_duration', 0.1)) if self.recorder else 100.0,     # ms
-            'series_pulse_frequency': float(getattr(self.recorder, 'pulse_frequency', 1000.0)) if self.recorder else 1000.0,        # Hz
-            'series_pulse_volume': float(getattr(self.recorder, 'volume', 0.4)) if self.recorder else 0.4,
-            'series_pulse_form': getattr(self.recorder, 'impulse_form', 'sine') if self.recorder else 'sine',
-            'series_fade_duration': float(1000.0 * getattr(self.recorder, 'pulse_fade', 0.0001)) if self.recorder else 0.1,         # ms
+        # Load configuration from file if available
+        config = self._load_config_from_file()
 
-            # Analysis parameters
-            'series_record_extra_time': 200.0,
-            'series_averaging_start_cycle': 2,
+        # Ensure correct base types (ints for counts, floats for durations/freqs)
+        # Priority: 1) Config file, 2) Recorder attributes, 3) Hard-coded defaults
+        # NOTE: Config file stores durations in SECONDS, UI uses MILLISECONDS
+        defaults = {
+            'series_num_pulses': int(config.get('num_pulses', getattr(self.recorder, 'num_pulses', 8) if self.recorder else 8)),
+            'series_pulse_duration': float(1000.0 * config.get('pulse_duration', getattr(self.recorder, 'pulse_duration', 0.008) if self.recorder else 0.008)),     # s -> ms
+            'series_cycle_duration': float(1000.0 * config.get('cycle_duration', getattr(self.recorder, 'cycle_duration', 0.1) if self.recorder else 0.1)),     # s -> ms
+            'series_pulse_frequency': float(config.get('pulse_frequency', getattr(self.recorder, 'pulse_frequency', 1000.0) if self.recorder else 1000.0)),        # Hz
+            'series_pulse_volume': float(config.get('volume', getattr(self.recorder, 'volume', 0.4) if self.recorder else 0.4)),
+            'series_pulse_form': str(config.get('impulse_form', getattr(self.recorder, 'impulse_form', 'sine') if self.recorder else 'sine')),
+            'series_fade_duration': float(1000.0 * config.get('pulse_fade', getattr(self.recorder, 'pulse_fade', 0.0001) if self.recorder else 0.0001)),         # s -> ms
+
+            # Analysis parameters from series_config section
+            'series_record_extra_time': float(config.get('series_config', {}).get('record_extra_time_ms', 200.0)),
+            'series_averaging_start_cycle': int(config.get('series_config', {}).get('averaging_start_cycle', 2)),
             'series_show_individual_cycles': True,
             'series_show_averaged_result': True,
 
             # Recording data cache
             'series_recorded_audio': None,
-            'series_sample_rate': int(getattr(self.recorder, 'sample_rate', 48000)) if self.recorder else 48000,
+            'series_sample_rate': int(config.get('sample_rate', getattr(self.recorder, 'sample_rate', 48000) if self.recorder else 48000)),
             'series_timestamp': 0.0,
             'series_analysis_data': {},
 
@@ -116,6 +121,54 @@ class SeriesSettingsPanel:
         }
         for k, v in defaults.items():
             st.session_state.setdefault(k, v)
+
+    # ----------------------
+    # Configuration file I/O
+    # ----------------------
+    def _load_config_from_file(self) -> Dict[str, Any]:
+        """Load configuration using centralized config manager.
+
+        Returns:
+            Dictionary with configuration values, or empty dict if file doesn't exist
+        """
+        from config_manager import config_manager
+        return config_manager.load_config()
+
+    def _save_config_to_file(self) -> bool:
+        """Save current series settings using centralized config manager.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from config_manager import config_manager
+
+            # Load existing config or create new one
+            config = config_manager.load_config()
+
+            # Update with current session values (convert from ms to seconds where needed)
+            config['sample_rate'] = int(st.session_state['series_sample_rate'])
+            config['pulse_duration'] = float(st.session_state['series_pulse_duration']) / 1000.0  # ms -> s
+            config['pulse_fade'] = float(st.session_state['series_fade_duration']) / 1000.0  # ms -> s
+            config['cycle_duration'] = float(st.session_state['series_cycle_duration']) / 1000.0  # ms -> s
+            config['num_pulses'] = int(st.session_state['series_num_pulses'])
+            config['volume'] = float(st.session_state['series_pulse_volume'])
+            config['pulse_frequency'] = float(st.session_state['series_pulse_frequency'])
+            config['impulse_form'] = str(st.session_state['series_pulse_form'])
+
+            # Update series_config section
+            if 'series_config' not in config:
+                config['series_config'] = {}
+
+            config['series_config']['record_extra_time_ms'] = float(st.session_state['series_record_extra_time'])
+            config['series_config']['averaging_start_cycle'] = int(st.session_state['series_averaging_start_cycle'])
+
+            # Save using config manager
+            return config_manager.save_config(config, updated_by="Series Settings Panel")
+
+        except Exception as e:
+            st.error(f"Failed to save configuration: {e}")
+            return False
 
     # ----------------------
     # Status / prerequisites
@@ -144,6 +197,41 @@ class SeriesSettingsPanel:
     # ----------------------
     def _render_pulse_series_config(self) -> None:
         st.markdown("**Multi-pulse Series Configuration**")
+
+        # Show configuration status using centralized config manager
+        from config_manager import config_manager
+        config_path = config_manager.get_config_path()
+        if config_path.exists():
+            st.info(f"ℹ️ Settings loaded from **{config_path.name}** — Changes are applied to recorder but not saved until you click 'Save Configuration'")
+        else:
+            st.warning(f"⚠️ No configuration file found at {config_path} — Using default values")
+
+        # DEBUG: Show what's in the recorder vs config file
+        with st.expander("🔍 DEBUG: Recorder vs Config File Settings", expanded=False):
+            if self.recorder:
+                st.markdown("**Current Recorder Settings:**")
+                st.json({
+                    "sample_rate": self.recorder.sample_rate,
+                    "pulse_duration": self.recorder.pulse_duration,
+                    "cycle_duration": self.recorder.cycle_duration,
+                    "num_pulses": self.recorder.num_pulses,
+                    "pulse_frequency": self.recorder.pulse_frequency,
+                    "impulse_form": self.recorder.impulse_form,
+                    "volume": self.recorder.volume
+                })
+
+            config = config_manager.load_config()
+            st.markdown("**Config File Settings:**")
+            st.json({
+                "sample_rate": config.get('sample_rate'),
+                "pulse_duration": config.get('pulse_duration'),
+                "cycle_duration": config.get('cycle_duration'),
+                "num_pulses": config.get('num_pulses'),
+                "pulse_frequency": config.get('pulse_frequency'),
+                "impulse_form": config.get('impulse_form'),
+                "volume": config.get('volume')
+            })
+
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -155,12 +243,23 @@ class SeriesSettingsPanel:
                 value=int(st.session_state['series_num_pulses']),
                 step=int(1)
             )
+            # Get sample rate to constrain pulse duration
+            current_sample_rate = int(st.session_state['series_sample_rate'])
+
+            # Minimum pulse duration = one sample period
+            min_pulse_ms = (1.0 / current_sample_rate) * 1000.0  # Convert to ms
+
+            # Maximum pulse duration = 100 ms
+            max_pulse_ms = 100.0
+
             # floats across the board
             pulse_duration_ms = st.number_input(
                 "Pulse duration (ms)",
-                min_value=float(0.02), max_value=float(200.0),
-                value=float(st.session_state['series_pulse_duration']),
-                step=float(0.02)
+                min_value=float(min_pulse_ms),
+                max_value=float(max_pulse_ms),
+                value=float(min(max(st.session_state['series_pulse_duration'], min_pulse_ms), max_pulse_ms)),
+                step=float(min_pulse_ms),
+                help=f"Min: 1 sample ({min_pulse_ms:.4f} ms @ {current_sample_rate}Hz) | Max: {max_pulse_ms} ms"
             )
             pulse_freq = st.number_input(
                 "Pulse frequency (Hz)",
@@ -265,16 +364,31 @@ class SeriesSettingsPanel:
 
     def _render_series_controls(self) -> None:
         st.markdown("**Series Controls**")
-        c1, c2 = st.columns(2)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             if st.button("🎵 Record Series",
                          disabled=not (SDL_AVAILABLE and RECORDER_AVAILABLE and self.recorder)):
                 self._execute_series_recording()
-        # with c2:
-        #     if st.button("🔊 Preview Series", disabled=not (SDL_AVAILABLE and self.recorder)):
-        #         self._preview_series()
         with c2:
-            if st.button("⚙️ Export Series Config"):
+            if st.button("💾 Save Configuration", type="primary"):
+                if self._save_config_to_file():
+                    st.success("✓ Configuration saved to recorderConfig.json")
+                    st.info("Settings will be used as defaults in future sessions")
+                    st.rerun()
+        with c3:
+            if st.button("🔄 Reset to Saved"):
+                config = self._load_config_from_file()
+                if config:
+                    # Clear session state to force reload from config
+                    keys_to_clear = [k for k in st.session_state.keys() if k.startswith('series_')]
+                    for k in keys_to_clear:
+                        del st.session_state[k]
+                    st.success("✓ Settings reset to saved configuration")
+                    st.rerun()
+                else:
+                    st.warning("No saved configuration found")
+        with c4:
+            if st.button("⚙️ Export Config"):
                 self._export_series_config()
 
     # ----------------------

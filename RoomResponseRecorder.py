@@ -29,8 +29,18 @@ class RoomResponseRecorder:
         Initialize the room response recorder from a JSON configuration file
 
         Args:
-            config_file_path: Path to JSON configuration file. If None, uses default config.
+            config_file_path: Path to JSON configuration file. If None, tries to load from
+                            'recorderConfig.json' in current directory. If that doesn't exist,
+                            uses default config.
         """
+        # If no config path specified, try to load from default location
+        if config_file_path is None:
+            default_path = "recorderConfig.json"
+            import os
+            if os.path.exists(default_path):
+                config_file_path = default_path
+                print(f"Loading configuration from default location: {default_path}")
+
         # Default configuration
         default_config = {
             'sample_rate': 48000,
@@ -80,6 +90,7 @@ class RoomResponseRecorder:
         }
 
         # Load configuration from file if provided
+        file_config = {}  # Initialize outside try block so it's available later
         if config_file_path:
             try:
                 with open(config_file_path, 'r') as f:
@@ -96,8 +107,10 @@ class RoomResponseRecorder:
                     if key in default_config:
                         default_config[key] = value
 
-                # Load multi-channel config
-                if 'multichannel' in file_config:
+                # Load multi-channel config (support both 'multichannel' and 'multichannel_config' keys)
+                if 'multichannel_config' in file_config:
+                    self.multichannel_config.update(file_config['multichannel_config'])
+                elif 'multichannel' in file_config:
                     self.multichannel_config.update(file_config['multichannel'])
 
                 # Load calibration quality config
@@ -136,8 +149,13 @@ class RoomResponseRecorder:
         if self.multichannel_config.get('enabled', False):
             self._validate_multichannel_config()
 
-        self.input_device = -1
-        self.output_device = -1
+        # Load device IDs from config (if provided), otherwise use defaults
+        if config_file_path and file_config:
+            self.input_device = file_config.get('input_device', -1)
+            self.output_device = file_config.get('output_device', -1)
+        else:
+            self.input_device = -1
+            self.output_device = -1
 
     def get_sdl_core_info(self) -> dict:
         """
@@ -287,8 +305,9 @@ class RoomResponseRecorder:
             raise ValueError("Pulse duration too short")
         if self.gap_samples < 0:
             raise ValueError("Cycle duration shorter than pulse duration")
-        if self.fade_samples >= self.pulse_samples // 2:
-            raise ValueError("Fade duration too long for pulse duration")
+        # For voice_coil mode, fade can be longer (it's the decay time)
+        if self.impulse_form != "voice_coil" and self.fade_samples >= self.pulse_samples // 2:
+            raise ValueError("Fade duration too long for pulse duration (only allowed in voice_coil mode)")
         if not 0.0 <= self.volume <= 1.0:
             raise ValueError("Volume must be between 0.0 and 1.0")
         if self.impulse_form not in ["square", "sine", "voice_coil"]:
