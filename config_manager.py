@@ -59,41 +59,13 @@ class ConfigManager:
             config['last_updated'] = time.time()
             config['last_updated_by'] = updated_by
 
-            # Debug: Print config path and size
-            print(f"[ConfigManager] Attempting to save config to: {self.config_path}")
-            print(f"[ConfigManager] Config size: {len(str(config))} characters")
-
-            # Check if path exists and is writable
-            import os
-            config_dir = os.path.dirname(self.config_path)
-            if not os.path.exists(config_dir):
-                print(f"[ConfigManager] ERROR: Directory does not exist: {config_dir}")
-                return False
-
-            if os.path.exists(self.config_path) and not os.access(self.config_path, os.W_OK):
-                print(f"[ConfigManager] ERROR: File exists but is not writable: {self.config_path}")
-                return False
-
             # Write to file with pretty formatting
             with open(self.config_path, 'w') as f:
                 json.dump(config, f, indent=2)
 
-            print(f"[ConfigManager] Successfully saved config to {self.config_path}")
             return True
-        except PermissionError as e:
-            print(f"[ConfigManager] ERROR: Permission denied when saving to {self.config_path}")
-            print(f"[ConfigManager] Details: {e}")
-            return False
-        except OSError as e:
-            print(f"[ConfigManager] ERROR: OS error when saving to {self.config_path}")
-            print(f"[ConfigManager] Details: {e}")
-            return False
         except Exception as e:
-            print(f"[ConfigManager] ERROR: Unexpected error saving config to {self.config_path}")
-            print(f"[ConfigManager] Error type: {type(e).__name__}")
-            print(f"[ConfigManager] Details: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error: Failed to save config to {self.config_path}: {e}")
             return False
 
     def update_section(self, section_name: str, section_data: Dict[str, Any], updated_by: str = "ConfigManager") -> bool:
