@@ -784,3 +784,200 @@ class AudioVisualizer:
 
         except Exception as e:
             return None, 0
+
+    @staticmethod
+    def render_multi_waveform_with_zoom(
+        audio_signals: list,
+        sample_rate: int,
+        labels: Optional[list] = None,
+        title: str = "Waveform Analysis",
+        component_id: str = "multi_waveform",
+        height: int = 400,
+        normalize: bool = False,
+        show_analysis: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Render single or multiple waveforms with persistent zoom controls.
+
+        This is a reusable component that displays one or more audio waveforms
+        with interactive zoom controls that persist across reruns. Provides
+        consistent interface for both single and multiple waveform display.
+
+        Args:
+            audio_signals: List of numpy arrays (can contain single element)
+            sample_rate: Sample rate in Hz
+            labels: Optional list of labels for each signal
+            title: Plot title
+            component_id: Unique ID for this component instance (for session state)
+            height: Height of the plot in pixels
+            normalize: If True, normalize each signal to [-1, 1]
+            show_analysis: If True, show analysis statistics
+
+        Returns:
+            Dict containing zoom state and other component information
+        """
+        import streamlit as st
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not audio_signals:
+            st.info("No waveforms to display")
+            return {"status": "no_data"}
+
+        # Session state keys for this component
+        zoom_start_key = f"{component_id}_zoom_start"
+        zoom_end_key = f"{component_id}_zoom_end"
+        view_mode_key = f"{component_id}_view_mode"
+
+        # Initialize zoom state if not exists
+        if zoom_start_key not in st.session_state:
+            st.session_state[zoom_start_key] = 0.0
+        if zoom_end_key not in st.session_state:
+            st.session_state[zoom_end_key] = 1.0
+        if view_mode_key not in st.session_state:
+            st.session_state[view_mode_key] = "waveform"
+
+        # Calculate duration from first signal
+        duration = len(audio_signals[0]) / sample_rate
+
+        # View mode selector and reset button
+        col1, col2, col3 = st.columns([2, 1, 1])
+
+        with col1:
+            view_mode = st.radio(
+                "View Mode",
+                ["waveform", "spectrum"],
+                index=0 if st.session_state[view_mode_key] == "waveform" else 1,
+                key=f"{component_id}_view_mode_radio",
+                horizontal=True
+            )
+            st.session_state[view_mode_key] = view_mode
+
+        with col3:
+            if st.button("Reset Zoom", key=f"{component_id}_reset_zoom"):
+                st.session_state[zoom_start_key] = 0.0
+                st.session_state[zoom_end_key] = 1.0
+                st.rerun()
+
+        # Zoom controls in expander
+        zoom_start = st.session_state[zoom_start_key]
+        zoom_end = st.session_state[zoom_end_key]
+
+        with st.expander("Zoom Controls"):
+            col1, col2 = st.columns(2)
+            with col1:
+                zoom_start = st.slider(
+                    "Start Time (s)",
+                    0.0, duration,
+                    zoom_start * duration,
+                    key=f"{component_id}_zoom_start_slider"
+                ) / duration
+            with col2:
+                zoom_end = st.slider(
+                    "End Time (s)",
+                    0.0, duration,
+                    zoom_end * duration,
+                    key=f"{component_id}_zoom_end_slider"
+                ) / duration
+
+        # Update session state with new zoom values
+        st.session_state[zoom_start_key] = zoom_start
+        st.session_state[zoom_end_key] = zoom_end
+
+        # Create the plot
+        fig, ax = plt.subplots(figsize=(14, height/100))
+        fig.patch.set_facecolor('white')
+
+        # Plot each signal
+        colors = plt.cm.tab10(np.linspace(0, 1, min(len(audio_signals), 10)))
+
+        for i, signal in enumerate(audio_signals):
+            # Calculate zoom indices
+            start_idx = int(zoom_start * len(signal))
+            end_idx = int(zoom_end * len(signal))
+            zoomed_signal = signal[start_idx:end_idx]
+
+            # Normalize if requested
+            if normalize:
+                max_val = np.max(np.abs(zoomed_signal)) if len(zoomed_signal) > 0 else 1.0
+                if max_val > 0:
+                    zoomed_signal = zoomed_signal / max_val
+
+            # Create time axis
+            time_axis = np.linspace(
+                zoom_start * len(signal) / sample_rate,
+                zoom_end * len(signal) / sample_rate,
+                len(zoomed_signal)
+            )
+
+            # Generate label
+            if labels and i < len(labels):
+                label = labels[i]
+            else:
+                label = f"Signal {i+1}"
+
+            # Plot based on view mode
+            if view_mode == "waveform":
+                ax.plot(time_axis, zoomed_signal,
+                       color=colors[i % len(colors)],
+                       linewidth=1.5,
+                       alpha=0.7,
+                       label=label)
+            else:  # spectrum
+                # Compute FFT for spectrum view
+                n = len(zoomed_signal)
+                freqs = np.fft.rfftfreq(n, 1/sample_rate)
+                spectrum = np.abs(np.fft.rfft(zoomed_signal))
+                spectrum_db = 20 * np.log10(spectrum + 1e-10)
+
+                ax.plot(freqs, spectrum_db,
+                       color=colors[i % len(colors)],
+                       linewidth=1.5,
+                       alpha=0.7,
+                       label=label)
+
+        # Formatting
+        if view_mode == "waveform":
+            ax.set_xlabel("Time (s)", fontsize=12)
+            ax.set_ylabel("Amplitude" + (" (normalized)" if normalize else ""), fontsize=12)
+            ax.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.3)
+        else:  # spectrum
+            ax.set_xlabel("Frequency (Hz)", fontsize=12)
+            ax.set_ylabel("Magnitude (dB)", fontsize=12)
+            ax.set_xscale('log')
+
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.2)
+
+        if len(audio_signals) <= 10:
+            ax.legend(loc='upper right', fontsize=10)
+
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+
+        # Display statistics for zoomed region
+        st.markdown("**Statistics (Zoomed Region):**")
+        cols = st.columns(min(len(audio_signals), 4))
+
+        for i, signal in enumerate(audio_signals[:4]):  # Show stats for first 4 signals
+            start_idx = int(zoom_start * len(signal))
+            end_idx = int(zoom_end * len(signal))
+            zoomed_signal = signal[start_idx:end_idx]
+
+            with cols[i]:
+                label = labels[i] if labels and i < len(labels) else f"Signal {i+1}"
+                st.caption(label)
+                max_amp = np.max(np.abs(zoomed_signal))
+                rms = np.sqrt(np.mean(zoomed_signal**2))
+                st.metric("Max", f"{max_amp:.3f}")
+                st.metric("RMS", f"{rms:.3f}")
+
+        return {
+            "status": "ready",
+            "num_signals": len(audio_signals),
+            "zoom_start": zoom_start,
+            "zoom_end": zoom_end,
+            "view_mode": view_mode,
+            "duration": duration
+        }

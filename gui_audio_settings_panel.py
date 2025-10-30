@@ -337,12 +337,12 @@ class AudioSettingsPanel:
                     'response_channels': list(mc_config.get('response_channels', [0]))
                 }
 
+                # Update calibration quality configuration
+                if hasattr(self.recorder, 'calibration_quality_config'):
+                    config['calibration_quality_config'] = dict(self.recorder.calibration_quality_config)
+
             # Save using config manager
             success = config_manager.save_config(config, updated_by="Audio Settings Panel")
-
-            # Debug: Verify what was written
-            if success:
-                st.caption(f"✓ Wrote to: {config_manager.get_config_path()}")
 
             return success
         except Exception as e:
@@ -378,6 +378,11 @@ class AudioSettingsPanel:
                     self.recorder.multichannel_config['calibration_channel'] = mc_config_file.get('calibration_channel')
                     self.recorder.multichannel_config['reference_channel'] = int(mc_config_file.get('reference_channel', 0))
                     self.recorder.multichannel_config['response_channels'] = list(mc_config_file.get('response_channels', [0]))
+
+                # Load and apply calibration quality config (only on first load)
+                cal_quality_config_file = config.get('calibration_quality_config', {})
+                if cal_quality_config_file and hasattr(self.recorder, 'calibration_quality_config'):
+                    self.recorder.calibration_quality_config.update(cal_quality_config_file)
 
                 defaults.update({
                     'sample_rate': int(getattr(self.recorder, 'sample_rate', defaults['sample_rate'])),
@@ -589,32 +594,6 @@ class AudioSettingsPanel:
         if DEVICE_SELECTOR_AVAILABLE and self._device_selector:
             self._device_selector.render()
 
-            # DEBUG: Show all available devices
-            with st.expander("🔍 DEBUG: All Available Devices", expanded=False):
-                if self.recorder:
-                    try:
-                        devices_info = self.recorder.get_device_info_with_channels()
-
-                        st.markdown("**Input Devices:**")
-                        for dev in devices_info.get('input_devices', []):
-                            st.write(f"- **ID {dev['device_id']}:** {dev.get('name', 'Unknown')} ({dev['max_channels']} channels)")
-
-                        st.markdown("**Output Devices:**")
-                        for dev in devices_info.get('output_devices', []):
-                            st.write(f"- **ID {dev['device_id']}:** {dev.get('name', 'Unknown')} ({dev['max_channels']} channels)")
-                    except Exception as e:
-                        st.error(f"Failed to query devices: {e}")
-
-            with st.expander("Current Selection Summary", expanded=False):
-                if self.recorder:
-                    input_id = int(getattr(self.recorder, 'input_device', -1))
-                    output_id = int(getattr(self.recorder, 'output_device', -1))
-                    st.write(f"**Input Device ID:** {input_id}")
-                    st.write(f"**Output Device ID:** {output_id}")
-                    if input_id == -1 or output_id == -1:
-                        st.info("Using system default for any device set to -1")
-                else:
-                    st.warning("Recorder not available")
 
             # Save device selection button
             st.markdown("---")
@@ -682,18 +661,6 @@ class AudioSettingsPanel:
             st.warning(f"Could not detect device capabilities: {e}")
             max_device_channels = 2  # Safe default
 
-        # DEBUG: Show current device selection
-        with st.expander("🔍 DEBUG: Current Device Selection", expanded=True):
-            st.markdown("**Selected Input Device:**")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Device ID", selected_device_id)
-            with col2:
-                st.metric("Max Channels", max_device_channels)
-            with col3:
-                st.code(selected_device_name if len(selected_device_name) < 20 else selected_device_name[:17] + "...")
-
-            st.caption(f"Full device name: {selected_device_name}")
 
         # Show device capability info
         if max_device_channels == 1:
@@ -709,16 +676,6 @@ class AudioSettingsPanel:
         current_ref_channel = mc_config.get('reference_channel', 0)
         current_cal_channel = mc_config.get('calibration_channel')
 
-        # DEBUG: Show loaded configuration
-        with st.expander("🔍 DEBUG: Loaded Multi-Channel Configuration", expanded=False):
-            st.json({
-                "enabled": current_enabled,
-                "num_channels": current_num_channels,
-                "reference_channel": current_ref_channel,
-                "calibration_channel": current_cal_channel,
-                "channel_names": current_channel_names,
-                "response_channels": mc_config.get('response_channels', [])
-            })
 
         # 1. Enable/disable toggle
         multichannel_enabled = st.checkbox(
@@ -826,19 +783,7 @@ class AudioSettingsPanel:
                         # Validate the configuration
                         self.recorder._validate_multichannel_config()
 
-                        # DEBUG: Show what was just saved
                         st.success("✓ Configuration applied to recorder!")
-                        with st.expander("🔍 DEBUG: Configuration Applied to recorder.multichannel_config", expanded=True):
-                            st.markdown(f"**Target Device:** {selected_device_name} (ID: {selected_device_id}, Max Channels: {max_device_channels})")
-                            st.json({
-                                "enabled": True,
-                                "num_channels": num_channels,
-                                "reference_channel": reference_channel,
-                                "calibration_channel": calibration_channel,
-                                "channel_names": channel_names,
-                                "response_channels": self.recorder.multichannel_config['response_channels']
-                            })
-                            st.caption("This configuration is applied to the recorder session.")
 
                         cal_msg = f" | Calibration: Ch {calibration_channel}" if calibration_channel is not None else " | No calibration"
                         st.info(f"Multi-channel configuration: {num_channels} channels{cal_msg}")
@@ -849,14 +794,8 @@ class AudioSettingsPanel:
 
             with col_save2:
                 if st.button("💾 Save to Config File", type="secondary"):
-                    import os
-                    config_path = os.path.abspath("recorderConfig.json")
                     if self._save_config_to_file():
                         st.success(f"✓ Configuration saved to recorderConfig.json")
-                        with st.expander("🔍 DEBUG: Save Details", expanded=True):
-                            st.code(f"File path: {config_path}")
-                            st.markdown("**Saved multichannel_config:**")
-                            st.json(self.recorder.multichannel_config)
                         st.info("Settings will be loaded automatically on next session")
                     else:
                         st.error("Failed to save configuration file")
@@ -940,21 +879,6 @@ class AudioSettingsPanel:
         # Check if multi-channel is enabled
         mc_config = self.recorder.multichannel_config
 
-        # DEBUG: Show current multichannel state
-        with st.expander("🔍 DEBUG: Current Multichannel Configuration", expanded=False):
-            st.json({
-                "enabled": mc_config.get('enabled', False),
-                "num_channels": mc_config.get('num_channels', 1),
-                "channel_names": mc_config.get('channel_names', []),
-                "calibration_channel": mc_config.get('calibration_channel'),
-                "reference_channel": mc_config.get('reference_channel', 0)
-            })
-
-            # Show what's in the config file
-            config_file_data = self._load_config_from_file()
-            st.markdown("**From recorderConfig.json:**")
-            st.json(config_file_data.get('multichannel_config', {}))
-
         if not mc_config.get('enabled', False):
             st.warning("⚠️ Multi-channel recording is not enabled. Calibration is only available in multi-channel mode.")
             st.info("📍 **To enable multi-channel recording:**")
@@ -988,193 +912,289 @@ class AudioSettingsPanel:
 
         st.markdown("---")
 
-        # Section 1: Calibration Quality Parameters
-        st.markdown("### 1. Calibration Quality Parameters")
-        st.markdown("Configure thresholds for validating calibration impulse quality.")
+        # Section 1: Calibration Quality Parameters (Collapsible)
+        with st.expander("### 1. Calibration Quality Parameters", expanded=False):
+            st.markdown("Configure thresholds for validating calibration impulse quality.")
 
-        # Get current quality config from recorder
-        if hasattr(self.recorder, 'calibration_quality_config'):
-            qual_config = self.recorder.calibration_quality_config
-        else:
-            # Default values
-            qual_config = {
-                'cal_min_amplitude': 0.1,
-                'cal_max_amplitude': 0.95,
-                'cal_min_duration_ms': 2.0,
-                'cal_max_duration_ms': 20.0,
-                'cal_duration_threshold': 0.3,
-                'cal_double_hit_window_ms': [10, 50],
-                'cal_double_hit_threshold': 0.3,
-                'cal_tail_start_ms': 30.0,
-                'cal_tail_max_rms_ratio': 0.15,
-                'min_valid_cycles': 3
-            }
+            # Get current quality config from recorder (V2 format)
+            if hasattr(self.recorder, 'calibration_quality_config'):
+                qual_config = self.recorder.calibration_quality_config
+            else:
+                # Default values (V2 Refactored - min/max ranges)
+                qual_config = {
+                    'min_negative_peak': 0.1,
+                    'max_negative_peak': 0.95,
+                    'min_positive_peak': 0.0,
+                    'max_positive_peak': 0.6,
+                    'min_aftershock': 0.0,
+                    'max_aftershock': 0.3,
+                    'aftershock_window_ms': 10.0,
+                    'aftershock_skip_ms': 2.0,
+                    'min_valid_cycles': 3
+                }
 
-        with st.expander("Quality Parameter Settings", expanded=False):
-            st.markdown("#### Amplitude Validation")
-            col1, col2 = st.columns(2)
+            # Tool 1: Manual threshold editing in tabular form
+            st.markdown("#### 🔧 Tool 1: Manual Threshold Configuration")
+            st.info("Edit quality thresholds directly. Use Tool 2 below to auto-calculate from good cycles.")
+
+            # Create compact tabular layout for thresholds
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                min_amp = st.number_input(
-                    "Minimum Amplitude",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=float(qual_config.get('cal_min_amplitude', 0.1)),
-                    step=0.01,
-                    help="Minimum acceptable peak amplitude (normalized 0-1)"
-                )
+                st.markdown("**Quality Metric**")
             with col2:
-                max_amp = st.number_input(
-                    "Maximum Amplitude",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=float(qual_config.get('cal_max_amplitude', 0.95)),
-                    step=0.01,
-                    help="Maximum acceptable peak amplitude (prevents clipping)"
-                )
+                st.markdown("**Minimum**")
+            with col3:
+                st.markdown("**Maximum**")
 
-            st.markdown("#### Duration Validation")
-            col1, col2, col3 = st.columns(3)
+            # Negative Peak
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                min_dur = st.number_input(
-                    "Min Duration (ms)",
-                    min_value=0.5,
-                    max_value=50.0,
-                    value=float(qual_config.get('cal_min_duration_ms', 2.0)),
-                    step=0.5,
-                    help="Minimum impulse duration in milliseconds"
-                )
+                st.markdown("**Negative Peak** (absolute)")
             with col2:
-                max_dur = st.number_input(
-                    "Max Duration (ms)",
-                    min_value=1.0,
-                    max_value=100.0,
-                    value=float(qual_config.get('cal_max_duration_ms', 20.0)),
-                    step=1.0,
-                    help="Maximum impulse duration in milliseconds"
+                min_neg_peak = st.number_input(
+                    "Min Neg Peak",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(qual_config.get('min_negative_peak', 0.1)),
+                    step=0.01,
+                    key="min_neg_peak",
+                    label_visibility="collapsed"
                 )
             with col3:
-                dur_thresh = st.number_input(
-                    "Duration Threshold",
-                    min_value=0.1,
-                    max_value=0.9,
-                    value=float(qual_config.get('cal_duration_threshold', 0.3)),
-                    step=0.05,
-                    help="Threshold for measuring duration (fraction of peak)"
-                )
-
-            st.markdown("#### Double Hit Detection")
-            col1, col2 = st.columns(2)
-            with col1:
-                dh_window = st.text_input(
-                    "Search Window [start, end] (ms)",
-                    value=str(qual_config.get('cal_double_hit_window_ms', [10, 50])),
-                    help="Time window to search for secondary impacts, e.g., [10, 50]"
-                )
-            with col2:
-                dh_thresh = st.number_input(
-                    "Double Hit Threshold",
-                    min_value=0.1,
-                    max_value=0.9,
-                    value=float(qual_config.get('cal_double_hit_threshold', 0.3)),
-                    step=0.05,
-                    help="Threshold for detecting double hits (fraction of main peak)"
-                )
-
-            st.markdown("#### Tail Noise Validation")
-            col1, col2 = st.columns(2)
-            with col1:
-                tail_start = st.number_input(
-                    "Tail Start (ms)",
-                    min_value=10.0,
-                    max_value=200.0,
-                    value=float(qual_config.get('cal_tail_start_ms', 30.0)),
-                    step=5.0,
-                    help="Where tail region begins after impulse (milliseconds)"
-                )
-            with col2:
-                tail_max_rms = st.number_input(
-                    "Max Tail RMS Ratio",
-                    min_value=0.01,
+                max_neg_peak = st.number_input(
+                    "Max Neg Peak",
+                    min_value=0.0,
                     max_value=1.0,
-                    value=float(qual_config.get('cal_tail_max_rms_ratio', 0.15)),
+                    value=float(qual_config.get('max_negative_peak', 0.95)),
                     step=0.01,
-                    help="Maximum acceptable tail noise (fraction of impulse RMS)"
+                    key="max_neg_peak",
+                    label_visibility="collapsed"
                 )
 
-            st.markdown("#### General Settings")
-            min_valid = st.number_input(
-                "Minimum Valid Cycles",
-                min_value=1,
-                max_value=20,
-                value=int(qual_config.get('min_valid_cycles', 3)),
-                help="Minimum number of valid calibration cycles required"
-            )
+            # Positive Peak
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown("**Positive Peak** (absolute)")
+            with col2:
+                min_pos_peak = st.number_input(
+                    "Min Pos Peak",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(qual_config.get('min_positive_peak', 0.0)),
+                    step=0.01,
+                    key="min_pos_peak",
+                    label_visibility="collapsed"
+                )
+            with col3:
+                max_pos_peak = st.number_input(
+                    "Max Pos Peak",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(qual_config.get('max_positive_peak', 0.6)),
+                    step=0.01,
+                    key="max_pos_peak",
+                    label_visibility="collapsed"
+                )
 
-            # Save button for quality parameters
-            if st.button("Save Quality Parameters", type="primary"):
+            # Aftershock
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown("**Aftershock** (absolute)")
+            with col2:
+                min_aftershock = st.number_input(
+                    "Min Aftershock",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(qual_config.get('min_aftershock', 0.0)),
+                    step=0.01,
+                    key="min_aftershock",
+                    label_visibility="collapsed"
+                )
+            with col3:
+                max_aftershock = st.number_input(
+                    "Max Aftershock",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(qual_config.get('max_aftershock', 0.3)),
+                    step=0.01,
+                    key="max_aftershock",
+                    label_visibility="collapsed"
+                )
+
+            st.markdown("---")
+            st.markdown("**Configuration Parameters**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                aftershock_window = st.number_input(
+                    "Aftershock Window (ms)",
+                    min_value=5.0,
+                    max_value=50.0,
+                    value=float(qual_config.get('aftershock_window_ms', 10.0)),
+                    step=1.0,
+                    help="Time window after peak to check for aftershocks"
+                )
+            with col2:
+                aftershock_skip = st.number_input(
+                    "Aftershock Skip (ms)",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(qual_config.get('aftershock_skip_ms', 2.0)),
+                    step=0.5,
+                    help="Skip first N ms after peak"
+                )
+            with col3:
+                min_valid = st.number_input(
+                    "Min Valid Cycles",
+                    min_value=1,
+                    max_value=20,
+                    value=int(qual_config.get('min_valid_cycles', 3)),
+                    help="Minimum number of valid calibration cycles required"
+                )
+
+            st.markdown("---")
+
+            # Tool 2: Automatic threshold learning from marked cycles
+            st.markdown("#### 🎯 Tool 2: Automatic Threshold Learning")
+            st.markdown("Select good quality cycles in Section 2's Quality Metrics Summary table to automatically calculate optimal thresholds.")
+
+            # Check if calibration test results are available
+            if 'cal_test_results' in st.session_state:
+                results = st.session_state['cal_test_results']
+                num_cycles = results.get('num_cycles', 0)
+                calibration_cycles = results.get('all_calibration_cycles')
+                sample_rate = results.get('sample_rate', 48000)
+
+                if calibration_cycles is not None:
+                    # Get cycles selected in Section 2's table
+                    marked_good = st.session_state.get('cal_test_selected_cycles', [])
+
+                    if len(marked_good) > 0:
+                        st.success(f"✓ {len(marked_good)} cycle(s) selected in Section 2: {', '.join(map(str, marked_good))}")
+
+                        # Button to calculate thresholds from selected cycles
+                        if st.button("🎯 Calculate Thresholds from Selected Cycles", type="secondary"):
+                            try:
+                                from calibration_validator_v2 import calculate_thresholds_from_marked_cycles
+
+                                # Calculate thresholds
+                                learned_thresholds = calculate_thresholds_from_marked_cycles(
+                                    calibration_cycles,
+                                    marked_good,
+                                    sample_rate,
+                                    margin=0.05  # 5% margin on both sides
+                                )
+
+                                # Store in session state and update the input fields
+                                st.session_state['cal_test_learned_thresholds'] = learned_thresholds
+
+                                # Update the recorder config with learned thresholds
+                                self.recorder.calibration_quality_config.update(learned_thresholds.to_dict())
+
+                                st.success(f"✓ Thresholds calculated from {len(marked_good)} selected cycles and loaded into configuration!")
+                                st.info("💡 Review the updated thresholds in Tool 1 above, then click 'Save Configuration' below.")
+
+                                # Show summary of calculated thresholds
+                                with st.expander("📊 Calculated Thresholds Summary", expanded=True):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Negative Peak Range",
+                                                 f"{learned_thresholds.min_negative_peak:.3f} - {learned_thresholds.max_negative_peak:.3f}")
+                                    with col2:
+                                        st.metric("Positive Peak Range",
+                                                 f"{learned_thresholds.min_positive_peak:.3f} - {learned_thresholds.max_positive_peak:.3f}")
+                                    with col3:
+                                        st.metric("Aftershock Range",
+                                                 f"{learned_thresholds.min_aftershock:.3f} - {learned_thresholds.max_aftershock:.3f}")
+
+                            except Exception as e:
+                                st.error(f"Failed to calculate thresholds: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                    else:
+                        st.info("👇 Go to Section 2 below and select cycles in the Quality Metrics Summary table")
+                else:
+                    st.info("⚠️ No calibration cycles available. Run a calibration test in Section 2 below.")
+            else:
+                st.info("⚠️ No calibration test results available. Run a calibration test in Section 2 below first.")
+
+            st.markdown("---")
+
+            # Unified save button for both manual and automatic configuration
+            if st.button("💾 Save Configuration", type="primary", key="save_quality_config"):
                 try:
-                    # Parse double hit window
-                    import ast
-                    dh_window_parsed = ast.literal_eval(dh_window)
-
-                    new_config = {
-                        'cal_min_amplitude': min_amp,
-                        'cal_max_amplitude': max_amp,
-                        'cal_min_duration_ms': min_dur,
-                        'cal_max_duration_ms': max_dur,
-                        'cal_duration_threshold': dur_thresh,
-                        'cal_double_hit_window_ms': dh_window_parsed,
-                        'cal_double_hit_threshold': dh_thresh,
-                        'cal_tail_start_ms': tail_start,
-                        'cal_tail_max_rms_ratio': tail_max_rms,
-                        'min_valid_cycles': min_valid
-                    }
+                    # Build V2 refactored config (min/max ranges)
+                    # Use values from session state if learned thresholds exist, otherwise use manual inputs
+                    if 'cal_test_learned_thresholds' in st.session_state:
+                        learned = st.session_state['cal_test_learned_thresholds']
+                        new_config = learned.to_dict()
+                        # Preserve configuration parameters that aren't part of learned thresholds
+                        new_config['min_valid_cycles'] = min_valid
+                    else:
+                        new_config = {
+                            'min_negative_peak': min_neg_peak,
+                            'max_negative_peak': max_neg_peak,
+                            'min_positive_peak': min_pos_peak,
+                            'max_positive_peak': max_pos_peak,
+                            'min_aftershock': min_aftershock,
+                            'max_aftershock': max_aftershock,
+                            'aftershock_window_ms': aftershock_window,
+                            'aftershock_skip_ms': aftershock_skip,
+                            'min_valid_cycles': min_valid
+                        }
 
                     # Save to recorder
                     if hasattr(self.recorder, 'calibration_quality_config'):
                         self.recorder.calibration_quality_config = new_config
                     else:
-                        # Store in a custom attribute if not available
                         self.recorder.calibration_quality_config = new_config
 
-                    st.success("✓ Quality parameters saved successfully!")
+                    # Save to config file
+                    if self._save_config_to_file():
+                        st.success("✓ Quality configuration saved successfully!")
+                        st.info("Settings will be loaded automatically on next session. Clear results and re-run calibration test to apply new thresholds.")
+                    else:
+                        st.warning("⚠️ Configuration saved to recorder but failed to save to config file")
 
                 except Exception as e:
-                    st.error(f"Failed to save quality parameters: {e}")
+                    st.error(f"Failed to save configuration: {e}")
 
         st.markdown("---")
 
-        # Section 2: Test Calibration Impulse
-        st.markdown("### 2. Test Calibration Impulse")
-        st.markdown("Emit a train of impulses and check calibration quality for each cycle.")
+        # Section 2: Test Calibration Impulse (Collapsible)
+        with st.expander("### 2. Test Calibration Impulse", expanded=True):
+            st.markdown("Emit a train of impulses and check calibration quality for each cycle.")
 
-        col1, col2 = st.columns([1, 1])
+            col1, col2 = st.columns([1, 1])
 
-        with col1:
-            if st.button("Run Calibration Test", type="primary"):
-                st.session_state['cal_test_running'] = True
+            with col1:
+                if st.button("Run Calibration Test", type="primary"):
+                    st.session_state['cal_test_running'] = True
 
-        with col2:
-            if st.button("Clear Results"):
-                if 'cal_test_results' in st.session_state:
-                    del st.session_state['cal_test_results']
-                st.session_state['cal_test_running'] = False
-
-        # Run calibration test
-        if st.session_state.get('cal_test_running', False):
-            with st.spinner("Recording calibration impulses..."):
-                try:
-                    results = self._perform_calibration_test()
-                    st.session_state['cal_test_results'] = results
-                    st.session_state['cal_test_running'] = False
-                    st.success("✓ Calibration test completed!")
-                except Exception as e:
-                    st.error(f"Calibration test failed: {e}")
+            with col2:
+                if st.button("Clear Results"):
+                    if 'cal_test_results' in st.session_state:
+                        del st.session_state['cal_test_results']
+                    if 'cal_test_selected_cycles' in st.session_state:
+                        del st.session_state['cal_test_selected_cycles']
+                    if 'cal_test_learned_thresholds' in st.session_state:
+                        del st.session_state['cal_test_learned_thresholds']
                     st.session_state['cal_test_running'] = False
 
-        # Display results
-        if 'cal_test_results' in st.session_state:
-            self._render_calibration_test_results(st.session_state['cal_test_results'])
+            # Run calibration test
+            if st.session_state.get('cal_test_running', False):
+                with st.spinner("Recording calibration impulses..."):
+                    try:
+                        results = self._perform_calibration_test()
+                        st.session_state['cal_test_results'] = results
+                        st.session_state['cal_test_running'] = False
+                        st.success("✓ Calibration test completed!")
+                    except Exception as e:
+                        st.error(f"Calibration test failed: {e}")
+                        st.session_state['cal_test_running'] = False
+
+            # Display results
+            if 'cal_test_results' in st.session_state:
+                self._render_calibration_test_results(st.session_state['cal_test_results'])
 
     def _perform_calibration_test(self) -> Dict:
         """
@@ -1189,21 +1209,6 @@ class AudioSettingsPanel:
             - validation_results: Quality metrics for each cycle
             - sample_rate: Sample rate for waveform playback
         """
-        # DEBUG: Show recorder settings before recording
-        st.info("🔍 DEBUG: Recorder settings at calibration test start:")
-        debug_info = {
-            "sample_rate": self.recorder.sample_rate,
-            "pulse_duration": self.recorder.pulse_duration,
-            "cycle_duration": self.recorder.cycle_duration,
-            "num_pulses": self.recorder.num_pulses,
-            "pulse_frequency": self.recorder.pulse_frequency,
-            "impulse_form": self.recorder.impulse_form,
-            "volume": self.recorder.volume,
-            "multichannel_enabled": self.recorder.multichannel_config.get('enabled', False),
-            "num_channels_config": self.recorder.multichannel_config.get('num_channels', 1)
-        }
-        st.json(debug_info)
-
         # Validate device capabilities before recording
         num_channels = self.recorder.multichannel_config.get('num_channels', 1)
         try:
@@ -1302,11 +1307,9 @@ class AudioSettingsPanel:
 
     def _render_calibration_test_results(self, results: Dict):
         """
-        Render calibration test results with per-cycle waveform visualization.
+        Render calibration test results with Quality Metrics Summary and Per-Cycle Analysis.
 
-        Uses AudioVisualizer to display each calibration impulse cycle with
-        quality metrics overlaid, allowing the user to explore and decide
-        upon quality criteria.
+        The Quality Metrics Summary table allows clicking on cycles to view detailed analysis.
         """
         st.markdown("#### Calibration Test Results")
 
@@ -1334,365 +1337,185 @@ class AudioSettingsPanel:
 
         st.markdown("---")
 
-        # User marking interface for automatic threshold learning
-        st.markdown("#### Mark Good Cycles for Automatic Threshold Learning")
-        st.markdown("Select cycles that represent **good quality** calibration impulses. "
-                   "The system will calculate quality thresholds based on your selection.")
+        # Quality Metrics Summary Table with Checkboxes
+        st.markdown("#### Quality Metrics Summary")
+        st.info("💡 Check the boxes to select cycles for analysis, comparison, or threshold learning")
+        import pandas as pd
 
-        # Initialize session state for user markings if not exists
-        if 'cal_test_marked_good' not in st.session_state:
-            st.session_state['cal_test_marked_good'] = []
+        # Initialize selection state if not exists
+        if 'cal_test_selected_cycles' not in st.session_state:
+            st.session_state['cal_test_selected_cycles'] = []
 
-        # Multi-select for marking good cycles
-        marked_good = st.multiselect(
-            "Mark Good Cycles (will be used to calculate thresholds)",
-            options=list(range(num_cycles)),
-            default=st.session_state.get('cal_test_marked_good', []),
-            format_func=lambda x: f"Cycle {x}",
-            key="cal_test_marked_good_selector",
-            help="Select cycles that represent ideal calibration impulses"
-        )
+        # Display table with checkboxes for each row
+        selected_cycles = []
 
-        # Update session state
-        st.session_state['cal_test_marked_good'] = marked_good
-
-        # Button to calculate thresholds
-        if len(marked_good) > 0:
-            if st.button("🎯 Calculate Thresholds from Marked Cycles", type="primary"):
-                try:
-                    import pandas as pd
-                    from calibration_validator_v2 import calculate_thresholds_from_marked_cycles
-
-                    # Calculate thresholds
-                    learned_thresholds = calculate_thresholds_from_marked_cycles(
-                        calibration_cycles,
-                        marked_good,
-                        sample_rate,
-                        safety_margin=0.2  # 20% margin
-                    )
-
-                    # Store in session state for use in visualization
-                    st.session_state['cal_test_learned_thresholds'] = learned_thresholds
-
-                    # Display calculated thresholds
-                    st.success(f"✓ Thresholds calculated from {len(marked_good)} marked cycles!")
-
-                    # Show detailed analysis of marked cycles
-                    st.markdown("**Analysis of Marked Cycles:**")
-
-                    # Calculate statistics from marked cycles
-                    marked_cycles_data = []
-                    for idx in marked_good:
-                        cycle = calibration_cycles[idx]
-                        neg_peak_idx = np.argmin(cycle)
-                        neg_peak = abs(cycle[neg_peak_idx])
-                        pos_peak = np.max(cycle)
-
-                        # Calculate aftershock
-                        decay_skip_samples = int(2.0 * sample_rate / 1000)
-                        window_start = neg_peak_idx + decay_skip_samples
-                        window_end = min(len(cycle), neg_peak_idx + int(10.0 * sample_rate / 1000))
-                        aftershock = 0.0
-                        if window_end > window_start:
-                            aftershock = np.max(np.abs(cycle[window_start:window_end]))
-
-                        marked_cycles_data.append({
-                            'Cycle': idx,
-                            'Neg Peak': neg_peak,
-                            'Pos Peak': pos_peak,
-                            'Pos/Neg': pos_peak / neg_peak if neg_peak > 0 else 0,
-                            'Aftershock': aftershock / neg_peak if neg_peak > 0 else 0
-                        })
-
-                    df_marked = pd.DataFrame(marked_cycles_data)
-                    st.dataframe(df_marked.style.format({
-                        'Neg Peak': '{:.3f}',
-                        'Pos Peak': '{:.3f}',
-                        'Pos/Neg': '{:.3f}',
-                        'Aftershock': '{:.3f}'
-                    }), use_container_width=True, hide_index=True)
-
-                    # Show calculated thresholds in a clear table
-                    st.markdown("**Calculated Quality Thresholds:**")
-
-                    threshold_data = {
-                        'Parameter': [
-                            'Min Negative Peak',
-                            'Max Negative Peak',
-                            'Max Aftershock Ratio',
-                            'Max Positive/Negative Ratio'
-                        ],
-                        'Value': [
-                            f"{learned_thresholds.min_negative_peak:.3f}",
-                            f"{learned_thresholds.max_negative_peak:.3f}",
-                            f"{learned_thresholds.max_aftershock_ratio:.3f}",
-                            f"{learned_thresholds.max_positive_peak_ratio:.3f}"
-                        ],
-                        'Interpretation': [
-                            f"Based on min of marked cycles ({df_marked['Neg Peak'].min():.3f}) with 20% margin",
-                            f"Based on max of marked cycles ({df_marked['Neg Peak'].max():.3f}) with 20% margin",
-                            f"Based on max aftershock in marked cycles ({df_marked['Aftershock'].max():.3f}) with 20% margin",
-                            f"Based on max pos/neg ratio in marked cycles ({df_marked['Pos/Neg'].max():.3f}) with 20% margin"
-                        ]
-                    }
-
-                    df_thresholds = pd.DataFrame(threshold_data)
-                    st.dataframe(df_thresholds, use_container_width=True, hide_index=True)
-
-                    # Apply button
-                    if st.button("✅ Apply These Thresholds to Configuration", type="secondary"):
-                        # Update recorder config
-                        self.recorder.calibration_quality_config.update(learned_thresholds.to_dict())
-                        st.success("✓ Thresholds applied to configuration!")
-                        st.info("Re-run the calibration test to validate with new thresholds")
-
-                except Exception as e:
-                    st.error(f"Failed to calculate thresholds: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-        else:
-            st.info("👆 Select at least one good cycle to calculate thresholds")
+        # Create column headers
+        cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
+        with cols[0]:
+            st.markdown("**Select**")
+        with cols[1]:
+            st.markdown("**Cycle**")
+        with cols[2]:
+            st.markdown("**Valid**")
+        with cols[3]:
+            st.markdown("**Neg Peak**")
+        with cols[4]:
+            st.markdown("**Pos Peak**")
+        with cols[5]:
+            st.markdown("**Aftershock**")
+        with cols[6]:
+            st.markdown("**Issues**")
 
         st.markdown("---")
 
-        # Create a summary table
-        st.markdown("#### Quality Metrics Summary")
-        import pandas as pd
-
-        table_data = []
+        # Render each row with a checkbox
         for v_result in validation_results:
             cycle_idx = v_result.get('cycle_index', 0)
             valid = v_result.get('calibration_valid', False)
             metrics = v_result.get('calibration_metrics', {})
             failures = v_result.get('calibration_failures', [])
-            is_marked = cycle_idx in marked_good
 
-            row = {
-                'Cycle': cycle_idx,
-                'Marked': '⭐' if is_marked else '',
-                'Valid': '✓' if valid else '✗',
-                'Neg Peak': f"{metrics.get('negative_peak', metrics.get('peak_amplitude', 0)):.3f}",
-                'Aftershock': f"{metrics.get('aftershock_ratio', metrics.get('secondary_peak_ratio', 0)):.2f}",
-                'Pos/Neg Ratio': f"{metrics.get('positive_peak_ratio', 0):.2f}",
-                'Issues': ', '.join(failures) if failures else 'None'
-            }
-            table_data.append(row)
+            cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
 
-        if table_data:
-            df = pd.DataFrame(table_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            with cols[0]:
+                # Checkbox for this cycle
+                is_checked = st.checkbox(
+                    "",
+                    value=cycle_idx in st.session_state['cal_test_selected_cycles'],
+                    key=f"cycle_checkbox_{cycle_idx}",
+                    label_visibility="collapsed"
+                )
+                if is_checked:
+                    if cycle_idx not in selected_cycles:
+                        selected_cycles.append(cycle_idx)
+
+            with cols[1]:
+                st.markdown(f"{cycle_idx}")
+            with cols[2]:
+                st.markdown('✓' if valid else '✗')
+            with cols[3]:
+                st.markdown(f"{metrics.get('negative_peak', 0):.3f}")
+            with cols[4]:
+                st.markdown(f"{metrics.get('positive_peak', 0):.3f}")
+            with cols[5]:
+                st.markdown(f"{metrics.get('aftershock', 0):.3f}")
+            with cols[6]:
+                st.markdown(', '.join(failures) if failures else 'None')
+
+        # Update session state with current selections
+        st.session_state['cal_test_selected_cycles'] = sorted(selected_cycles)
 
         st.markdown("---")
 
-        # Per-cycle visualization section
-        st.markdown("#### Per-Cycle Waveform Analysis")
-        st.markdown("Explore individual calibration impulse cycles to assess quality and adjust thresholds.")
-
-        # Cycle selector
-        selected_cycle = st.selectbox(
-            "Select Cycle to Visualize",
-            options=list(range(num_cycles)),
-            format_func=lambda x: f"Cycle {x} {'✓ Valid' if validation_results[x].get('calibration_valid', False) else '✗ Invalid'}",
-            key="cal_test_cycle_selector"
-        )
-
-        # Get data for selected cycle
-        cycle_waveform = calibration_cycles[selected_cycle]
-        cycle_validation = validation_results[selected_cycle]
-        cycle_metrics = cycle_validation.get('calibration_metrics', {})
-        cycle_failures = cycle_validation.get('calibration_failures', [])
-        is_valid = cycle_validation.get('calibration_valid', False)
-
-        # Display cycle info
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            if is_valid:
-                st.success(f"✓ Cycle {selected_cycle}: **VALID**")
-            else:
-                st.error(f"✗ Cycle {selected_cycle}: **INVALID** - {', '.join(cycle_failures)}")
-
-        with col2:
-            st.info(f"Duration: {cycle_duration_s * 1000:.1f} ms")
-
-        # Display metrics in columns
-        st.markdown("**Quality Metrics:**")
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            neg_peak = cycle_metrics.get('negative_peak', cycle_metrics.get('peak_amplitude', 0))
-            st.metric("Negative Peak", f"{neg_peak:.3f}")
-        with col2:
-            aftershock = cycle_metrics.get('aftershock_ratio', cycle_metrics.get('secondary_peak_ratio', 0))
-            st.metric("Aftershock Ratio", f"{aftershock:.3f}")
-        with col3:
-            pos_ratio = cycle_metrics.get('positive_peak_ratio', 0)
-            st.metric("Positive/Negative", f"{pos_ratio:.3f}")
-        with col4:
-            # Show if cycle is user-marked
-            is_marked = selected_cycle in st.session_state.get('cal_test_marked_good', [])
-            if is_marked:
-                st.metric("User Marked", "⭐ Good")
-            else:
-                st.metric("User Marked", "Not marked")
-
-        # Visualize the waveform using AudioVisualizer
-        if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
-            st.markdown("**Waveform:**")
-
-            # Primary visualization - AudioVisualizer (this was working correctly)
-            visualizer = AudioVisualizer(component_id=f"cal_cycle_{selected_cycle}")
-            visualizer.render(
-                audio_data=cycle_waveform,
-                sample_rate=sample_rate,
-                title=f"Calibration Impulse - Cycle {selected_cycle}",
-                show_controls=True,
-                show_analysis=True,
-                height=300
-            )
-
-            # Optional: Quality criteria overlay (if thresholds calculated)
-            learned_thresholds = st.session_state.get('cal_test_learned_thresholds')
-            if learned_thresholds:
-                with st.expander("📊 Quality Criteria Overlay", expanded=False):
-                    import matplotlib.pyplot as plt
-
-                    fig, ax = plt.subplots(figsize=(14, 6))
-
-                    # Time axis
-                    time_ms = np.arange(len(cycle_waveform)) / sample_rate * 1000
-
-                    # Plot waveform
-                    ax.plot(time_ms, cycle_waveform, 'b-', linewidth=1.5, label='Calibration Impulse', alpha=0.8)
-                    ax.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.3)
-                    ax.grid(True, alpha=0.2)
-
-                    # Mark negative peak
-                    neg_peak_idx = cycle_metrics.get('negative_peak_idx', np.argmin(cycle_waveform))
-                    neg_peak_time_ms = neg_peak_idx / sample_rate * 1000
-                    neg_peak_val = cycle_waveform[neg_peak_idx]
-                    ax.plot(neg_peak_time_ms, neg_peak_val, 'ro', markersize=10, label=f'Negative Peak: {abs(neg_peak_val):.3f}')
-
-                    # Mark aftershock window (2-10ms after peak)
-                    aftershock_start_ms = neg_peak_time_ms + 2.0
-                    aftershock_end_ms = neg_peak_time_ms + 10.0
-                    ax.axvspan(aftershock_start_ms, aftershock_end_ms, alpha=0.2, color='orange',
-                              label=f'Aftershock Window (2-10ms)')
-
-                    # Min/max negative peak thresholds
-                    ax.axhline(y=-learned_thresholds.min_negative_peak, color='g', linestyle='--',
-                              linewidth=2, alpha=0.6, label=f'Min Neg Peak: {learned_thresholds.min_negative_peak:.3f}')
-                    ax.axhline(y=-learned_thresholds.max_negative_peak, color='r', linestyle='--',
-                              linewidth=2, alpha=0.6, label=f'Max Neg Peak: {learned_thresholds.max_negative_peak:.3f}')
-
-                    # Aftershock threshold
-                    aftershock_threshold_val = learned_thresholds.max_aftershock_ratio * abs(neg_peak_val)
-                    ax.axhline(y=aftershock_threshold_val, color='orange', linestyle=':',
-                              linewidth=2, alpha=0.6, label=f'Aftershock Limit: {aftershock_threshold_val:.3f}')
-                    ax.axhline(y=-aftershock_threshold_val, color='orange', linestyle=':',
-                              linewidth=2, alpha=0.6)
-
-                    # Labels and title
-                    ax.set_xlabel('Time (ms)', fontsize=12)
-                    ax.set_ylabel('Amplitude', fontsize=12)
-                    ax.set_title(f'Cycle {selected_cycle} - Quality Criteria Overlay',
-                                fontsize=14, fontweight='bold')
-                    ax.legend(loc='upper right', fontsize=9)
-
-                    # Set y-axis limits with some padding
-                    y_min = min(cycle_waveform.min() * 1.2, -0.1)
-                    y_max = max(cycle_waveform.max() * 1.2, 0.1)
-                    ax.set_ylim(y_min, y_max)
-
-                    # Zoom to relevant portion (first 20ms typically contains the impulse)
-                    ax.set_xlim(0, min(20, time_ms[-1]))
-
-                    plt.tight_layout()
-                    st.pyplot(fig, use_container_width=True)
-                    plt.close(fig)
-
-                    st.info("🟢 Green line: Min acceptable peak | 🔴 Red line: Max acceptable peak | 🟠 Orange region: Aftershock window (2-10ms)")
-            else:
-                st.info("💡 Calculate thresholds above to enable quality criteria overlay visualization")
-
+        # Display selection info
+        if selected_cycles:
+            st.success(f"✓ Selected {len(selected_cycles)} cycle(s): {', '.join(map(str, selected_cycles))}")
+            st.info("💡 These cycles will be used for: detailed analysis, comparison overlay, and threshold learning (Section 1)")
         else:
-            st.warning("AudioVisualizer not available - cannot display waveform")
-            st.info("Install gui_audio_visualizer.py to enable waveform visualization")
+            st.info("👆 Check the boxes above to select cycles")
 
         st.markdown("---")
 
-        # Comparison view - overlay multiple cycles
-        st.markdown("#### Compare Multiple Cycles")
-        st.markdown("Overlay multiple cycles to compare their waveforms and identify outliers.")
+        # Waveform Visualization (unified component for single or multiple cycles)
+        st.markdown("#### Waveform Analysis")
 
-        # Multi-select for cycles to compare
-        cycles_to_compare = st.multiselect(
-            "Select cycles to overlay",
-            options=list(range(num_cycles)),
-            default=[0] if num_cycles > 0 else [],
-            format_func=lambda x: f"Cycle {x} {'✓' if validation_results[x].get('calibration_valid', False) else '✗'}",
-            key="cal_test_cycles_compare"
-        )
-
-        if len(cycles_to_compare) > 0:
-            # Use AudioVisualizer static method for overlay plotting
+        if selected_cycles:
             if AUDIO_VISUALIZER_AVAILABLE and AudioVisualizer:
-                signals = [calibration_cycles[i] for i in cycles_to_compare]
+                # Use the same unified component for both single and multiple waveforms
+                signals = [calibration_cycles[i] for i in selected_cycles]
                 labels = [f"Cycle {i} {'✓' if validation_results[i].get('calibration_valid', False) else '✗'}"
-                         for i in cycles_to_compare]
+                         for i in selected_cycles]
 
-                fig = AudioVisualizer.render_overlay_plot(
+                # Generate appropriate title
+                if len(selected_cycles) == 1:
+                    title = f"Calibration Impulse - Cycle {selected_cycles[0]}"
+                else:
+                    title = f"Calibration Impulse - {len(selected_cycles)} Cycles Overlay"
+
+                AudioVisualizer.render_multi_waveform_with_zoom(
                     audio_signals=signals,
                     sample_rate=sample_rate,
-                    title="Calibration Impulse Comparison",
                     labels=labels,
-                    normalize=True,
-                    max_signals=8,
-                    show_legend=True,
-                    figsize=(12, 5),
-                    alpha=0.7,
-                    linewidth=1.2
+                    title=title,
+                    component_id="cal_waveform_viz",  # Same ID for both single and multiple
+                    height=400,
+                    normalize=False,
+                    show_analysis=True
                 )
-
-                st.pyplot(fig, use_container_width=True)
             else:
-                st.info("Select AudioVisualizer component to enable overlay comparison")
+                st.warning("AudioVisualizer not available - cannot display waveform")
+                st.info("Install gui_audio_visualizer.py to enable waveform visualization")
         else:
-            st.info("Select one or more cycles above to compare their waveforms")
+            st.info("👆 Select one or more cycles in the Quality Metrics Summary table above to view waveforms")
 
         st.markdown("---")
 
         # User guidance
-        with st.expander("💡 How to Use This Tool", expanded=False):
+        with st.expander("💡 How to Use the Calibration Impulse Tool", expanded=False):
             st.markdown("""
-            **Purpose:** This tool helps you establish quality criteria for calibration impulses based on actual measurements.
+            **Purpose:** Configure and validate quality criteria for calibration impulses in multi-channel recording.
 
-            **New Workflow (Automatic Threshold Learning):**
+            **Quick Workflow:**
+
+            1. **Run Test** → Section 2: Click "Run Calibration Test"
+            2. **Select Cycles** → Section 2: Check boxes next to good quality cycles in the table
+            3. **Auto-Calculate** → Section 1: Click "Calculate Thresholds from Selected Cycles"
+            4. **Save** → Section 1: Click "Save Configuration"
+
+            ---
+
+            **Section 1: Calibration Quality Parameters** (Collapsible)
+
+            - **Tool 1 - Manual Configuration:**
+              - Edit thresholds directly in the tabular form
+              - Adjust min/max ranges for each quality metric
+
+            - **Tool 2 - Automatic Threshold Learning:**
+              - Select cycles in Section 2's Quality Metrics Summary table
+              - The selected cycles appear here automatically
+              - Click "Calculate Thresholds from Selected Cycles" to auto-compute optimal ranges
+              - Review calculated thresholds displayed in Tool 1
+              - Click "Save Configuration" at the bottom to persist settings
+
+            **Section 2: Test Calibration Impulse** (Collapsible)
+
             1. **Run Test:** Click "Run Calibration Test" to record calibration impulses
-            2. **Review Waveforms:** Examine each cycle using the visualizer and overlay comparison
-            3. **Mark Good Cycles:** Select cycles that represent ideal calibration impulses (consistent, clean hammer strikes)
-            4. **Calculate Thresholds:** Click "Calculate Thresholds from Marked Cycles" - the system automatically determines quality criteria
-            5. **Apply & Validate:** Apply the calculated thresholds and re-run the test to verify
-            6. **Iterate:** Refine your marking if needed and recalculate
 
-            **Quality Criteria (Automatic Detection):**
-            - **Negative Peak:** Strong negative pulse from hammer impact (NOT normalized - preserves amplitude)
-            - **Aftershock:** No significant rebounds within 10ms of main pulse (should be < 50% of peak)
-            - **Positive/Negative Ratio:** Predominantly negative pulse (positive component should be small)
+            2. **Select Cycles in Table:**
+               - Check the boxes next to cycles in the Quality Metrics Summary table
+               - Check multiple boxes to select multiple cycles
+               - Selected cycles are used for:
+                 - **Waveform Visualization** (single or overlay depending on selection)
+                 - **Threshold Learning** (Section 1, Tool 2)
+
+            3. **Waveform Analysis:**
+               - **Unified component:** Same visualization and controls for single or multiple cycles
+               - **View modes:** Toggle between waveform and spectrum views
+               - **Zoom controls:** Use sliders in "Zoom Controls" expander to zoom to any time range
+               - **Persistent zoom:** Zoom settings preserved when adding/removing cycles
+               - **Reset Zoom:** Button to return to full view
+               - All quality metrics are visible in the table above
+
+            ---
+
+            **Quality Criteria:**
+            - **Negative Peak:** Strong negative pulse from hammer impact (absolute amplitude)
+            - **Positive Peak:** Minimal positive component (absolute amplitude)
+            - **Aftershock:** No significant rebounds within 10ms of main pulse (absolute amplitude)
 
             **What Makes a Good Calibration Impulse:**
             - Single strong negative pulse (hammer impact signature)
             - Sharp, clean waveform with quick decay
             - No aftershocks or bounces immediately after impact
             - Minimal positive component
-            - Consistent amplitude across marked cycles
+            - Consistent amplitude across cycles
 
             **Tips:**
-            - Mark at least 3-5 good cycles for reliable threshold calculation
-            - Good cycles should be similar to each other (use overlay plot to verify)
-            - The system adds 20% safety margin to calculated thresholds
-            - Re-test after applying thresholds to ensure they work correctly
-            - Invalid cycles don't mean bad data - they help identify quality variations
+            - Select at least 3-5 good cycles for reliable automatic threshold calculation
+            - Use the comparison overlay to verify selected cycles are similar
+            - The system adds 5% safety margin to calculated thresholds
+            - After saving new thresholds, clear results and re-run to validate
+            - Invalid cycles aren't bad - they help you understand quality variations
             """)
 
     def _render_series_settings_tab(self):
