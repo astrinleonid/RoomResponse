@@ -1080,7 +1080,9 @@ class RoomResponseRecorder:
     def take_record(self,
                     output_file: str,
                     impulse_file: str,
-                    method: int = 2):
+                    method: int = 2,
+                    mode: str = 'standard',
+                    return_processed: bool = False):
         """
         Main API method to record room response
 
@@ -1088,11 +1090,30 @@ class RoomResponseRecorder:
             output_file: Filename for raw recording
             impulse_file: Filename for impulse response
             method: Recording method (1=manual, 2=auto, 3=specific devices)
+            mode: Recording mode - 'standard' (default) or 'calibration'
+            return_processed: If True, return dict with processed data instead of raw audio
+                             (used internally, not for external API)
 
         Returns:
-            Single-channel: np.ndarray
-            Multi-channel: Dict[int, np.ndarray]
+            Standard mode (default):
+                Single-channel: np.ndarray (raw audio) - BACKWARD COMPATIBLE
+                Multi-channel: Dict[int, np.ndarray] (raw audio per channel) - BACKWARD COMPATIBLE
+
+            Calibration mode:
+                Dict[str, Any] with calibration cycle data
+
+            If return_processed=True:
+                Dict[str, Any] with all processed data
         """
+        # Validate mode parameter
+        if mode not in ['standard', 'calibration']:
+            raise ValueError(f"Invalid mode: {mode}. Must be 'standard' or 'calibration'")
+
+        # Handle calibration mode (completely separate path)
+        if mode == 'calibration':
+            return self._take_record_calibration_mode()
+
+        # STANDARD MODE - Continue with existing code (UNCHANGED)
         print(f"\n{'=' * 60}")
         print(f"Room Response Recording")
         print(f"{'=' * 60}")
@@ -1116,13 +1137,157 @@ class RoomResponseRecorder:
             # Print success summary
             print(f"\n🎉 Recording completed successfully!")
 
-            return recorded_audio
+            # BACKWARD COMPATIBLE RETURN
+            if return_processed:
+                return processed_data  # Internal use only
+            else:
+                return recorded_audio  # EXISTING BEHAVIOR - returns raw audio
 
         except Exception as e:
             print(f"Error during recording: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    def _take_record_calibration_mode(self) -> Dict[str, Any]:
+        """
+        Calibration mode recording - completely separate implementation.
+
+        Does NOT save files, returns cycle-level data for analysis.
+
+        Returns:
+            Dict with:
+                - 'calibration_cycles': np.ndarray [N, samples]
+                - 'validation_results': List[Dict]
+                - 'aligned_multichannel_cycles': Dict[int, np.ndarray]
+                - 'alignment_metadata': Dict
+                - 'num_valid_cycles': int
+                - 'num_aligned_cycles': int
+
+        Raises:
+            ValueError: If multi-channel not configured or calibration_channel missing
+        """
+        from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
+
+        print(f"\n{'=' * 60}")
+        print(f"Calibration Mode Recording")
+        print(f"{'=' * 60}")
+
+        # Validate calibration setup
+        if not self.multichannel_config.get('enabled', False):
+            raise ValueError("Calibration mode requires multi-channel configuration")
+
+        cal_ch = self.multichannel_config.get('calibration_channel')
+        if cal_ch is None:
+            raise ValueError("Calibration mode requires 'calibration_channel' in multichannel_config")
+
+        try:
+            # Record audio
+            recorded_audio = self._record_method_2()
+            if recorded_audio is None:
+                raise RuntimeError("Recording failed - no data captured")
+
+            if not isinstance(recorded_audio, dict):
+                raise ValueError("Calibration mode requires multi-channel recording")
+
+            if cal_ch not in recorded_audio:
+                raise ValueError(f"Calibration channel {cal_ch} not found in recorded channels")
+
+            print(f"Processing calibration data (channel {cal_ch})...")
+
+            # Extract cycles from calibration channel
+            cal_raw = recorded_audio[cal_ch]
+            expected_samples = self.cycle_samples * self.num_pulses
+
+            # Pad or trim
+            if len(cal_raw) < expected_samples:
+                padded = np.zeros(expected_samples, dtype=cal_raw.dtype)
+                padded[:len(cal_raw)] = cal_raw
+                cal_raw = padded
+            else:
+                cal_raw = cal_raw[:expected_samples]
+
+            # Simple reshape extraction
+            initial_cycles = cal_raw.reshape(self.num_pulses, self.cycle_samples)
+
+            # Validate each cycle
+            thresholds = QualityThresholds.from_config(self.calibration_quality_config)
+            validator = CalibrationValidatorV2(thresholds, self.sample_rate)
+
+            validation_results = []
+            for i, cycle in enumerate(initial_cycles):
+                validation = validator.validate_cycle(cycle, i)
+                validation_dict = {
+                    'cycle_index': i,
+                    'is_valid': validation.calibration_valid,
+                    'calibration_valid': validation.calibration_valid,
+                    'calibration_metrics': validation.calibration_metrics,
+                    'calibration_failures': validation.calibration_failures
+                }
+                validation_results.append(validation_dict)
+
+            # Count valid cycles
+            num_valid = sum(1 for v in validation_results if v['is_valid'])
+            print(f"Calibration validation: {num_valid}/{len(validation_results)} valid cycles")
+
+            # Align cycles by onset
+            correlation_threshold = 0.7
+            alignment_result = self.align_cycles_by_onset(
+                initial_cycles,
+                validation_results,
+                correlation_threshold=correlation_threshold
+            )
+
+            # Apply alignment to all channels
+            aligned_multichannel_cycles = {}
+            for ch_idx, channel_data in recorded_audio.items():
+                aligned_channel = self.apply_alignment_to_channel(
+                    channel_data,
+                    alignment_result
+                )
+                aligned_multichannel_cycles[ch_idx] = aligned_channel
+
+            print(f"🎉 Calibration recording completed!")
+            print(f"   Valid cycles: {num_valid}/{self.num_pulses}")
+            print(f"   Aligned cycles: {alignment_result['num_aligned']}")
+
+            return {
+                'calibration_cycles': initial_cycles,
+                'validation_results': validation_results,
+                'aligned_multichannel_cycles': aligned_multichannel_cycles,
+                'alignment_metadata': alignment_result,
+                'num_valid_cycles': num_valid,
+                'num_aligned_cycles': alignment_result['num_aligned'],
+                'metadata': {
+                    'mode': 'calibration',
+                    'calibration_channel': cal_ch,
+                    'num_channels': len(recorded_audio),
+                    'num_cycles': self.num_pulses,
+                    'cycle_samples': self.cycle_samples,
+                    'correlation_threshold': correlation_threshold
+                }
+            }
+
+        except Exception as e:
+            print(f"Error during calibration recording: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def take_record_calibration(self) -> Dict[str, Any]:
+        """
+        Convenience method for calibration recording.
+
+        Equivalent to: take_record("", "", mode='calibration')
+
+        Returns:
+            Dict with calibration cycle data (see _take_record_calibration_mode)
+        """
+        return self.take_record(
+            output_file="",  # Not used in calibration mode
+            impulse_file="",  # Not used in calibration mode
+            mode='calibration'
+        )
 
     def _save_multichannel_files(self, output_file: str, impulse_file: str, processed_data: Dict):
         """Save multi-channel measurement files"""
