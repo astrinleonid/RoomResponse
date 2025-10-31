@@ -341,8 +341,11 @@ class AudioSettingsPanel:
                 if hasattr(self.recorder, 'calibration_quality_config'):
                     config['calibration_quality_config'] = dict(self.recorder.calibration_quality_config)
 
-            # Save using config manager
-            success = config_manager.save_config(config, updated_by="Audio Settings Panel")
+            # Save using config manager with error reporting
+            success, error_msg = config_manager.save_config_with_error(config, updated_by="Audio Settings Panel")
+            if not success:
+                st.error(f"Config save failed: {error_msg}")
+                st.code(error_msg)
 
             return success
         except Exception as e:
@@ -1081,7 +1084,7 @@ class AudioSettingsPanel:
                                     calibration_cycles,
                                     marked_good,
                                     sample_rate,
-                                    margin=0.05  # 5% margin on both sides
+                                    safety_margin=0.05  # 5% margin on both sides
                                 )
 
                                 # Store in session state and update the input fields
@@ -1100,11 +1103,11 @@ class AudioSettingsPanel:
                                         st.metric("Negative Peak Range",
                                                  f"{learned_thresholds.min_negative_peak:.3f} - {learned_thresholds.max_negative_peak:.3f}")
                                     with col2:
-                                        st.metric("Positive Peak Range",
-                                                 f"{learned_thresholds.min_positive_peak:.3f} - {learned_thresholds.max_positive_peak:.3f}")
+                                        st.metric("Max Positive Peak Ratio",
+                                                 f"{learned_thresholds.max_positive_peak_ratio:.3f}")
                                     with col3:
-                                        st.metric("Aftershock Range",
-                                                 f"{learned_thresholds.min_aftershock:.3f} - {learned_thresholds.max_aftershock:.3f}")
+                                        st.metric("Max Aftershock Ratio",
+                                                 f"{learned_thresholds.max_aftershock_ratio:.3f}")
 
                             except Exception as e:
                                 st.error(f"Failed to calculate thresholds: {e}")

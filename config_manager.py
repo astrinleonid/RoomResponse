@@ -45,28 +45,72 @@ class ConfigManager:
         return {}
 
     def save_config(self, config: Dict[str, Any], updated_by: str = "ConfigManager") -> bool:
-        """Save configuration to file.
+        """DEPRECATED: Use save_config_with_error() instead for better error reporting."""
+        success, _ = self.save_config_with_error(config, updated_by)
+        return success
+
+    def save_config_with_error(self, config: Dict[str, Any], updated_by: str = "ConfigManager") -> tuple[bool, str]:
+        """Save configuration to file atomically.
 
         Args:
             config: Configuration dictionary to save
             updated_by: Name of the component saving the config
 
         Returns:
-            True if successful, False otherwise
+            Tuple of (success: bool, error_message: str)
         """
+        import tempfile
+        import os
         try:
             # Add global timestamp
             config['last_updated'] = time.time()
             config['last_updated_by'] = updated_by
 
-            # Write to file with pretty formatting
-            with open(self.config_path, 'w') as f:
-                json.dump(config, f, indent=2)
+            # Convert numpy types to Python native types for JSON serialization
+            config = self._convert_numpy_types(config)
 
-            return True
+            # Use atomic write: write to temp file first, then rename
+            # This prevents corruption if the process is interrupted
+            temp_fd, temp_path = tempfile.mkstemp(dir=self.config_path.parent, suffix='.tmp', text=True)
+            try:
+                with os.fdopen(temp_fd, 'w') as f:
+                    json.dump(config, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())  # Force write to disk
+
+                # Atomic rename (on Windows, need to remove target first)
+                if os.path.exists(self.config_path):
+                    os.replace(temp_path, self.config_path)  # Atomic on both Unix and Windows
+                else:
+                    os.rename(temp_path, self.config_path)
+
+                return True, ""
+            except Exception as e:
+                # Clean up temp file on error
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                raise
         except Exception as e:
-            print(f"Error: Failed to save config to {self.config_path}: {e}")
-            return False
+            import traceback
+            error_msg = f"Failed to save config to {self.config_path}: {e}\n{traceback.format_exc()}"
+            return False, error_msg
+
+    def _convert_numpy_types(self, obj: Any) -> Any:
+        """Recursively convert numpy types to Python native types for JSON serialization."""
+        import numpy as np
+
+        if isinstance(obj, dict):
+            return {key: self._convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_numpy_types(item) for item in obj]
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return obj
 
     def update_section(self, section_name: str, section_data: Dict[str, Any], updated_by: str = "ConfigManager") -> bool:
         """Update a specific section of the configuration.

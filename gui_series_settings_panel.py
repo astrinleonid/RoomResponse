@@ -421,13 +421,22 @@ class SeriesSettingsPanel:
                     st.error("Recording failed — no audio captured")
                     return
 
-                analysis = self._analyze_series_recording(recorded_audio, self.recorder)
+                # Handle multi-channel: extract reference channel for analysis
+                if isinstance(recorded_audio, dict):
+                    ref_channel = self.recorder.multichannel_config.get('reference_channel', 0)
+                    analysis_audio = recorded_audio.get(ref_channel, list(recorded_audio.values())[0])
+                    audio_len = len(analysis_audio)
+                else:
+                    analysis_audio = recorded_audio
+                    audio_len = len(recorded_audio)
+
+                analysis = self._analyze_series_recording(analysis_audio, self.recorder)
                 st.session_state['series_recorded_audio'] = recorded_audio
                 st.session_state['series_sample_rate'] = int(self.recorder.sample_rate)
                 st.session_state['series_timestamp'] = time.time()
                 st.session_state['series_analysis_data'] = analysis
 
-                st.success(f"Series recording OK — {len(recorded_audio)/self.recorder.sample_rate:.3f}s")
+                st.success(f"Series recording OK — {audio_len/self.recorder.sample_rate:.3f}s")
                 st.info(f"Files saved: {raw_path.name}, {imp_path.name}")
                 st.rerun()
 
@@ -597,8 +606,15 @@ class SeriesSettingsPanel:
 
         if VISUALIZER_AVAILABLE:
             st.markdown("**Full Recording**")
+            # Handle multi-channel: extract reference channel for visualization
+            if isinstance(audio, dict):
+                ref_channel = self.recorder.multichannel_config.get('reference_channel', 0)
+                viz_audio = audio.get(ref_channel, list(audio.values())[0])
+            else:
+                viz_audio = audio
+
             AudioVisualizer("series_full_recording").render(
-                audio_data=audio,
+                audio_data=viz_audio,
                 sample_rate=sr,
                 title="Complete Series Recording",
                 show_controls=True,

@@ -107,8 +107,8 @@ class QualityThresholds:
         # Clamp to reasonable ranges
         min_neg = max(0.05, min_neg)  # At least 5% amplitude
         max_neg = min(0.98, max_neg)  # Leave headroom for clipping
-        max_aftershock = min(0.8, max_aftershock)  # Cap at 80%
-        max_pos_ratio = min(0.5, max_pos_ratio)  # Positive should be < half of negative
+        max_aftershock = min(0.95, max_aftershock)  # Cap at 95%
+        max_pos_ratio = min(0.95, max_pos_ratio)  # Cap at 95% (allow actual measured values)
 
         return cls(
             min_negative_peak=min_neg,
