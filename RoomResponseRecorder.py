@@ -1,15 +1,11 @@
 import numpy as np
 import wave
-import time
 import json
 import threading
-import queue
-import time
-import numpy as np
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
-from MicTesting import _SDL_AVAILABLE, AudioRecorder, AudioRecordingWorker, AudioProcessingWorker, AudioProcessor, sdl_audio_core
+from MicTesting import _SDL_AVAILABLE, sdl_audio_core
 
 # try:
 #     import sdl_audio_core as sdl_core
@@ -1387,60 +1383,3 @@ class RoomResponseRecorder:
         return str(parent / new_filename)
 
     # Updated RoomResponseRecorder methods
-    def test_mic(self, duration: float = 10.0, chunk_duration: float = 0.1):
-        """
-        Simple microphone test with real-time RMS monitoring using reusable components
-
-        Args:
-            duration: Total test duration in seconds
-            chunk_duration: Audio chunk duration for processing in seconds
-        """
-        print(f"\nTesting microphone for {duration} seconds...")
-        print("Speak into the microphone to see RMS levels")
-        print("Press Ctrl+C to stop early\n")
-
-        audio_queue = queue.Queue()
-
-        try:
-            # Create recorder and workers
-            with AudioRecorder(self.sample_rate, self.input_device, enable_logging=False) as recorder:
-                recording_worker = AudioRecordingWorker(recorder, audio_queue, chunk_duration)
-                processing_worker = AudioProcessingWorker(audio_queue)
-
-                # Start workers
-                recording_worker.start()
-                processing_worker.start()
-
-                print("Recording started...")
-
-                try:
-                    time.sleep(duration)
-                except KeyboardInterrupt:
-                    print("\nStopping test...")
-
-                # Stop workers
-                recording_worker.stop()
-                processing_worker.stop()
-
-        except Exception as e:
-            print(f"Error during microphone test: {e}")
-
-        print("\nMicrophone test completed.")
-        print("\nTips:")
-        print("- Normal speech: -40 to -20 dB")
-        print("- Loud speech: -20 to -10 dB")
-        print("- Too quiet: below -50 dB")
-        print("- Too loud/clipping: above -6 dB")
-
-if __name__ == "__main__":
-    r = RoomResponseRecorder()
-
-    r.list_devices()
-    print(r.get_sdl_core_info())
-    print("\n\n")
-
-    input_d = int(input("Please enter input device number: "))
-    output_d = int(input("Please enter output device number: "))
-    r.set_audio_devices(input_d, output_d)
-    r.test_mic(duration=30.0)
-    r.take_record("test.wav", "test_impulse.wav")
