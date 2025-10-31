@@ -1199,20 +1199,13 @@ class AudioSettingsPanel:
             if 'cal_test_results' in st.session_state:
                 self._render_calibration_test_results(st.session_state['cal_test_results'])
 
-    def _perform_calibration_test(self) -> Dict:
+    def _validate_device_capabilities(self):
         """
-        Perform a calibration test by recording impulses and validating quality.
+        Validate that the selected device supports the configured number of channels.
 
-        This method now records ALL impulses regardless of quality, extracts
-        per-cycle waveforms and metrics, and returns them for user exploration.
-
-        Returns:
-            Dictionary with test results including:
-            - all_calibration_cycles: Raw waveforms for each cycle (np.ndarray)
-            - validation_results: Quality metrics for each cycle
-            - sample_rate: Sample rate for waveform playback
+        Raises:
+            ValueError: If device doesn't support required channels
         """
-        # Validate device capabilities before recording
         num_channels = self.recorder.multichannel_config.get('num_channels', 1)
         try:
             devices_info = self.recorder.get_device_info_with_channels()
@@ -1239,109 +1232,71 @@ class AudioSettingsPanel:
             # Continue if we can't check (device info might not be available)
             pass
 
-        # Record multi-channel audio using internal method
-        recorded_audio = self.recorder._record_method_2()
+    def _format_calibration_result_for_gui(self, recorder_result: Dict) -> Dict:
+        """
+        Format recorder's calibration result for GUI compatibility.
 
-        if recorded_audio is None:
-            raise ValueError("Recording failed - no data captured. Check your audio device connections.")
+        Args:
+            recorder_result: Result from recorder.take_record_calibration()
 
-        # Extract calibration channel raw data
-        cal_ch = self.recorder.multichannel_config.get('calibration_channel')
-        if cal_ch is None:
-            raise ValueError("Calibration channel not configured")
-
-        # For multi-channel, recorded_audio is a dict
-        if isinstance(recorded_audio, dict):
-            cal_raw = recorded_audio.get(cal_ch)
-        else:
-            # Single channel fallback
-            cal_raw = recorded_audio
-
-        if cal_raw is None:
-            raise ValueError(f"Calibration channel {cal_ch} not found in recorded data")
-
-        # STEP 1-4: Initial cycle extraction using simple reshape (AS-IS from document)
-        expected_samples = self.recorder.cycle_samples * self.recorder.num_pulses
-
-        # Pad or trim to expected length
-        if len(cal_raw) < expected_samples:
-            padded = np.zeros(expected_samples)
-            padded[:len(cal_raw)] = cal_raw
-            cal_raw = padded
-        else:
-            cal_raw = cal_raw[:expected_samples]
-
-        # Simple reshape into individual cycles (NO alignment yet)
-        initial_cycles = cal_raw.reshape(self.recorder.num_pulses, self.recorder.cycle_samples)
-
-        # Run validation on initial cycles (Step 4 from document)
-        from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
-
-        thresholds = QualityThresholds.from_config(self.recorder.calibration_quality_config)
-        validator = CalibrationValidatorV2(thresholds, self.recorder.sample_rate)
-
-        initial_validation_results = []
-        for cycle_idx in range(self.recorder.num_pulses):
-            validation = validator.validate_cycle(
-                initial_cycles[cycle_idx],
-                cycle_idx
-            )
-            validation_dict = {
-                'cycle_index': cycle_idx,
-                'calibration_valid': validation.calibration_valid,
-                'calibration_metrics': validation.calibration_metrics,
-                'calibration_failures': validation.calibration_failures,
-                'is_user_marked_good': False
-            }
-            initial_validation_results.append(validation_dict)
-
-        # STEP 5: Align cycles by onset (negative peak detection)
-        # This filters to valid cycles only and aligns them
-        alignment_result = self.recorder.align_cycles_by_onset(
-            initial_cycles,
-            initial_validation_results,
-            correlation_threshold=0.7
-        )
-
-        aligned_cycles = alignment_result['aligned_cycles']
+        Returns:
+            Dict formatted for GUI display
+        """
+        cal_ch = recorder_result['metadata']['calibration_channel']
+        alignment_result = recorder_result['alignment_metadata']
         valid_cycle_indices = alignment_result['valid_cycle_indices']
 
         # Build validation results for aligned cycles
         aligned_validation_results = []
         for i, original_idx in enumerate(valid_cycle_indices):
-            # Use validation from original cycle
-            if original_idx < len(initial_validation_results):
-                aligned_validation_results.append(initial_validation_results[original_idx])
-
-        # STEP 6: Apply SAME alignment to ALL channels (multi-channel support)
-        aligned_multichannel_cycles = {}
-        if isinstance(recorded_audio, dict):
-            # Multi-channel recording - apply alignment to each channel
-            for channel_name, channel_data in recorded_audio.items():
-                aligned_channel_cycles = self.recorder.apply_alignment_to_channel(
-                    channel_data,
-                    alignment_result
-                )
-                aligned_multichannel_cycles[channel_name] = aligned_channel_cycles
-        else:
-            # Single channel - just use the calibration cycles
-            aligned_multichannel_cycles[cal_ch] = aligned_cycles
+            if original_idx < len(recorder_result['validation_results']):
+                aligned_validation_results.append(recorder_result['validation_results'][original_idx])
 
         return {
             'success': True,
-            'num_cycles': self.recorder.num_pulses,
+            'num_cycles': recorder_result['metadata']['num_cycles'],
             'calibration_channel': cal_ch,
             'sample_rate': self.recorder.sample_rate,
-            # Initial extraction (Steps 1-4) - FOR EXISTING UI
-            'all_calibration_cycles': initial_cycles,  # ALL cycles for existing quality metrics table
-            'validation_results': initial_validation_results,  # Validation for ALL cycles
-            # Alignment (Step 5-6) - FOR NEW ALIGNMENT SECTION AND DOWNSTREAM USE
+            # Initial extraction - FOR EXISTING UI
+            'all_calibration_cycles': recorder_result['calibration_cycles'],
+            'validation_results': recorder_result['validation_results'],
+            # Alignment - FOR NEW ALIGNMENT SECTION AND DOWNSTREAM USE
             'alignment_metadata': alignment_result,
-            'aligned_cycles': aligned_cycles,  # Calibration channel aligned cycles
-            'aligned_multichannel_cycles': aligned_multichannel_cycles,  # ALL channels aligned uniformly
-            'aligned_validation_results': aligned_validation_results,  # Validation for aligned cycles
+            'aligned_cycles': recorder_result['aligned_multichannel_cycles'].get(cal_ch),
+            'aligned_multichannel_cycles': recorder_result['aligned_multichannel_cycles'],
+            'aligned_validation_results': aligned_validation_results,
             'cycle_duration_s': self.recorder.cycle_samples / self.recorder.sample_rate
         }
+
+    def _perform_calibration_test(self) -> Dict:
+        """
+        Perform a calibration test using recorder's calibration mode.
+
+        This method validates device capabilities, then delegates to the recorder's
+        calibration mode implementation to avoid duplication.
+
+        Returns:
+            Dictionary with test results including:
+            - all_calibration_cycles: Raw waveforms for each cycle
+            - validation_results: Quality metrics for each cycle
+            - aligned_cycles: Aligned calibration channel cycles
+            - aligned_multichannel_cycles: Aligned cycles for all channels
+            - sample_rate: Sample rate for waveform playback
+        """
+        # Validate device capabilities (GUI-specific check)
+        self._validate_device_capabilities()
+
+        # Use recorder's calibration mode (eliminates duplication)
+        try:
+            recorder_result = self.recorder.take_record_calibration()
+        except Exception as e:
+            # Re-raise with user-friendly message
+            if "no data captured" in str(e).lower():
+                raise ValueError("Recording failed - no data captured. Check your audio device connections.")
+            raise
+
+        # Format result for GUI compatibility
+        return self._format_calibration_result_for_gui(recorder_result)
 
     def _render_calibration_test_results(self, results: Dict):
         """

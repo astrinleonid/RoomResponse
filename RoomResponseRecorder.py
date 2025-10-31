@@ -1261,9 +1261,12 @@ class RoomResponseRecorder:
                 )
                 aligned_multichannel_cycles[ch_idx] = aligned_channel
 
+            # Calculate number of aligned cycles
+            num_aligned = len(alignment_result['valid_cycle_indices'])
+
             print(f"🎉 Calibration recording completed!")
             print(f"   Valid cycles: {num_valid}/{self.num_pulses}")
-            print(f"   Aligned cycles: {alignment_result['num_aligned']}")
+            print(f"   Aligned cycles: {num_aligned}")
 
             return {
                 'calibration_cycles': initial_cycles,
@@ -1271,7 +1274,7 @@ class RoomResponseRecorder:
                 'aligned_multichannel_cycles': aligned_multichannel_cycles,
                 'alignment_metadata': alignment_result,
                 'num_valid_cycles': num_valid,
-                'num_aligned_cycles': alignment_result['num_aligned'],
+                'num_aligned_cycles': num_aligned,
                 'metadata': {
                     'mode': 'calibration',
                     'calibration_channel': cal_ch,
