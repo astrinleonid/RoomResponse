@@ -691,31 +691,59 @@ class RoomResponseRecorder:
         else:
             return self._process_single_channel_signal(recorded_audio)
 
-    def _process_single_channel_signal(self, recorded_audio: np.ndarray) -> Dict[str, Any]:
-        """Legacy single-channel processing"""
+    def _extract_cycles(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Extract cycles from raw audio using simple reshape.
+
+        Pads or trims audio to expected length, then reshapes into cycles.
+
+        Args:
+            audio: Raw audio signal
+
+        Returns:
+            Cycles array [num_cycles, cycle_samples]
+        """
         expected_samples = self.cycle_samples * self.num_pulses
 
         # Pad or trim to expected length
-        if len(recorded_audio) < expected_samples:
-            print(f"Warning: Recorded {len(recorded_audio)} samples, expected {expected_samples}")
-            padded_audio = np.zeros(expected_samples)
-            padded_audio[:len(recorded_audio)] = recorded_audio
-            recorded_audio = padded_audio
+        if len(audio) < expected_samples:
+            padded = np.zeros(expected_samples, dtype=audio.dtype)
+            padded[:len(audio)] = audio
+            audio = padded
+        else:
+            audio = audio[:expected_samples]
 
-        # Extract room response by averaging cycles
-        try:
-            signal_data = recorded_audio[:expected_samples]
-            reshaped = signal_data.reshape(self.num_pulses, self.cycle_samples)
+        # Reshape into cycles
+        return audio.reshape(self.num_pulses, self.cycle_samples)
 
-            # Skip first few cycles for system settling
+    def _average_cycles(self, cycles: np.ndarray, start_cycle: int = None) -> np.ndarray:
+        """
+        Average cycles starting from start_cycle.
+
+        Skips initial cycles to allow system settling.
+
+        Args:
+            cycles: Cycles array [num_cycles, cycle_samples]
+            start_cycle: Index to start averaging from (default: num_pulses // 4)
+
+        Returns:
+            Averaged signal [cycle_samples]
+        """
+        if start_cycle is None:
             start_cycle = max(1, self.num_pulses // 4)
-            room_response = np.mean(reshaped[start_cycle:], axis=0)
-            print(f"Averaged cycles {start_cycle} to {self.num_pulses - 1}")
 
-        except Exception as e:
-            print(f"Error reshaping data: {e}")
-            room_response = recorded_audio[:self.cycle_samples] if len(
-                recorded_audio) >= self.cycle_samples else recorded_audio
+        return np.mean(cycles[start_cycle:], axis=0)
+
+    def _process_single_channel_signal(self, recorded_audio: np.ndarray) -> Dict[str, Any]:
+        """Process single-channel standard recording using helper methods"""
+
+        # Extract cycles using helper
+        cycles = self._extract_cycles(recorded_audio)
+
+        # Average cycles using helper
+        start_cycle = max(1, self.num_pulses // 4)
+        room_response = self._average_cycles(cycles, start_cycle)
+        print(f"Averaged cycles {start_cycle} to {self.num_pulses - 1}")
 
         # Extract impulse response
         impulse_response = self._extract_impulse_response(room_response)
@@ -728,40 +756,26 @@ class RoomResponseRecorder:
 
     def _process_multichannel_signal(self, multichannel_audio: Dict[int, np.ndarray]) -> Dict[str, Any]:
         """
-        Process multi-channel recording with synchronized alignment (no calibration)
+        Process multi-channel recording with synchronized alignment using helper methods
 
         CRITICAL: All channels are aligned using the SAME shift calculated from reference channel
         """
         num_channels = len(multichannel_audio)
         ref_channel = self.multichannel_config.get('reference_channel', 0)
-        expected_samples = self.cycle_samples * self.num_pulses
 
         print(f"Processing {num_channels} channels (reference: {ref_channel})")
 
-        # 1. Pad/trim all channels to expected length
-        processed_channels = {}
-        for ch_idx, audio in multichannel_audio.items():
-            if len(audio) < expected_samples:
-                padded = np.zeros(expected_samples)
-                padded[:len(audio)] = audio
-                processed_channels[ch_idx] = padded
-            else:
-                processed_channels[ch_idx] = audio[:expected_samples]
-
-        # 2. Apply cycle averaging to reference channel
-        ref_audio = processed_channels[ref_channel]
-        ref_reshaped = ref_audio.reshape(self.num_pulses, self.cycle_samples)
+        # 1. Process reference channel first using helpers
+        ref_cycles = self._extract_cycles(multichannel_audio[ref_channel])
         start_cycle = max(1, self.num_pulses // 4)
-        ref_room_response = np.mean(ref_reshaped[start_cycle:], axis=0)
+        ref_room_response = self._average_cycles(ref_cycles, start_cycle)
 
-        # 3. Find onset in reference channel
+        # 2. Find onset in reference channel
         onset_sample = self._find_onset_in_room_response(ref_room_response)
+        shift_amount = -onset_sample  # Negative to move onset to beginning
         print(f"Found onset at sample {onset_sample} in reference channel {ref_channel}")
 
-        # 4. Calculate shift amount from reference channel
-        shift_amount = -onset_sample  # Negative to move onset to beginning
-
-        # 5. Apply cycle averaging to ALL channels and align with SAME shift
+        # 3. Apply cycle averaging to ALL channels and align with SAME shift
         result = {
             'raw': {},
             'room_response': {},
@@ -774,10 +788,10 @@ class RoomResponseRecorder:
             }
         }
 
-        for ch_idx, audio in processed_channels.items():
-            # Cycle averaging for this channel
-            reshaped = audio.reshape(self.num_pulses, self.cycle_samples)
-            room_response = np.mean(reshaped[start_cycle:], axis=0)
+        for ch_idx, audio in multichannel_audio.items():
+            # Extract and average cycles for this channel using helpers
+            cycles = self._extract_cycles(audio)
+            room_response = self._average_cycles(cycles, start_cycle)
 
             # Apply THE SAME shift to this channel (critical for synchronization)
             impulse_response = np.roll(room_response, shift_amount)
