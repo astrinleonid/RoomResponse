@@ -341,8 +341,11 @@ class AudioSettingsPanel:
                 if hasattr(self.recorder, 'calibration_quality_config'):
                     config['calibration_quality_config'] = dict(self.recorder.calibration_quality_config)
 
-            # Save using config manager
-            success = config_manager.save_config(config, updated_by="Audio Settings Panel")
+            # Save using config manager with error reporting
+            success, error_msg = config_manager.save_config_with_error(config, updated_by="Audio Settings Panel")
+            if not success:
+                st.error(f"Config save failed: {error_msg}")
+                st.code(error_msg)
 
             return success
         except Exception as e:
