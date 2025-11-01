@@ -1,9 +1,10 @@
 # Multi-Channel Room Response System
 
-**Document Version:** 2.0
+**Document Version:** 3.0
 **Created:** 2025-10-31
+**Last Updated:** 2025-11-02
 **Target:** Piano Response Measurement System
-**Status:** Core Implementation Complete | GUI Integration Partial | Refactoring Planned
+**Status:** Core Implementation Complete | GUI Integration Complete | Phase 6 & 7 Complete
 
 ---
 
@@ -14,12 +15,14 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 **Implementation Status:**
 - ✅ Multi-channel audio recording (C++/Python)
 - ✅ Signal processing pipeline (single & multi-channel)
-- ✅ Calibration quality validation system (V2)
+- ✅ Calibration quality validation system (V3 - comprehensive 7-criteria)
 - ✅ Multi-channel file management
 - ✅ Calibration testing GUI interface
-- ⚠️ Multi-channel configuration GUI (not implemented)
-- ⚠️ Multi-channel visualization GUI (not implemented)
-- 📋 Pipeline refactoring needed (code duplication exists)
+- ✅ Multi-channel configuration GUI (fully implemented)
+- ✅ Configuration profile management system (save/load/delete)
+- ✅ Collection Panel multi-channel status display
+- ✅ Code cleanup and refactoring (Phase 6 complete)
+- ❌ Multi-channel visualization GUI (planned for future)
 
 ---
 
@@ -57,10 +60,13 @@ The Room Response system has been upgraded to support **synchronized multi-chann
   │                   GUI LAYER                           │
   │   ├─ AudioSettingsPanel (79 KB) ✅                   │
   │   │   ├─ Device selection                             │
+  │   │   ├─ Multi-channel configuration ✅              │
   │   │   ├─ Calibration Impulse testing ✅              │
   │   │   └─ Series Settings                              │
-  │   ├─ CollectionPanel (23 KB) ⚠️                      │
-  │   │   └─ No multi-channel UI                          │
+  │   ├─ CollectionPanel (23 KB) ✅                      │
+  │   │   └─ Multi-channel status display ✅             │
+  │   ├─ ConfigProfileManager (NEW) ✅                   │
+  │   │   └─ Save/load/delete profiles ✅                │
   │   ├─ ScenariosPanel (72 KB)                           │
   │   └─ SeriesWorker (background recording)             │
   └──────────────────────────────────────────────────────┘
@@ -312,60 +318,84 @@ New methods:
 
 ## Calibration Quality Validation
 
-### CalibrationValidatorV2 (Current - V2)
+### CalibrationValidatorV2 (Current - V3 Comprehensive Format)
 
-**File:** `calibration_validator_v2.py` (16 KB)
-**Replaced:** `calibration_validator.py` (V1, deprecated)
-**Date Replaced:** 2025-10-30
+**File:** `calibration_validator_v2.py` (25 KB)
+**Replaced:** `calibration_validator.py` (V1, deprecated 2025-10-30)
+**Updated to V3:** 2025-11-01
+**Status:** ✅ Production Ready
 
-**Validation Approach: Min/Max Range Checking**
+**Validation Approach: Comprehensive 7-Criteria System**
 
-Instead of complex ratio-based calculations, V2 uses simple absolute value ranges:
+V3 uses a comprehensive validation system with 11 parameters covering 7 quality criteria:
 
 ```python
 @dataclass
 class QualityThresholds:
-    # Negative peak (absolute value)
-    min_negative_peak: float = 0.1
-    max_negative_peak: float = 0.95
+    # 1. Negative Peak Range (absolute amplitude)
+    min_negative_peak: float
+    max_negative_peak: float
 
-    # Positive peak (absolute value)
-    min_positive_peak: float = 0.0
-    max_positive_peak: float = 0.6
+    # 2. Precursor (peaks before negative peak)
+    max_precursor_ratio: float  # Relative to negative peak
 
-    # Aftershock (absolute value, not ratio!)
-    min_aftershock: float = 0.0
-    max_aftershock: float = 0.3
+    # 3. Negative Peak Width
+    min_negative_peak_width_ms: float  # Width at 50% amplitude
+    max_negative_peak_width_ms: float
 
-    # Configuration
-    aftershock_window_ms: float = 10.0
-    aftershock_skip_ms: float = 2.0
+    # 4. First Positive Peak After Negative
+    max_first_positive_ratio: float  # Relative to negative peak
+
+    # 5. First Positive Peak Timing
+    min_first_positive_time_ms: float
+    max_first_positive_time_ms: float
+
+    # 6. Highest Positive Peak After Negative
+    max_highest_positive_ratio: float  # Relative to negative peak
+
+    # 7. Secondary Negative Peak (replaces aftershock)
+    max_secondary_negative_ratio: float  # Relative to main negative
+    secondary_negative_window_ms: float
 ```
+
+**7 Quality Criteria:**
+
+1. **Negative Peak Range**: Ensures impact amplitude is within acceptable bounds
+2. **Precursor**: Detects pre-impact vibrations (excludes 1ms rise time)
+3. **Negative Peak Width**: Validates impulse duration (width at 50% amplitude)
+4. **First Positive Peak Magnitude**: Checks initial rebound intensity
+5. **First Positive Peak Timing**: Validates rebound timing
+6. **Highest Positive Peak**: Monitors maximum positive excursion
+7. **Secondary Negative Peak**: Detects hammer bounces/rebounds
 
 **Validation Logic:**
 
 For each calibration cycle:
-1. Find negative peak (most negative value)
-2. Find positive peak (most positive value)
-3. Find aftershock peak (within 10ms window after initial pulse)
-4. Check if each metric falls within [min, max] range
-5. Mark cycle as valid only if ALL metrics pass
+1. Find negative peak and its properties
+2. Check for precursors (before negative peak, excluding rise time)
+3. Measure negative peak width at 50% amplitude
+4. Locate first positive peak after negative
+5. Measure timing from negative to first positive
+6. Find highest positive peak in entire response
+7. Search for secondary negative peaks (bounces)
+8. Mark cycle as valid only if ALL 7 criteria pass
 
 **Threshold Learning Workflow:**
 
 GUI allows user to:
-1. Run calibration test → Get initial cycles
-2. Visually inspect waveforms
+1. Run calibration test → Get initial cycles with full metrics
+2. Visually inspect waveforms with detailed validation results
 3. Mark 3+ "good" cycles with checkboxes
-4. Click "Calculate Thresholds" → System extracts metrics, sets ranges with 10% margin
-5. Thresholds saved to `recorderConfig.json`
-6. Future recordings validated against learned ranges
+4. Click "Calculate Thresholds" → System analyzes all 11 parameters
+5. Thresholds saved to `recorderConfig.json` (V3 format)
+6. Future recordings validated against comprehensive criteria
 
 **Key Benefits:**
-- ✅ No complex calculations during testing
-- ✅ User-driven quality definition (not algorithm-driven)
-- ✅ Predictable, debuggable behavior
-- ✅ Simple min/max comparisons only
+- ✅ Comprehensive impulse quality assessment
+- ✅ Detects subtle issues (precursors, bounces, timing problems)
+- ✅ User-driven quality definition with detailed metrics
+- ✅ Backward compatible with V1/V2 config formats
+- ✅ 5% safety margin for learned thresholds (reduced from 20%)
 
 ---
 
@@ -390,11 +420,13 @@ GUI allows user to:
 - **Series Settings:** Multi-pulse configuration (pulse duration, cycle duration, num pulses)
 
 **Multi-Channel Features:**
-- ✅ Calibration quality testing with V2 validator
-- ✅ Per-cycle validation metrics display
+- ✅ Calibration quality testing with V3 validator (7 criteria)
+- ✅ Per-cycle validation metrics display (all 11 parameters)
 - ✅ Multi-cycle waveform visualization
 - ✅ Threshold learning from user-selected cycles
-- ❌ **No multi-channel configuration UI** (cannot enable/disable, set channels)
+- ✅ **Multi-channel configuration UI** (enable/disable, channel setup)
+- ✅ Device capability detection
+- ✅ Per-channel naming and role assignment
 
 #### 2. SeriesSettingsPanel (19 KB)
 
@@ -409,7 +441,7 @@ GUI allows user to:
 **Multi-Channel Status:**
 - ✅ Works with multi-channel recorder
 - ✅ Uses `recorder.take_record()` (respects multichannel_config)
-- ❌ **No UI to configure multi-channel settings**
+- ✅ Multi-channel configuration UI in Device Selection tab
 
 #### 3. SeriesWorker (Background Recording)
 
@@ -731,29 +763,29 @@ gui_series_worker.py:302
 - Mixed datasets (legacy + multi-channel files)
 - Reference channel alignment verification
 
-### Phase 6: Pipeline Refactoring (Planned - 3-4 days)
+### Phase 6: Pipeline Refactoring ✅ **COMPLETE** (2025-11-01)
 
-**Priority 1: Code Cleanup (1 day)**
-- Remove `calibration_validator.py` (V1)
-- Update test files to use V2
-- Remove V1 migration code
-- Remove ghost `interactive` parameter from GUI calls
+**Priority 1: Code Cleanup** ✅ **DONE**
+- ✅ Removed `calibration_validator.py` (V1, deprecated)
+- ✅ Updated `test_calibration_visualizer.py` to use CalibrationValidatorV2
+- ✅ Eliminated all V1 references from codebase
+- ✅ Updated test configs to V3 format (11 parameters)
 
-**Priority 2: Unify Cycle Extraction (0.5 day)**
-- Replace inline cycle extraction in calibration mode
-- Use `_extract_cycles()` helper consistently
-- Test calibration mode unchanged
+**Priority 2: Unify Cycle Extraction** ✅ **DONE**
+- ✅ Replaced inline cycle extraction in calibration mode
+- ✅ Now uses `_extract_cycles()` helper consistently
+- ✅ Single source of truth for cycle extraction
+- ✅ Both standard and calibration modes use same logic
 
-**Priority 3: Decouple File Saving (1 day)**
-- Add `save_files: bool = True` parameter to `take_record()`
-- Make file saving conditional in standard mode
-- Add optional file saving to calibration mode
-- Update all GUI calls to explicitly pass `save_files=True`
+**Priority 3: Decouple File Saving** ⏭️ **DEFERRED**
+- Not critical for current workflow
+- Can be addressed in future optimization phase
+- Current behavior acceptable (standard saves, calibration doesn't)
 
-**Priority 4: Unify Alignment (Optional - 1.5 days)**
-- Refactor `_align_cycles_by_onset()` to accept optional `validation_results`
-- Update standard mode to use unified alignment
-- Add optional cross-correlation filtering to standard mode
+**Priority 4: Unify Alignment** ⏭️ **DEFERRED**
+- Optional improvement
+- Current alignment strategy working well
+- Can be addressed if needed in future
 
 ### Phase 6.5: Extensible Calibration Validation System (Future - 1-2 weeks) 🆕
 
@@ -1027,58 +1059,58 @@ validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerRe
 4. **Reusability:** Build library of metrics for different applications
 5. **Experimentation:** Quickly test different validation strategies
 
-### Phase 7: Multi-Channel GUI Integration (Future - 1-2 weeks)
+### Phase 7: Multi-Channel GUI Integration ✅ **COMPLETE** (2025-11-01 to 2025-11-02)
 
-**Task 1: Configuration Profile Management (3-4 hours)** 🆕
-- Add Configuration Manager to sidebar (left panel)
-- Save/load named configuration profiles
-- Features:
+**Task 1: Configuration Profile Management** ✅ **DONE** (commit 9da691f)
+- ✅ Added ConfigProfileManager to sidebar (both `piano_response.py` and `gui_launcher.py`)
+- ✅ Save/load/delete named configuration profiles
+- ✅ **NEW FILE:** `gui_config_profiles.py` (407 lines)
+- ✅ Profile storage in `configs/` directory with JSON files
+- ✅ Includes: recorder settings, multichannel config, calibration thresholds
+- ✅ In-memory recorder update on profile load (no restart required)
+- ✅ Profile metadata tracking (creation date, description)
+- ✅ Quick switch between configurations via dropdown
+- **Sidebar UI Features:**
   ```
-  ┌─────────────────────────────────────┐
-  │ Configuration Profiles              │
-  ├─────────────────────────────────────┤
-  │ Current: [8ch_piano_hammer ▼]       │
-  │                                     │
-  │ Available Profiles:                 │
-  │ • default                           │
-  │ • 2ch_stereo                        │
-  │ • 4ch_quad                          │
-  │ • 8ch_piano_hammer (active)         │
-  │                                     │
-  │ [💾 Save As...] [📂 Load] [🗑️ Delete]│
-  │                                     │
-  │ Save New Profile:                   │
-  │ Name: [_____________]               │
-  │ [Save Current Config]               │
-  └─────────────────────────────────────┘
+  📋 Active Profile Display
+  📂 Profile Selector (dropdown)
+  💾 Save Profile button
+  📂 Load Profile button
+  🗑️ Delete Profile button
+  📁 Profile count display
   ```
-- Profile storage: `configs/` directory with JSON files
-- Includes: recorder settings, multichannel config, calibration thresholds
-- Auto-save last used profile on exit
-- Quick switch between common configurations
 
-**Task 2: Configuration Interface (4-6 hours)**
-- Add Multi-Channel Configuration section to Audio Settings
-- Enable/disable toggle
-- Channel count input (1-32)
-- Per-channel naming
-- Reference/calibration channel selectors
-- Save to current profile
-- Integration with Profile Manager
+**Task 2: Multi-Channel Configuration Interface** ✅ **ALREADY EXISTED**
+- ✅ Multi-Channel Configuration section in Audio Settings → Device Selection tab
+- ✅ Enable/disable toggle
+- ✅ Channel count input (1-32)
+- ✅ Device capability detection
+- ✅ Per-channel naming with text inputs
+- ✅ Reference/calibration channel selectors
+- ✅ Save to config file button
+- ✅ Configuration validation
+- ✅ Channel role indicators with icons (🔨 🎤 🔊)
+- **Location:** `gui_audio_settings_panel.py` → `_render_multichannel_configuration()`
 
-**Task 3: Collection Panel Status (2-3 hours)**
-- Display multi-channel mode indicator
-- Show channel configuration (expandable)
-- Per-channel metrics after recording
-- Visual indicators for special channels
+**Task 3: Collection Panel Multi-Channel Status** ✅ **DONE** (commit a47ad09)
+- ✅ Added `_render_recorder_status()` to CollectionPanel
+- ✅ Expandable "📊 Recorder Configuration" section
+- ✅ Displays recording mode (single/multi-channel indicator)
+- ✅ Shows channel configuration with names and roles
+- ✅ Per-channel role indicators (🔨 Calibration, 🎤 Reference, 🔊 Response)
+- ✅ Recording parameters summary (sample rate, pulses, cycle duration)
+- ✅ Direct link to Audio Settings configuration UI
 
-**Task 4: Multi-Channel Visualization (6-8 hours)**
-- Load multi-channel files from scenarios
-- Stacked waveform plots (one per channel)
-- Channel show/hide checkboxes
-- Synchronized zoom/pan
-- Per-channel statistics table
-- Cross-correlation display
+**Task 4: Multi-Channel Visualization** ❌ **NOT IMPLEMENTED** (Future Work)
+- Planned features:
+  - Load multi-channel files from scenarios
+  - Stacked waveform plots (one per channel)
+  - Channel show/hide checkboxes
+  - Synchronized zoom/pan
+  - Per-channel statistics table
+  - Cross-correlation display
+- **Estimated effort:** 6-8 hours
+- **Priority:** Low (can record and save multi-channel, visualization optional)
 
 ---
 
@@ -1094,8 +1126,11 @@ validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerRe
 | **Buffer Management** | Per-channel with mutexes | ✅ Implemented |
 | **De-interleaving** | In SDL callback (C++) | ✅ Implemented |
 | **Alignment Strategy** | Reference channel onset | ✅ Implemented |
-| **Calibration Validation** | Min/max range checking (V2) | ✅ Implemented |
+| **Calibration Validation** | 7-criteria comprehensive (V3) | ✅ Implemented |
 | **File Format** | WAV with `_chN` suffix | ✅ Implemented |
+| **Configuration Profiles** | Save/load/delete named configs | ✅ Implemented |
+| **GUI Configuration** | Full multi-channel setup UI | ✅ Implemented |
+| **Status Display** | Collection Panel recorder info | ✅ Implemented |
 
 ### Configuration Schema
 
@@ -1126,18 +1161,36 @@ validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerRe
     "response_channels": [...]    // Channels to process (optional)
   },
 
-  // Calibration quality thresholds (V2 format)
+  // Calibration quality thresholds (V3 comprehensive format - 11 parameters)
   "calibration_quality_config": {
-    "min_negative_peak": 0.1,     // Minimum acceptable negative peak
-    "max_negative_peak": 0.95,    // Maximum acceptable negative peak
-    "min_positive_peak": 0.0,
-    "max_positive_peak": 0.6,
-    "min_aftershock": 0.0,
-    "max_aftershock": 0.3,
-    "aftershock_window_ms": 10.0,
-    "aftershock_skip_ms": 2.0,
-    "min_valid_cycles": 3
-  }
+    // 1. Negative Peak Range
+    "min_negative_peak": 0.1,
+    "max_negative_peak": 0.95,
+
+    // 2. Precursor
+    "max_precursor_ratio": 0.2,
+
+    // 3. Negative Peak Width
+    "min_negative_peak_width_ms": 0.3,
+    "max_negative_peak_width_ms": 3.0,
+
+    // 4. First Positive Peak
+    "max_first_positive_ratio": 0.3,
+
+    // 5. First Positive Peak Timing
+    "min_first_positive_time_ms": 0.1,
+    "max_first_positive_time_ms": 5.0,
+
+    // 6. Highest Positive Peak
+    "max_highest_positive_ratio": 0.5,
+
+    // 7. Secondary Negative Peak
+    "max_secondary_negative_ratio": 0.3,
+    "secondary_negative_window_ms": 10.0
+  },
+
+  // Note: V3 format is backward compatible with V1/V2 configs
+  // Legacy parameters (max_positive_peak, max_aftershock) auto-converted on load
 }
 ```
 

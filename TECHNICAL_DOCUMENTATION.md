@@ -1859,10 +1859,14 @@ audio = recorder.take_record("raw.wav", "impulse.wav")
 **Process:**
 1. Record audio (multi-channel required)
 2. Extract cycles from calibration channel
-3. Validate each cycle using CalibrationValidatorV2
-   - Negative peak amplitude check
-   - Positive peak amplitude check
-   - Aftershock detection
+3. Validate each cycle using CalibrationValidatorV2 (V3 comprehensive format)
+   - **Criterion 1:** Negative peak amplitude range
+   - **Criterion 2:** Precursor detection (peaks before negative peak)
+   - **Criterion 3:** Negative peak width (at 50% amplitude)
+   - **Criterion 4:** First positive peak magnitude
+   - **Criterion 5:** First positive peak timing
+   - **Criterion 6:** Highest positive peak magnitude
+   - **Criterion 7:** Secondary negative peak (hammer bounces)
 4. Align valid cycles by onset detection
 5. Apply same alignment to all channels
 6. Return cycle-level data (no averaging, no file saving)
@@ -2851,6 +2855,104 @@ ax.plot(time_axis, zoomed_signal, label=label)
 **Files Modified** (2025-10-30):
 - `gui_audio_visualizer.py`: Added `render_multi_waveform_with_zoom()` static method
 - `gui_audio_settings_panel.py`: Unified calibration visualization, reorganized UI, checkbox-based selection
+
+### 10.7 Configuration Profile Management (NEW - 2025-11-01)
+
+**Purpose**: Allow users to save, load, and manage named configuration profiles for quick switching between measurement setups.
+
+**Component**: `ConfigProfileManager` (`gui_config_profiles.py`, 407 lines)
+
+**Features**:
+- **Save Profiles**: Save current recorder configuration as named profile
+- **Load Profiles**: Load saved profiles with in-memory recorder update
+- **Delete Profiles**: Remove unwanted profiles
+- **Metadata Tracking**: Creation date, description for each profile
+- **Profile Storage**: JSON files in `configs/` directory
+
+**Sidebar UI**:
+```
+┌─────────────────────────────────────┐
+│ Configuration Profiles              │
+├─────────────────────────────────────┤
+│ 📋 Active: 8ch_piano_hammer         │
+│                                     │
+│ #### Load Profile                   │
+│ Available Profiles: [dropdown]      │
+│ [📂 Load]  [🗑️ Delete]              │
+│                                     │
+│ #### Save Current Config            │
+│ Profile Name: [_____________]       │
+│ [💾 Save Profile]                   │
+│                                     │
+│ 📁 N profile(s) saved               │
+└─────────────────────────────────────┘
+```
+
+**Profile Content**:
+- Recorder settings (sample_rate, pulse_duration, etc.)
+- Multi-channel configuration (channels, names, roles)
+- Calibration quality thresholds (V3 format, 11 parameters)
+- Device selections (input/output device IDs)
+
+**In-Memory Update**:
+When loading a profile, the system:
+1. Saves profile to `recorderConfig.json` (file)
+2. Updates `RoomResponseRecorder` instance in memory (no restart required)
+3. Recalculates derived values
+4. Shows success confirmation
+
+**Integration**:
+- Integrated into `piano_response.py` and `gui_launcher.py`
+- Rendered in sidebar after dataset selector
+- Used by AudioSettingsPanel for saving configurations
+
+### 10.8 Collection Panel Multi-Channel Status (NEW - 2025-11-02)
+
+**Purpose**: Provide visibility into active recorder configuration directly in the Collection Panel.
+
+**Component**: `CollectionPanel._render_recorder_status()` (`gui_collect_panel.py`)
+
+**Expandable Status Display**:
+```
+┌─────────────────────────────────────────────────┐
+│ 📊 Recorder Configuration (click to expand)     │
+├─────────────────────────────────────────────────┤
+│ Recording Mode         Recording Parameters     │
+│ ✓ Multi-Channel        Sample Rate: 48000 Hz   │
+│   (8 channels)         Pulses: 4                │
+│                        Cycle Duration: 0.5 s    │
+│ 🔨 Calibration: Ch 2                           │
+│ 🎤 Reference: Ch 5                             │
+│                                                 │
+│ ─────────────────────────────────────────────  │
+│ Channel Configuration                           │
+│ 🔨 Ch 2: Hammer Sensor (Calibration)          │
+│ 🎤 Ch 5: Reference Mic (Reference, Response)   │
+│ 🔊 Ch 0: String 1 (Response)                  │
+│ 🔊 Ch 1: String 2 (Response)                  │
+│ ...                                            │
+│                                                 │
+│ 💡 Configure in Audio Settings → Multi-Channel │
+└─────────────────────────────────────────────────┘
+```
+
+**Information Displayed**:
+- Recording mode indicator (single/multi-channel)
+- Channel count
+- Calibration channel assignment (if any)
+- Reference channel assignment
+- Per-channel names and roles with icons:
+  - 🔨 Calibration channels
+  - 🎤 Reference channels
+  - 🔊 Response channels
+- Recording parameters summary
+- Direct link to configuration UI
+
+**Benefits**:
+- No need to navigate to Audio Settings to verify configuration
+- Prevents configuration errors during data collection
+- Clear indication of which channels serve which purposes
+- Immediate visibility of active recording mode
 
 ---
 
