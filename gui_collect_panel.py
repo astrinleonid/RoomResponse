@@ -53,8 +53,90 @@ class CollectionPanel:
         else:
             print("Warning: CollectionPanel initialized without recorder")
 
+    def _render_recorder_status(self) -> None:
+        """Display recorder configuration status, including multi-channel setup."""
+        if self.recorder is None:
+            return
+
+        mc_config = getattr(self.recorder, 'multichannel_config', {})
+        mc_enabled = mc_config.get('enabled', False)
+
+        # Create expandable status section
+        with st.expander("📊 Recorder Configuration", expanded=False):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Recording Mode**")
+                if mc_enabled:
+                    num_channels = mc_config.get('num_channels', 1)
+                    st.success(f"✓ Multi-Channel ({num_channels} channels)")
+
+                    # Show channel configuration
+                    cal_ch = mc_config.get('calibration_channel')
+                    ref_ch = mc_config.get('reference_channel', 0)
+
+                    if cal_ch is not None:
+                        st.write(f"🔨 Calibration: Ch {cal_ch}")
+                    else:
+                        st.write("🔨 Calibration: None")
+
+                    st.write(f"🎤 Reference: Ch {ref_ch}")
+
+                else:
+                    st.info("Single-Channel Mode")
+
+            with col2:
+                st.markdown("**Recording Parameters**")
+                st.write(f"Sample Rate: {getattr(self.recorder, 'sample_rate', 'N/A')} Hz")
+                st.write(f"Pulses: {getattr(self.recorder, 'num_pulses', 'N/A')}")
+                st.write(f"Cycle Duration: {getattr(self.recorder, 'cycle_duration', 'N/A')} s")
+
+            # Show detailed channel info if multi-channel enabled
+            if mc_enabled:
+                st.markdown("---")
+                st.markdown("**Channel Configuration**")
+
+                channel_names = mc_config.get('channel_names', [])
+                response_channels = mc_config.get('response_channels', [])
+
+                # Create a table of channels
+                channel_info = []
+                for ch in range(num_channels):
+                    name = channel_names[ch] if ch < len(channel_names) else f"Channel {ch}"
+
+                    # Determine role
+                    roles = []
+                    if ch == cal_ch:
+                        roles.append("Calibration")
+                    if ch == ref_ch:
+                        roles.append("Reference")
+                    if ch in response_channels:
+                        roles.append("Response")
+
+                    role_str = ", ".join(roles) if roles else "—"
+
+                    # Icon based on primary role
+                    if ch == cal_ch:
+                        icon = "🔨"
+                    elif ch == ref_ch:
+                        icon = "🎤"
+                    else:
+                        icon = "🔊"
+
+                    channel_info.append(f"{icon} Ch {ch}: **{name}** ({role_str})")
+
+                for info in channel_info:
+                    st.write(info)
+
+                # Link to configuration
+                st.caption("💡 Configure channels in Audio Settings → Device Selection & Testing → Multi-Channel Configuration")
+
     def render(self) -> None:
         st.header("Collect - Data Collection")
+
+        # Display recorder status including multi-channel configuration
+        self._render_recorder_status()
+
         if not self._check_dependencies():
             return
 
