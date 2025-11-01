@@ -1383,12 +1383,9 @@ class CalibrationImpulsePanel:
             st.warning("No valid cycle data to plot")
             return
 
-        # Create visualizer instance
-        visualizer = AudioVisualizer()
-
-        # Generate overlay plot
-        fig = visualizer.plot_multi_waveform_overlay(
-            waveforms=waveforms,
+        # Generate overlay plot using static method
+        fig = AudioVisualizer.render_overlay_plot(
+            audio_signals=waveforms,
             labels=labels,
             sample_rate=sample_rate,
             title=f"{label_prefix} Cycles Overlay",
