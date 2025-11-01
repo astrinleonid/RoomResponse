@@ -1816,6 +1816,132 @@ coefficients, metadata = load_fir_filter("room_correction.fir")
 
 ---
 
+## 8.7 Recording Modes
+
+RoomResponseRecorder supports two distinct recording modes accessed through a unified API.
+
+### 8.7.1 Standard Mode (Default)
+
+**Purpose:** Piano response measurements and general room response recording
+
+**Process:**
+1. Record audio (single or multi-channel)
+2. Extract cycles using simple reshape
+3. Average cycles (skip first few for system stabilization)
+4. Find onset in averaged signal
+5. Rotate signal to align onset to beginning
+6. Save raw recording and impulse response files
+
+**Usage:**
+```python
+recorder = RoomResponseRecorder("config.json")
+
+# Basic recording
+audio = recorder.take_record("raw.wav", "impulse.wav")
+# Returns: np.ndarray (single) or Dict[int, np.ndarray] (multi-channel)
+# Files saved: raw.wav, impulse.wav (or per-channel files)
+
+# Multi-channel recording
+audio = recorder.take_record("raw.wav", "impulse.wav")
+# Files saved: raw_ch0.wav, raw_ch1.wav, impulse_ch0.wav, impulse_ch1.wav, etc.
+```
+
+**Output:**
+- Raw audio file(s)
+- Impulse response file(s)
+- Room response file(s)
+- Returns raw audio array(s)
+
+### 8.7.2 Calibration Mode
+
+**Purpose:** System calibration, quality assurance, and cycle-level validation
+
+**Process:**
+1. Record audio (multi-channel required)
+2. Extract cycles from calibration channel
+3. Validate each cycle using CalibrationValidatorV2
+   - Negative peak amplitude check
+   - Positive peak amplitude check
+   - Aftershock detection
+4. Align valid cycles by onset detection
+5. Apply same alignment to all channels
+6. Return cycle-level data (no averaging, no file saving)
+
+**Usage:**
+```python
+recorder = RoomResponseRecorder("config.json")
+
+# Calibration recording (convenience method)
+result = recorder.take_record_calibration()
+
+# Or using mode parameter
+result = recorder.take_record("", "", mode='calibration')
+
+# Result structure:
+{
+    'calibration_cycles': np.ndarray,           # All cycles [N, samples]
+    'validation_results': List[Dict],           # Per-cycle validation data
+    'aligned_multichannel_cycles': Dict[int, np.ndarray],  # Aligned cycles per channel
+    'alignment_metadata': Dict,                 # Alignment info (shifts, correlations)
+    'num_valid_cycles': int,                    # Count of valid cycles
+    'num_aligned_cycles': int,                  # Count of aligned cycles
+    'metadata': {
+        'mode': 'calibration',
+        'calibration_channel': int,
+        'num_channels': int,
+        'num_cycles': int,
+        'cycle_samples': int,
+        'correlation_threshold': float
+    }
+}
+```
+
+**Requirements:**
+- Multi-channel configuration enabled
+- `calibration_channel` configured in multichannel_config
+- Raises `ValueError` if requirements not met
+
+**Output:**
+- NO files saved
+- Returns dict with cycle-level validation and alignment data
+- Useful for quality control and system diagnostics
+
+### 8.7.3 Mode Comparison
+
+| Aspect | Standard Mode | Calibration Mode |
+|--------|--------------|------------------|
+| **Purpose** | Measurement recording | Quality assurance |
+| **Channels** | Single or multi | Multi-channel required |
+| **Processing** | Cycle averaging | Per-cycle validation |
+| **Alignment** | Onset-based | Onset + cross-correlation |
+| **File Saving** | Yes (WAV files) | No |
+| **Return Type** | Raw audio array | Validation data dict |
+| **Use Case** | Production recordings | System calibration |
+
+### 8.7.4 Implementation Details
+
+**Unified API:**
+```python
+def take_record(self,
+                output_file: str,
+                impulse_file: str,
+                method: int = 2,
+                mode: str = 'standard',
+                return_processed: bool = False)
+```
+
+**Code Path Separation:**
+- Standard mode: Uses `_process_single_channel_signal()` or `_process_multichannel_signal()`
+- Calibration mode: Uses `_take_record_calibration_mode()`
+- No code overlap between modes (zero duplication)
+
+**Backward Compatibility:**
+- Default parameters trigger standard mode
+- All existing code works unchanged
+- 100% compatible with legacy usage
+
+---
+
 ## 9. Machine Learning Framework
 
 ### 9.1 Model Selection Criteria
