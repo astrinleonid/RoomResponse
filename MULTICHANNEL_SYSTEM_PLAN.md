@@ -397,6 +397,88 @@ GUI allows user to:
 - ✅ Backward compatible with V1/V2 config formats
 - ✅ 5% safety margin for learned thresholds (reduced from 20%)
 
+### Calibration-Based Normalization (NEW - 2025-11-02)
+
+**Purpose:** Normalize response channel amplitudes by calibration signal magnitude for quantitative, reproducible measurements.
+
+**File:** `RoomResponseRecorder.py` → `_normalize_by_calibration()`
+**Status:** ✅ Implemented
+**Configuration:** `multichannel_config.normalize_by_calibration` (default: False)
+
+**Problem Solved:**
+- Variations in calibration impulse magnitude across recording takes
+- Differences in sensor sensitivity between channels
+- Need for quantitative comparison between measurements
+
+**Normalization Strategy:**
+
+For each recording cycle `i`:
+```
+normalized_response[channel][cycle_i] = raw_response[channel][cycle_i] / |negative_peak[cycle_i]|
+```
+
+Where:
+- `negative_peak[cycle_i]`: Calibration impulse magnitude (from validation results)
+- Result: Response amplitude per unit impact strength
+
+**Processing Pipeline:**
+
+1. Record multi-channel audio
+2. Extract cycles from calibration channel
+3. Validate each cycle → Get `negative_peak` for each cycle
+4. Align all cycles by onset
+5. Apply alignment to all channels → `aligned_multichannel_cycles`
+6. **Normalize response channels** (if enabled) → `normalized_multichannel_cycles`
+7. Return both aligned (raw) and normalized cycles
+
+**Output Structure:**
+
+```python
+{
+    'calibration_cycles': np.ndarray,
+    'validation_results': List[Dict],
+    'aligned_multichannel_cycles': Dict[int, np.ndarray],      # Raw aligned
+    'normalized_multichannel_cycles': Dict[int, np.ndarray],   # NEW: Calibrated
+    'normalization_factors': List[float],                      # NEW: Negative peaks
+    'alignment_metadata': Dict,
+    'metadata': {
+        'normalize_by_calibration': bool  # NEW: Flag indicating if normalization applied
+    }
+}
+```
+
+**Key Features:**
+- ✅ **Optional:** Disabled by default, enabled via config
+- ✅ **Per-cycle normalization:** Each cycle normalized by its own calibration magnitude
+- ✅ **Calibration channel preserved:** Kept unnormalized (or normalized to 1.0)
+- ✅ **Division-by-zero protection:** Skips cycles with peak < 1e-6
+- ✅ **Dual output:** Returns both raw aligned and normalized cycles
+- ✅ **Normalization factors logged:** Min/max/mean negative peaks printed
+
+**Use Cases:**
+
+1. **Piano Hammer Impact Studies:**
+   - Measure string response per unit force
+   - Compare different striking techniques
+   - Normalize for varying impact strengths
+
+2. **Room Acoustic Measurements:**
+   - Normalize by source impulse magnitude
+   - Compare responses across different sessions
+   - Remove source strength variability
+
+3. **Sensor Calibration:**
+   - Account for sensor gain differences
+   - Produce sensor-independent measurements
+   - Enable cross-system comparisons
+
+**Benefits:**
+- ✅ **Quantitative Analysis:** Results in units of "response per unit impact"
+- ✅ **Reproducibility:** Removes impact strength variability
+- ✅ **Comparability:** Different measurements directly comparable
+- ✅ **Physical Meaning:** Clear physical interpretation of results
+- ✅ **Backward Compatible:** Optional feature, doesn't affect existing workflows
+
 ---
 
 ## GUI Implementation Status
@@ -1153,12 +1235,13 @@ validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerRe
 
   // Multi-channel configuration
   "multichannel_config": {
-    "enabled": true,              // Toggle multi-channel mode
-    "num_channels": 8,            // Total input channels
-    "channel_names": [...],       // Human-readable names
-    "calibration_channel": 2,     // Calibration sensor channel (optional)
-    "reference_channel": 5,       // Alignment reference channel
-    "response_channels": [...]    // Channels to process (optional)
+    "enabled": true,                      // Toggle multi-channel mode
+    "num_channels": 8,                    // Total input channels
+    "channel_names": [...],               // Human-readable names
+    "calibration_channel": 2,             // Calibration sensor channel (optional)
+    "reference_channel": 5,               // Alignment reference channel
+    "response_channels": [...],           // Channels to process (optional)
+    "normalize_by_calibration": true      // Enable calibration-based normalization
   },
 
   // Calibration quality thresholds (V3 comprehensive format - 11 parameters)

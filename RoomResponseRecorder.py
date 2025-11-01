@@ -4,7 +4,7 @@ import json
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from MicTesting import _SDL_AVAILABLE, sdl_audio_core
 
 # try:
@@ -58,7 +58,8 @@ class RoomResponseRecorder:
             'calibration_channel': None,
             'reference_channel': 0,
             'response_channels': [0],
-            'channel_calibration': {}
+            'channel_calibration': {},
+            'normalize_by_calibration': False  # Enable calibration-based normalization
         }
 
         # Calibration quality configuration defaults (V2 Refactored - min/max ranges)
@@ -1054,6 +1055,91 @@ class RoomResponseRecorder:
 
         return np.array(aligned_cycles_list)
 
+    def _normalize_by_calibration(self,
+                                   aligned_multichannel_cycles: Dict[int, np.ndarray],
+                                   validation_results: List[Dict],
+                                   calibration_channel: int) -> Tuple[Dict[int, np.ndarray], List[float]]:
+        """
+        Normalize response channels by calibration signal magnitude.
+
+        Each response channel's amplitude is divided by the corresponding calibration
+        impulse magnitude (negative peak) to produce calibration-normalized responses.
+        This enables quantitative comparison across measurements and removes impact
+        strength variability.
+
+        Args:
+            aligned_multichannel_cycles: Dict[channel_idx -> array[n_cycles, samples]]
+                                         Aligned cycles from all channels
+            validation_results: List of validation dicts with calibration_metrics
+                               containing 'negative_peak' values
+            calibration_channel: Channel index of calibration sensor
+
+        Returns:
+            Tuple of:
+            - Dict[channel_idx -> normalized array[n_cycles, samples]]: Normalized cycles
+            - List[float]: Normalization factors (negative peak magnitudes) for each cycle
+
+        Notes:
+            - Calibration channel is excluded from normalization (kept as raw aligned)
+            - Response channels are divided by |negative_peak| for each cycle
+            - Returns empty dict if no valid cycles or missing negative peaks
+            - Protects against division by zero (skips cycles with peak < 1e-6)
+        """
+        # Extract negative peak values for each cycle
+        normalization_factors = []
+        for v_result in validation_results:
+            metrics = v_result.get('calibration_metrics', {})
+            neg_peak = abs(metrics.get('negative_peak', 0.0))
+            normalization_factors.append(neg_peak)
+
+        # Validate we have normalization factors
+        if not normalization_factors:
+            print("Warning: No normalization factors available")
+            return {}, []
+
+        # Get valid cycle indices from first channel's aligned data
+        if not aligned_multichannel_cycles:
+            return {}, normalization_factors
+
+        first_channel_data = next(iter(aligned_multichannel_cycles.values()))
+        num_aligned_cycles = len(first_channel_data)
+
+        # Ensure we have enough normalization factors
+        if len(normalization_factors) < num_aligned_cycles:
+            print(f"Warning: Mismatch between aligned cycles ({num_aligned_cycles}) "
+                  f"and normalization factors ({len(normalization_factors)})")
+            # Use only available factors
+            normalization_factors = normalization_factors[:num_aligned_cycles]
+
+        # Normalize each response channel
+        normalized_multichannel_cycles = {}
+
+        for ch_idx, channel_cycles in aligned_multichannel_cycles.items():
+            if ch_idx == calibration_channel:
+                # Keep calibration channel unnormalized
+                normalized_multichannel_cycles[ch_idx] = channel_cycles.copy()
+                continue
+
+            # Normalize response channel
+            normalized_cycles = []
+            for cycle_idx, cycle_data in enumerate(channel_cycles):
+                if cycle_idx < len(normalization_factors):
+                    norm_factor = normalization_factors[cycle_idx]
+
+                    # Protect against division by zero
+                    if norm_factor > 1e-6:
+                        normalized_cycle = cycle_data / norm_factor
+                        normalized_cycles.append(normalized_cycle)
+                    else:
+                        print(f"Warning: Skipping cycle {cycle_idx} in channel {ch_idx} "
+                              f"(normalization factor too small: {norm_factor})")
+                        # Keep unnormalized if factor is too small
+                        normalized_cycles.append(cycle_data)
+
+            normalized_multichannel_cycles[ch_idx] = np.array(normalized_cycles)
+
+        return normalized_multichannel_cycles, normalization_factors
+
     def _save_wav(self, audio_data: np.ndarray, filename: str):
         """Save audio data to WAV file"""
         wav_file = None
@@ -1249,11 +1335,30 @@ class RoomResponseRecorder:
             # Calculate number of aligned cycles
             num_aligned = len(alignment_result['valid_cycle_indices'])
 
+            # Normalize by calibration magnitude (if enabled)
+            normalize_enabled = self.multichannel_config.get('normalize_by_calibration', False)
+            normalized_multichannel_cycles = {}
+            normalization_factors = []
+
+            if normalize_enabled:
+                print("Normalizing response channels by calibration magnitude...")
+                normalized_multichannel_cycles, normalization_factors = self._normalize_by_calibration(
+                    aligned_multichannel_cycles,
+                    validation_results,
+                    cal_ch
+                )
+                print(f"   Normalization factors (negative peaks): "
+                      f"min={min(normalization_factors):.4f}, "
+                      f"max={max(normalization_factors):.4f}, "
+                      f"mean={np.mean(normalization_factors):.4f}")
+            else:
+                print("Calibration normalization disabled (normalize_by_calibration=False)")
+
             print(f"🎉 Calibration recording completed!")
             print(f"   Valid cycles: {num_valid}/{self.num_pulses}")
             print(f"   Aligned cycles: {num_aligned}")
 
-            return {
+            result = {
                 'calibration_cycles': initial_cycles,
                 'validation_results': validation_results,
                 'aligned_multichannel_cycles': aligned_multichannel_cycles,
@@ -1266,9 +1371,17 @@ class RoomResponseRecorder:
                     'num_channels': len(recorded_audio),
                     'num_cycles': self.num_pulses,
                     'cycle_samples': self.cycle_samples,
-                    'correlation_threshold': correlation_threshold
+                    'correlation_threshold': correlation_threshold,
+                    'normalize_by_calibration': normalize_enabled
                 }
             }
+
+            # Add normalized data if enabled
+            if normalize_enabled and normalized_multichannel_cycles:
+                result['normalized_multichannel_cycles'] = normalized_multichannel_cycles
+                result['normalization_factors'] = normalization_factors
+
+            return result
 
         except Exception as e:
             print(f"Error during calibration recording: {e}")
