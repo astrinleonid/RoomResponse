@@ -761,7 +761,7 @@ class CalibrationImpulsePanel:
         selected_cycles = []
 
         # Create column headers
-        cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
+        cols = st.columns([0.4, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 2.0])
         with cols[0]:
             st.markdown("**Select**")
         with cols[1]:
@@ -771,10 +771,18 @@ class CalibrationImpulsePanel:
         with cols[3]:
             st.markdown("**Neg Peak**")
         with cols[4]:
-            st.markdown("**Pos Peak**")
+            st.markdown("**Precursor**")
         with cols[5]:
-            st.markdown("**Aftershock**")
+            st.markdown("**Width ms**")
         with cols[6]:
+            st.markdown("**1st Pos**")
+        with cols[7]:
+            st.markdown("**1st Time**")
+        with cols[8]:
+            st.markdown("**Max Pos**")
+        with cols[9]:
+            st.markdown("**2nd Neg**")
+        with cols[10]:
             st.markdown("**Issues**")
 
         st.markdown("---")
@@ -786,7 +794,7 @@ class CalibrationImpulsePanel:
             metrics = v_result.get('calibration_metrics', {})
             failures = v_result.get('calibration_failures', [])
 
-            cols = st.columns([0.5, 0.8, 0.8, 1.2, 1.2, 1.2, 2.5])
+            cols = st.columns([0.4, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 2.0])
 
             with cols[0]:
                 # Checkbox for this cycle
@@ -807,10 +815,18 @@ class CalibrationImpulsePanel:
             with cols[3]:
                 st.markdown(f"{metrics.get('negative_peak', 0):.3f}")
             with cols[4]:
-                st.markdown(f"{metrics.get('positive_peak', 0):.3f}")
+                st.markdown(f"{metrics.get('precursor_ratio', 0):.3f}")
             with cols[5]:
-                st.markdown(f"{metrics.get('aftershock', 0):.3f}")
+                st.markdown(f"{metrics.get('negative_peak_width_ms', 0):.2f}")
             with cols[6]:
+                st.markdown(f"{metrics.get('first_positive_ratio', 0):.3f}")
+            with cols[7]:
+                st.markdown(f"{metrics.get('first_positive_time_ms', 0):.2f}")
+            with cols[8]:
+                st.markdown(f"{metrics.get('highest_positive_ratio', 0):.3f}")
+            with cols[9]:
+                st.markdown(f"{metrics.get('secondary_negative_ratio', 0):.3f}")
+            with cols[10]:
                 st.markdown(', '.join(failures) if failures else 'None')
 
         # Update session state with current selections
