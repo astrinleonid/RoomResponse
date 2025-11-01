@@ -1205,20 +1205,9 @@ class RoomResponseRecorder:
 
             print(f"Processing calibration data (channel {cal_ch})...")
 
-            # Extract cycles from calibration channel
+            # Extract cycles from calibration channel using helper method
             cal_raw = recorded_audio[cal_ch]
-            expected_samples = self.cycle_samples * self.num_pulses
-
-            # Pad or trim
-            if len(cal_raw) < expected_samples:
-                padded = np.zeros(expected_samples, dtype=cal_raw.dtype)
-                padded[:len(cal_raw)] = cal_raw
-                cal_raw = padded
-            else:
-                cal_raw = cal_raw[:expected_samples]
-
-            # Simple reshape extraction
-            initial_cycles = cal_raw.reshape(self.num_pulses, self.cycle_samples)
+            initial_cycles = self._extract_cycles(cal_raw)
 
             # Validate each cycle
             thresholds = QualityThresholds.from_config(self.calibration_quality_config)
