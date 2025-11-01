@@ -10,7 +10,7 @@ Calibration Impulse Panel - Multi-Channel Calibration Configuration and Testing
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import numpy as np
 import streamlit as st
@@ -1147,3 +1147,392 @@ class CalibrationImpulsePanel:
                     st.info("Install gui_audio_visualizer.py to enable waveform visualization")
             else:
                 st.info("👆 Select one or more cycles in the Aligned Cycles Table above to view overlay")
+
+        # ====================================================================
+        # Multi-Channel Response Review Section
+        # ====================================================================
+        # Only show if multi-channel mode is enabled and we have response channels
+        mc_config = self.recorder.multichannel_config
+        if mc_config.get('enabled', False):
+            aligned_multichannel = results.get('aligned_multichannel_cycles')
+            if aligned_multichannel and len(aligned_multichannel) > 0:
+                self._render_multichannel_response_review(results)
+
+    def _compute_channel_cycle_metrics(self, cycle_data: np.ndarray) -> dict:
+        """
+        Compute metrics for a single cycle from any channel.
+
+        Args:
+            cycle_data: Single cycle waveform (1D array)
+
+        Returns:
+            Dict with:
+                - negative_peak: Max absolute negative value
+                - positive_peak: Max positive value
+                - rms: Root mean square amplitude
+                - max_abs: Maximum absolute value
+                - energy: Sum of squared samples
+        """
+        if len(cycle_data) == 0:
+            return {
+                'negative_peak': 0.0,
+                'positive_peak': 0.0,
+                'rms': 0.0,
+                'max_abs': 0.0,
+                'energy': 0.0
+            }
+
+        # Find peaks
+        negative_peak = abs(np.min(cycle_data))  # Most negative value (as positive)
+        positive_peak = np.max(cycle_data)
+
+        # Compute RMS
+        rms = np.sqrt(np.mean(cycle_data ** 2))
+
+        # Max absolute
+        max_abs = np.max(np.abs(cycle_data))
+
+        # Energy
+        energy = np.sum(cycle_data ** 2)
+
+        return {
+            'negative_peak': negative_peak,
+            'positive_peak': positive_peak,
+            'rms': rms,
+            'max_abs': max_abs,
+            'energy': energy
+        }
+
+    def _render_channel_cycles_table(self, channel_idx: int, channel_name: str,
+                                      aligned_cycles: np.ndarray,
+                                      normalized_cycles: Optional[np.ndarray],
+                                      normalization_factors: list) -> list:
+        """
+        Render checkbox table for cycle selection with metrics.
+
+        Args:
+            channel_idx: Channel index
+            channel_name: Human-readable channel name
+            aligned_cycles: Aligned cycle data [n_cycles, samples]
+            normalized_cycles: Normalized cycle data [n_cycles, samples] or None
+            normalization_factors: Normalization factors per cycle
+
+        Returns:
+            List of selected cycle indices
+        """
+        st.markdown(f"#### Response Cycles Table for {channel_name}")
+
+        # Initialize session state for selection
+        session_key = f'multichannel_review_selected_cycles_ch{channel_idx}'
+        if session_key not in st.session_state:
+            st.session_state[session_key] = []
+
+        selected_cycles = []
+
+        # Determine columns based on whether normalization is available
+        has_normalized = normalized_cycles is not None and len(normalization_factors) > 0
+
+        if has_normalized:
+            # With normalization
+            cols = st.columns([0.4, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8])
+            headers = ["Select", "Cycle #", "Neg Peak", "Pos Peak", "RMS (Raw)", "RMS (Norm)", "Norm Factor"]
+        else:
+            # Without normalization
+            cols = st.columns([0.4, 0.6, 0.8, 0.8, 0.8, 0.8])
+            headers = ["Select", "Cycle #", "Neg Peak", "Pos Peak", "RMS", "Max Abs"]
+
+        # Render headers
+        for col, header in zip(cols, headers):
+            col.markdown(f"**{header}**")
+
+        st.markdown("---")
+
+        # Render rows
+        for cycle_idx in range(len(aligned_cycles)):
+            # Compute metrics for aligned (raw) cycle
+            raw_metrics = self._compute_channel_cycle_metrics(aligned_cycles[cycle_idx])
+
+            # Compute metrics for normalized cycle if available
+            norm_metrics = None
+            if has_normalized and cycle_idx < len(normalized_cycles):
+                norm_metrics = self._compute_channel_cycle_metrics(normalized_cycles[cycle_idx])
+
+            # Get normalization factor
+            norm_factor = normalization_factors[cycle_idx] if cycle_idx < len(normalization_factors) else 0.0
+
+            if has_normalized:
+                cols = st.columns([0.4, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8])
+            else:
+                cols = st.columns([0.4, 0.6, 0.8, 0.8, 0.8, 0.8])
+
+            with cols[0]:
+                is_checked = st.checkbox(
+                    "",
+                    value=cycle_idx in st.session_state[session_key],
+                    key=f"multichannel_ch{channel_idx}_cycle_{cycle_idx}",
+                    label_visibility="collapsed"
+                )
+                if is_checked:
+                    selected_cycles.append(cycle_idx)
+
+            with cols[1]:
+                st.markdown(f"{cycle_idx}")
+
+            with cols[2]:
+                st.markdown(f"{raw_metrics['negative_peak']:.3f}")
+
+            with cols[3]:
+                st.markdown(f"{raw_metrics['positive_peak']:.3f}")
+
+            with cols[4]:
+                st.markdown(f"{raw_metrics['rms']:.3f}")
+
+            if has_normalized:
+                with cols[5]:
+                    if norm_metrics:
+                        st.markdown(f"{norm_metrics['rms']:.3f}")
+                    else:
+                        st.markdown("—")
+
+                with cols[6]:
+                    st.markdown(f"{norm_factor:.3f}")
+            else:
+                with cols[5]:
+                    st.markdown(f"{raw_metrics['max_abs']:.3f}")
+
+        # Update session state
+        st.session_state[session_key] = selected_cycles
+
+        # Display selection info
+        if selected_cycles:
+            st.success(f"✓ Selected {len(selected_cycles)} cycle(s): {', '.join(map(str, selected_cycles))}")
+        else:
+            st.info("👆 Check the boxes above to select cycles for visualization")
+
+        return selected_cycles
+
+    def _render_channel_cycles_overlay(self,
+                                        selected_cycles: List[int],
+                                        aligned_cycles: np.ndarray,
+                                        normalized_cycles: Optional[np.ndarray],
+                                        channel_name: str,
+                                        sample_rate: int,
+                                        display_mode: str):
+        """
+        Render waveform overlay for selected cycles.
+
+        Args:
+            selected_cycles: List of cycle indices to plot
+            aligned_cycles: Raw aligned cycle data (num_cycles, samples_per_cycle)
+            normalized_cycles: Normalized cycle data (optional)
+            channel_name: Name of the channel for display
+            sample_rate: Sample rate in Hz
+            display_mode: 'aligned', 'normalized', or 'both'
+        """
+        if not selected_cycles:
+            st.info("Select cycles from the table above to visualize")
+            return
+
+        st.markdown(f"#### Waveform Overlay for {channel_name}")
+
+        # Prepare visualization based on display mode
+        if display_mode == "Both (Side-by-Side)" and normalized_cycles is not None:
+            # Two-column layout for side-by-side comparison
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Aligned (Raw)**")
+                self._plot_cycle_overlay(selected_cycles, aligned_cycles, sample_rate, "Aligned")
+
+            with col2:
+                st.markdown("**Normalized**")
+                self._plot_cycle_overlay(selected_cycles, normalized_cycles, sample_rate, "Normalized")
+
+        elif display_mode == "Normalized Only" and normalized_cycles is not None:
+            self._plot_cycle_overlay(selected_cycles, normalized_cycles, sample_rate, "Normalized")
+
+        else:  # "Aligned Only" or fallback
+            self._plot_cycle_overlay(selected_cycles, aligned_cycles, sample_rate, "Aligned")
+
+    def _plot_cycle_overlay(self,
+                            selected_cycles: List[int],
+                            cycle_data: np.ndarray,
+                            sample_rate: int,
+                            label_prefix: str):
+        """
+        Plot overlay of selected cycles using AudioVisualizer.
+
+        Args:
+            selected_cycles: List of cycle indices to plot
+            cycle_data: Cycle data array (num_cycles, samples_per_cycle)
+            sample_rate: Sample rate in Hz
+            label_prefix: Prefix for waveform labels (e.g., "Aligned", "Normalized")
+        """
+        from gui_audio_visualizer import AudioVisualizer
+
+        # Prepare waveforms for overlay
+        waveforms = []
+        labels = []
+
+        for cycle_idx in selected_cycles:
+            if cycle_idx < len(cycle_data):
+                waveforms.append(cycle_data[cycle_idx])
+                labels.append(f"{label_prefix} Cycle {cycle_idx}")
+
+        if not waveforms:
+            st.warning("No valid cycle data to plot")
+            return
+
+        # Create visualizer instance
+        visualizer = AudioVisualizer()
+
+        # Generate overlay plot
+        fig = visualizer.plot_multi_waveform_overlay(
+            waveforms=waveforms,
+            labels=labels,
+            sample_rate=sample_rate,
+            title=f"{label_prefix} Cycles Overlay",
+            show_legend=True
+        )
+
+        st.pyplot(fig)
+
+    def _render_multichannel_response_review(self, test_results: Dict[str, Any]):
+        """
+        Render multi-channel response review section.
+
+        Allows users to review aligned and normalized response cycles for each channel.
+
+        Args:
+            test_results: Dictionary containing:
+                - aligned_multichannel_cycles: Dict[int, np.ndarray]
+                - normalized_multichannel_cycles: Optional[Dict[int, np.ndarray]]
+                - normalization_factors: Optional[List[float]]
+                - alignment_metadata: Dict with sample_rate, etc.
+        """
+        st.markdown("---")
+        st.markdown("### Multi-Channel Response Review")
+        st.markdown("Review aligned and normalized response cycles for each channel")
+
+        # Extract data from test results
+        aligned_cycles_dict = test_results.get('aligned_multichannel_cycles', {})
+        normalized_cycles_dict = test_results.get('normalized_multichannel_cycles', {})
+        normalization_factors = test_results.get('normalization_factors', [])
+        alignment_metadata = test_results.get('alignment_metadata', {})
+        sample_rate = alignment_metadata.get('sample_rate', 44100)
+
+        # Get multichannel configuration
+        mc_config = self.recorder.multichannel_config
+        channel_names = mc_config.get('channel_names', [])
+        calibration_channel = mc_config.get('calibration_channel')
+
+        if not aligned_cycles_dict:
+            st.warning("No multi-channel response data available. Run a calibration test first.")
+            return
+
+        # Filter out calibration channel from response channels
+        response_channels = [ch for ch in aligned_cycles_dict.keys() if ch != calibration_channel]
+
+        if not response_channels:
+            st.info("No response channels available (only calibration channel detected)")
+            return
+
+        # --- UI Controls ---
+        st.markdown("#### Display Controls")
+
+        col1, col2 = st.columns([2, 3])
+
+        with col1:
+            # Channel selector
+            channel_options = []
+            for ch_idx in response_channels:
+                ch_name = channel_names[ch_idx] if ch_idx < len(channel_names) else f"Channel {ch_idx}"
+                channel_options.append((ch_idx, ch_name))
+
+            selected_channel_idx = st.selectbox(
+                "Select Response Channel",
+                options=[ch[0] for ch in channel_options],
+                format_func=lambda ch: next(name for idx, name in channel_options if idx == ch),
+                key="multichannel_review_channel_selector"
+            )
+
+        with col2:
+            # Display mode selector
+            has_normalized = (normalized_cycles_dict and
+                            selected_channel_idx in normalized_cycles_dict and
+                            len(normalization_factors) > 0)
+
+            if has_normalized:
+                display_options = ["Aligned Only", "Normalized Only", "Both (Side-by-Side)"]
+            else:
+                display_options = ["Aligned Only"]
+
+            display_mode = st.radio(
+                "Display Mode",
+                options=display_options,
+                horizontal=True,
+                key="multichannel_review_display_mode"
+            )
+
+        # Get selected channel data
+        selected_channel_name = next(name for idx, name in channel_options if idx == selected_channel_idx)
+        aligned_cycles = aligned_cycles_dict.get(selected_channel_idx)
+        normalized_cycles = normalized_cycles_dict.get(selected_channel_idx) if has_normalized else None
+
+        if aligned_cycles is None or len(aligned_cycles) == 0:
+            st.warning(f"No cycle data available for {selected_channel_name}")
+            return
+
+        # --- Cycle Selection Table ---
+        st.markdown("---")
+        selected_cycle_indices = self._render_channel_cycles_table(
+            channel_idx=selected_channel_idx,
+            channel_name=selected_channel_name,
+            aligned_cycles=aligned_cycles,
+            normalized_cycles=normalized_cycles,
+            normalization_factors=normalization_factors
+        )
+
+        # --- Waveform Overlay Visualization ---
+        st.markdown("---")
+        self._render_channel_cycles_overlay(
+            selected_cycles=selected_cycle_indices,
+            aligned_cycles=aligned_cycles,
+            normalized_cycles=normalized_cycles,
+            channel_name=selected_channel_name,
+            sample_rate=sample_rate,
+            display_mode=display_mode
+        )
+
+        # --- Individual Cycle Details (Expandable) ---
+        if selected_cycle_indices:
+            st.markdown("---")
+            st.markdown("#### Detailed Cycle Information")
+
+            for cycle_idx in selected_cycle_indices:
+                with st.expander(f"📊 Cycle {cycle_idx} - {selected_channel_name}"):
+                    # Display metrics for aligned and normalized versions
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Aligned (Raw)**")
+                        aligned_metrics = self._compute_channel_cycle_metrics(aligned_cycles[cycle_idx])
+                        st.write(f"- Negative Peak: {aligned_metrics['negative_peak']:.4f}")
+                        st.write(f"- Positive Peak: {aligned_metrics['positive_peak']:.4f}")
+                        st.write(f"- RMS: {aligned_metrics['rms']:.4f}")
+                        st.write(f"- Max Abs: {aligned_metrics['max_abs']:.4f}")
+                        st.write(f"- Energy: {aligned_metrics['energy']:.2f}")
+
+                    if normalized_cycles is not None and cycle_idx < len(normalized_cycles):
+                        with col2:
+                            st.markdown("**Normalized**")
+                            norm_metrics = self._compute_channel_cycle_metrics(normalized_cycles[cycle_idx])
+                            st.write(f"- Negative Peak: {norm_metrics['negative_peak']:.4f}")
+                            st.write(f"- Positive Peak: {norm_metrics['positive_peak']:.4f}")
+                            st.write(f"- RMS: {norm_metrics['rms']:.4f}")
+                            st.write(f"- Max Abs: {norm_metrics['max_abs']:.4f}")
+                            st.write(f"- Energy: {norm_metrics['energy']:.2f}")
+
+                            if cycle_idx < len(normalization_factors):
+                                st.markdown("---")
+                                st.write(f"**Normalization Factor:** {normalization_factors[cycle_idx]:.4f}")
