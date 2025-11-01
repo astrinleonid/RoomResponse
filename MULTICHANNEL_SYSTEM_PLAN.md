@@ -21,8 +21,10 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 - ✅ Multi-channel configuration GUI (fully implemented)
 - ✅ Configuration profile management system (save/load/delete)
 - ✅ Collection Panel multi-channel status display
+- ✅ Calibration-based normalization system
+- ✅ Multi-channel response review GUI (interactive visualization)
 - ✅ Code cleanup and refactoring (Phase 6 complete)
-- ❌ Multi-channel visualization GUI (planned for future)
+- ❌ Full multi-channel scenario visualization GUI (planned for future)
 
 ---
 
@@ -481,6 +483,132 @@ Where:
 
 ---
 
+### Multi-Channel Response Review (NEW - 2025-11-02)
+
+**Purpose:** Interactive GUI for reviewing aligned and normalized response cycles across all channels.
+
+**File:** `gui_calibration_impulse_panel.py` → `_render_multichannel_response_review()`
+**Status:** ✅ Implemented
+**Location:** Calibration Impulse panel, appears after "Alignment Results Review" section
+
+**Problem Solved:**
+- Visual validation of alignment quality across response channels
+- Comparison of raw vs normalized responses
+- Per-cycle quality assessment via detailed metrics
+- Side-by-side evaluation of normalization effectiveness
+
+**User Interface Components:**
+
+1. **Display Controls**
+   ```
+   ┌─────────────────────────────────────────────────────────┐
+   │ Display Controls                                         │
+   ├─────────────────────────────────────────────────────────┤
+   │ Select Response Channel: [Channel 1 ▼]                  │
+   │ Display Mode: ⚪ Aligned Only  ⚪ Normalized Only       │
+   │               ⚪ Both (Side-by-Side)                     │
+   └─────────────────────────────────────────────────────────┘
+   ```
+
+2. **Cycle Selection Table**
+   - Checkbox selection for each cycle
+   - Per-cycle metrics displayed:
+     - Negative Peak (max absolute negative value)
+     - Positive Peak (max positive value)
+     - RMS (Raw) - root mean square amplitude
+     - RMS (Norm) - normalized RMS (if available)
+     - Norm Factor - calibration magnitude used for normalization
+   - Adaptive columns: Shows normalized metrics only when available
+   - Selection count display: "✓ Selected N cycle(s): 0, 1, 2..."
+
+3. **Waveform Overlay Visualization**
+   - Interactive zoom controls (persistent zoom state per channel)
+   - View mode selector: Waveform / Spectrum
+   - Reset zoom button
+   - Analysis statistics display
+   - Three display modes:
+     - **Aligned Only:** Shows raw aligned cycles
+     - **Normalized Only:** Shows calibration-normalized cycles
+     - **Both (Side-by-Side):** Split view comparing raw vs normalized
+
+4. **Detailed Cycle Information** (Expandable)
+   - Per-cycle expandable sections
+   - Side-by-side metrics:
+     - **Aligned (Raw):** Original metrics
+     - **Normalized:** Post-normalization metrics
+   - Displays: Negative Peak, Positive Peak, RMS, Max Abs, Energy
+   - Shows normalization factor used
+
+**Implementation Details:**
+
+**Helper Methods:**
+```python
+_compute_channel_cycle_metrics(cycle_data: np.ndarray) -> dict
+    # Computes metrics for a single cycle
+    # Returns: negative_peak, positive_peak, rms, max_abs, energy
+
+_render_channel_cycles_table(channel_idx, channel_name, aligned_cycles,
+                              normalized_cycles, normalization_factors) -> list
+    # Renders checkbox table with per-cycle metrics
+    # Returns list of selected cycle indices
+
+_render_channel_cycles_overlay(selected_cycles, aligned_cycles, normalized_cycles,
+                                channel_name, channel_idx, sample_rate, display_mode)
+    # Renders waveform visualization based on display mode
+    # Handles: Aligned Only / Normalized Only / Both Side-by-Side
+
+_plot_cycle_overlay(selected_cycles, cycle_data, sample_rate,
+                    label_prefix, component_id)
+    # Plots cycle overlay using AudioVisualizer.render_multi_waveform_with_zoom()
+    # Provides zoom controls, view mode, analysis display
+
+_render_multichannel_response_review(test_results: Dict[str, Any])
+    # Main integration method
+    # Coordinates all sub-components
+```
+
+**Session State Management:**
+- Per-channel cycle selection: `multichannel_review_selected_cycles_ch{channel_idx}`
+- Channel selector: `multichannel_review_channel_selector`
+- Display mode: `multichannel_review_display_mode`
+- Zoom state per channel/view: `multichannel_ch{channel_idx}_{aligned|normalized}_viz_zoom_*`
+
+**Visualization Features:**
+- ✅ **Zoom Controls:** Interactive zoom with persistent state
+- ✅ **View Modes:** Waveform and Spectrum display
+- ✅ **Analysis Stats:** Automatic statistics display
+- ✅ **Side-by-Side Comparison:** Compare raw vs normalized in split view
+- ✅ **Multi-Cycle Overlay:** Plot multiple cycles simultaneously
+- ✅ **Consistent UI:** Matches Alignment Results Review section
+
+**User Workflow:**
+
+1. Run calibration test with multi-channel enabled
+2. Scroll to "Multi-Channel Response Review" section (appears after alignment review)
+3. Select response channel from dropdown (excludes calibration channel)
+4. Choose display mode (Aligned/Normalized/Both)
+5. Review metrics table for all cycles
+6. Check boxes to select cycles for visualization
+7. View waveform overlays with zoom controls
+8. Expand individual cycle details for in-depth analysis
+9. Switch channels to review other response channels
+
+**Integration:**
+- Automatically appears when multi-channel mode enabled AND response channels exist
+- Only shows if `aligned_multichannel_cycles` present in test results
+- Filters out calibration channel (only shows response channels)
+- Gracefully handles missing normalized data (falls back to aligned only)
+
+**Benefits:**
+- ✅ **Visual Quality Check:** Quickly assess alignment quality across channels
+- ✅ **Normalization Validation:** See effect of calibration normalization
+- ✅ **Per-Cycle Inspection:** Detailed metrics for individual cycles
+- ✅ **Interactive Exploration:** Zoom into specific regions of interest
+- ✅ **Quantitative Metrics:** Numerical values for objective assessment
+- ✅ **Multi-Channel Support:** Review all response channels systematically
+
+---
+
 ## GUI Implementation Status
 
 ### Implemented GUIs
@@ -509,6 +637,8 @@ Where:
 - ✅ **Multi-channel configuration UI** (enable/disable, channel setup)
 - ✅ Device capability detection
 - ✅ Per-channel naming and role assignment
+- ✅ **Calibration-based normalization** (normalize response by calibration magnitude)
+- ✅ **Multi-Channel Response Review** (interactive review of aligned/normalized cycles)
 
 #### 2. SeriesSettingsPanel (19 KB)
 
@@ -546,49 +676,30 @@ Where:
 **File:** `gui_collect_panel.py`
 
 **Multi-Channel Status:**
-- ❌ **No multi-channel status display**
-- ❌ **No per-channel metrics**
-- ❌ **No channel configuration visibility**
+- ✅ **Multi-channel status display** (implemented in Phase 7)
+- ✅ **Per-channel indicators** (shows all active channels)
+- ✅ **Visual channel status** (green badges per channel)
 
 ### Missing GUIs
 
-#### Multi-Channel Configuration Interface ❌ NOT IMPLEMENTED
+#### Multi-Channel Configuration Interface ✅ IMPLEMENTED
 
-**Should Exist In:** AudioSettingsPanel (new tab or section)
+**Location:** AudioSettingsPanel → Device Selection tab → Multi-Channel Configuration section
 
-**Required Features:**
-```
-┌─────────────────────────────────────────────┐
-│ Multi-Channel Configuration                 │
-├─────────────────────────────────────────────┤
-│ [✓] Enable Multi-Channel Recording          │
-│                                              │
-│ Number of Channels: [8      ] (1-32)        │
-│                                              │
-│ Channel Configuration:                       │
-│ ┌─────────────────────────────────────────┐ │
-│ │ Ch 0: [Channel 0         ] [Response  ]││
-│ │ Ch 1: [Channel 1         ] [Response  ]││
-│ │ Ch 2: [Channel 2         ] [Calibration]││ ← Special role
-│ │ Ch 3: [Channel 3         ] [Response  ]││
-│ │ Ch 4: [Channel 4         ] [Response  ]││
-│ │ Ch 5: [Channel 5         ] [Reference ]││ ← Alignment ref
-│ │ Ch 6: [Channel 6         ] [Response  ]││
-│ │ Ch 7: [Channel 7         ] [Response  ]││
-│ └─────────────────────────────────────────┘ │
-│                                              │
-│ Reference Channel: [5 ▼]                    │
-│ Calibration Channel: [2 ▼] (optional)       │
-│                                              │
-│ [Save Configuration]                         │
-└─────────────────────────────────────────────┘
-```
+**Status:** ✅ FULLY FUNCTIONAL (Implemented Phase 5)
 
-**Saves to:** `recorderConfig.json` → `multichannel_config` section
+**Features Implemented:**
+- ✅ Enable/disable multi-channel recording toggle
+- ✅ Device capability detection (max input channels)
+- ✅ Number of channels selector (1-32, constrained by device)
+- ✅ Per-channel name editing
+- ✅ Reference channel selector
+- ✅ Calibration channel selector
+- ✅ Configuration profiles (save/load/delete named presets)
+- ✅ Save to recorderConfig.json
+- ✅ Real-time validation
 
-**Effort Estimate:** 4-6 hours
-
-#### Multi-Channel Visualization ❌ NOT IMPLEMENTED
+#### Multi-Channel Scenario Visualization ❌ NOT IMPLEMENTED
 
 **Should Exist In:** AudioAnalysisPanel or new panel
 
