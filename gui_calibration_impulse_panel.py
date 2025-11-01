@@ -1316,6 +1316,7 @@ class CalibrationImpulsePanel:
                                         aligned_cycles: np.ndarray,
                                         normalized_cycles: Optional[np.ndarray],
                                         channel_name: str,
+                                        channel_idx: int,
                                         sample_rate: int,
                                         display_mode: str):
         """
@@ -1326,6 +1327,7 @@ class CalibrationImpulsePanel:
             aligned_cycles: Raw aligned cycle data (num_cycles, samples_per_cycle)
             normalized_cycles: Normalized cycle data (optional)
             channel_name: Name of the channel for display
+            channel_idx: Channel index for unique component IDs
             sample_rate: Sample rate in Hz
             display_mode: 'aligned', 'normalized', or 'both'
         """
@@ -1342,33 +1344,49 @@ class CalibrationImpulsePanel:
 
             with col1:
                 st.markdown("**Aligned (Raw)**")
-                self._plot_cycle_overlay(selected_cycles, aligned_cycles, sample_rate, "Aligned")
+                self._plot_cycle_overlay(
+                    selected_cycles, aligned_cycles, sample_rate, "Aligned",
+                    component_id=f"multichannel_ch{channel_idx}_aligned_viz"
+                )
 
             with col2:
                 st.markdown("**Normalized**")
-                self._plot_cycle_overlay(selected_cycles, normalized_cycles, sample_rate, "Normalized")
+                self._plot_cycle_overlay(
+                    selected_cycles, normalized_cycles, sample_rate, "Normalized",
+                    component_id=f"multichannel_ch{channel_idx}_normalized_viz"
+                )
 
         elif display_mode == "Normalized Only" and normalized_cycles is not None:
-            self._plot_cycle_overlay(selected_cycles, normalized_cycles, sample_rate, "Normalized")
+            self._plot_cycle_overlay(
+                selected_cycles, normalized_cycles, sample_rate, "Normalized",
+                component_id=f"multichannel_ch{channel_idx}_normalized_viz"
+            )
 
         else:  # "Aligned Only" or fallback
-            self._plot_cycle_overlay(selected_cycles, aligned_cycles, sample_rate, "Aligned")
+            self._plot_cycle_overlay(
+                selected_cycles, aligned_cycles, sample_rate, "Aligned",
+                component_id=f"multichannel_ch{channel_idx}_aligned_viz"
+            )
 
     def _plot_cycle_overlay(self,
                             selected_cycles: List[int],
                             cycle_data: np.ndarray,
                             sample_rate: int,
-                            label_prefix: str):
+                            label_prefix: str,
+                            component_id: str):
         """
-        Plot overlay of selected cycles using AudioVisualizer.
+        Plot overlay of selected cycles using AudioVisualizer with zoom controls.
 
         Args:
             selected_cycles: List of cycle indices to plot
             cycle_data: Cycle data array (num_cycles, samples_per_cycle)
             sample_rate: Sample rate in Hz
             label_prefix: Prefix for waveform labels (e.g., "Aligned", "Normalized")
+            component_id: Unique component ID for zoom state persistence
         """
-        from gui_audio_visualizer import AudioVisualizer
+        if not VISUALIZER_AVAILABLE or not AudioVisualizer:
+            st.warning("AudioVisualizer not available - cannot display overlay")
+            return
 
         # Prepare waveforms for overlay
         waveforms = []
@@ -1383,16 +1401,23 @@ class CalibrationImpulsePanel:
             st.warning("No valid cycle data to plot")
             return
 
-        # Generate overlay plot using static method
-        fig = AudioVisualizer.render_overlay_plot(
+        # Generate title
+        if len(selected_cycles) == 1:
+            title = f"{label_prefix} Cycle {selected_cycles[0]}"
+        else:
+            title = f"{label_prefix} Cycles Overlay ({len(selected_cycles)} cycles)"
+
+        # Render with zoom controls
+        AudioVisualizer.render_multi_waveform_with_zoom(
             audio_signals=waveforms,
             labels=labels,
             sample_rate=sample_rate,
-            title=f"{label_prefix} Cycles Overlay",
-            show_legend=True
+            title=title,
+            component_id=component_id,
+            height=400,
+            normalize=False,
+            show_analysis=True
         )
-
-        st.pyplot(fig)
 
     def _render_multichannel_response_review(self, test_results: Dict[str, Any]):
         """
@@ -1497,6 +1522,7 @@ class CalibrationImpulsePanel:
             aligned_cycles=aligned_cycles,
             normalized_cycles=normalized_cycles,
             channel_name=selected_channel_name,
+            channel_idx=selected_channel_idx,
             sample_rate=sample_rate,
             display_mode=display_mode
         )
