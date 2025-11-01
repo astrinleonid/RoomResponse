@@ -23,17 +23,19 @@ from datetime import datetime
 class ConfigProfileManager:
     """Manager for configuration profiles"""
 
-    def __init__(self, config_dir: str = "configs", default_config_file: str = "recorderConfig.json"):
+    def __init__(self, config_dir: str = "configs", default_config_file: str = "recorderConfig.json", recorder=None):
         """
         Initialize the profile manager.
 
         Args:
             config_dir: Directory to store profile files
             default_config_file: Path to the default/active configuration file
+            recorder: Optional RoomResponseRecorder instance to update after loading
         """
         self.config_dir = Path(config_dir)
         self.default_config_file = Path(default_config_file)
         self.config_dir.mkdir(exist_ok=True)
+        self.recorder = recorder
 
         # Session state keys
         self.SK_CURRENT_PROFILE = "config_profile_current"
@@ -133,6 +135,64 @@ class ConfigProfileManager:
 
         return success
 
+    def _reload_recorder_config(self, config: Dict[str, Any]) -> bool:
+        """
+        Reload recorder configuration from config dictionary.
+
+        Args:
+            config: Configuration dictionary to apply
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.recorder is None:
+            return False
+
+        try:
+            # Update basic recording parameters
+            if 'sample_rate' in config:
+                self.recorder.sample_rate = config['sample_rate']
+            if 'pulse_duration' in config:
+                self.recorder.pulse_duration = config['pulse_duration']
+            if 'pulse_fade' in config:
+                self.recorder.pulse_fade = config['pulse_fade']
+            if 'cycle_duration' in config:
+                self.recorder.cycle_duration = config['cycle_duration']
+            if 'num_pulses' in config:
+                self.recorder.num_pulses = config['num_pulses']
+            if 'volume' in config:
+                self.recorder.volume = config['volume']
+            if 'pulse_frequency' in config:
+                self.recorder.pulse_frequency = config['pulse_frequency']
+            if 'impulse_form' in config:
+                self.recorder.impulse_form = config['impulse_form']
+            if 'input_device' in config:
+                self.recorder.input_device = config['input_device']
+            if 'output_device' in config:
+                self.recorder.output_device = config['output_device']
+
+            # Update multi-channel configuration
+            if 'multichannel_config' in config:
+                mc_config = config['multichannel_config']
+                self.recorder.multichannel_config['enabled'] = mc_config.get('enabled', False)
+                self.recorder.multichannel_config['num_channels'] = mc_config.get('num_channels', 1)
+                self.recorder.multichannel_config['channel_names'] = mc_config.get('channel_names', ['Channel 0'])
+                self.recorder.multichannel_config['calibration_channel'] = mc_config.get('calibration_channel')
+                self.recorder.multichannel_config['reference_channel'] = mc_config.get('reference_channel', 0)
+                self.recorder.multichannel_config['response_channels'] = mc_config.get('response_channels', [0])
+
+            # Update calibration quality configuration
+            if 'calibration_quality_config' in config:
+                self.recorder.calibration_quality_config = config['calibration_quality_config']
+
+            # Recalculate derived values
+            self.recorder._update_derived_values()
+
+            return True
+        except Exception as e:
+            st.error(f"Failed to reload recorder configuration: {e}")
+            return False
+
     def load_profile(self, profile_name: str, apply_to_active: bool = True) -> Optional[Dict[str, Any]]:
         """
         Load a named profile.
@@ -159,7 +219,12 @@ class ConfigProfileManager:
             # Remove metadata before saving to active config
             config_to_save = {k: v for k, v in config.items() if k != '_profile_metadata'}
             if self.save_config(config_to_save):
-                st.success(f"✓ Profile '{profile_name}' loaded and applied")
+                # Reload recorder configuration if recorder instance is available
+                if self._reload_recorder_config(config_to_save):
+                    st.success(f"✓ Profile '{profile_name}' loaded and applied to recorder")
+                else:
+                    st.success(f"✓ Profile '{profile_name}' loaded to config file")
+                    st.warning("⚠️ Recorder configuration not updated in memory. Restart the GUI to apply changes.")
                 st.session_state[self.SK_CURRENT_PROFILE] = profile_name
 
         return config

@@ -95,7 +95,7 @@ class AudioCollectionGUI:
         if AudioSettingsPanel:
             self.audio_settings_panel = AudioSettingsPanel(self.scenario_manager, recorder=self.recorder)
         if ConfigProfileManager is not None:
-            self.config_profile_manager = ConfigProfileManager()
+            self.config_profile_manager = ConfigProfileManager(recorder=self.recorder)
 
     def run(self):
         """Main application entry point."""
