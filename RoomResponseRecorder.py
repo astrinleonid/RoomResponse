@@ -4,7 +4,7 @@ import json
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Union
 from MicTesting import _SDL_AVAILABLE, sdl_audio_core
 
 # try:
@@ -556,15 +556,18 @@ class RoomResponseRecorder:
                 'error_message': f"Multi-channel test failed: {e}"
             }
 
-    def _record_method_2(self):
+    def _record_audio(self):
         """
-        Method 2: Auto device selection with multi-channel support
+        Record multi-pulse audio using SDL audio core.
+
+        Supports both single-channel and multi-channel recording based on configuration.
+        Uses auto device selection with configured input/output devices.
 
         Returns:
             If single-channel: np.ndarray
             If multi-channel: Dict[int, np.ndarray] mapping channel index to data
         """
-        print("Recording Method 2: Auto Device Selection")
+        print("Recording audio with SDL core (auto device selection)")
 
         # Debug output
         print(f"\n{'='*60}")
@@ -928,9 +931,9 @@ class RoomResponseRecorder:
             onset_positions.append(onset_idx)
 
         # STEP 3: Determine common onset position
-        # Use a position near the beginning (e.g., 100 samples) to ensure onset is at chart start
+        # Use a position near the beginning to ensure onset is at chart start
         # This leaves some space for pre-onset data but puts the peak near the beginning
-        target_onset_position = 100  # Position onset at 100 samples (near beginning)
+        target_onset_position = self.multichannel_config.get('alignment_target_onset_position', 100)
         aligned_onset_position = target_onset_position
 
         # STEP 4: Align all cycles by shifting to common onset position
@@ -1178,9 +1181,15 @@ class RoomResponseRecorder:
                     impulse_file: str,
                     method: int = 2,
                     mode: str = 'standard',
-                    return_processed: bool = False):
+                    return_processed: bool = False,
+                    save_files: bool = None):
         """
-        Main API method to record room response
+        Main API method to record room response.
+
+        Implements universal three-stage pipeline:
+            1. Record (universal, mode-independent)
+            2. Process (mode-specific)
+            3. Save (universal, mode-independent, optional)
 
         Args:
             output_file: Filename for raw recording
@@ -1189,6 +1198,12 @@ class RoomResponseRecorder:
             mode: Recording mode - 'standard' (default) or 'calibration'
             return_processed: If True, return dict with processed data instead of raw audio
                              (used internally, not for external API)
+            save_files: Control file saving behavior
+                - None (default): Auto-determine based on mode and context
+                    * Standard mode: Always save (backward compatible)
+                    * Calibration mode: Save only if output_file specified
+                - True: Force saving (enables calibration dataset collection)
+                - False: No saving (enables dry-run testing)
 
         Returns:
             Standard mode (default):
@@ -1205,36 +1220,42 @@ class RoomResponseRecorder:
         if mode not in ['standard', 'calibration']:
             raise ValueError(f"Invalid mode: {mode}. Must be 'standard' or 'calibration'")
 
-        # Handle calibration mode (completely separate path)
-        if mode == 'calibration':
-            return self._take_record_calibration_mode()
-
-        # STANDARD MODE - Continue with existing code (UNCHANGED)
         print(f"\n{'=' * 60}")
-        print(f"Room Response Recording")
+        print(f"Room Response Recording - {mode.upper()} mode")
         print(f"{'=' * 60}")
 
         try:
-            recorded_audio = self._record_method_2()
+            # STAGE 1: Recording (UNIVERSAL - mode-independent)
+            recorded_audio = self._record_audio()
             if recorded_audio is None:
                 print("Recording failed - no data captured")
                 return None
 
-            # Process the recorded signal
-            processed_data = self._process_recorded_signal(recorded_audio)
+            # STAGE 2: Processing (MODE-SPECIFIC)
+            if mode == 'calibration':
+                processed_data = self._process_calibration_mode(recorded_audio)
+            else:  # standard mode
+                processed_data = self._process_recorded_signal(recorded_audio)
 
-            is_multichannel = isinstance(recorded_audio, dict)
+            # STAGE 3: Saving (UNIVERSAL - but optional)
+            # Auto-determine save behavior if not explicitly specified
+            if save_files is None:
+                if mode == 'standard':
+                    save_files = True  # Standard always saves (backward compatible)
+                elif mode == 'calibration':
+                    # Calibration saves only if files specified (dataset collection)
+                    save_files = bool(output_file or impulse_file)
 
-            if is_multichannel:
-                self._save_multichannel_files(output_file, impulse_file, processed_data)
-            else:
-                self._save_single_channel_files(output_file, impulse_file, processed_data)
+            if save_files:
+                self._save_processed_data(processed_data, output_file, impulse_file)
 
             # Print success summary
             print(f"\n🎉 Recording completed successfully!")
 
             # BACKWARD COMPATIBLE RETURN
-            if return_processed:
+            if mode == 'calibration':
+                return processed_data  # Calibration always returns processed data
+            elif return_processed:
                 return processed_data  # Internal use only
             else:
                 return recorded_audio  # EXISTING BEHAVIOR - returns raw audio
@@ -1245,29 +1266,30 @@ class RoomResponseRecorder:
             traceback.print_exc()
             return None
 
-    def _take_record_calibration_mode(self) -> Dict[str, Any]:
+    def _process_calibration_mode(self, recorded_audio: Union[np.ndarray, Dict[int, np.ndarray]]) -> Dict[str, Any]:
         """
-        Calibration mode recording - completely separate implementation.
+        Process calibration mode recording data.
 
-        Does NOT save files, returns cycle-level data for analysis.
+        Pipeline: Validate → Align → Normalize → Average → Output
+
+        This produces per-channel averaged impulse responses from validated and aligned cycles,
+        similar to standard mode but with quality validation and normalization steps.
+
+        Args:
+            recorded_audio: Raw recorded audio from Stage 1
+                - Dict[int, np.ndarray] for multi-channel
 
         Returns:
             Dict with:
-                - 'calibration_cycles': np.ndarray [N, samples]
-                - 'validation_results': List[Dict]
-                - 'aligned_multichannel_cycles': Dict[int, np.ndarray]
-                - 'alignment_metadata': Dict
-                - 'num_valid_cycles': int
-                - 'num_aligned_cycles': int
+                - 'raw': Dict[int, np.ndarray] - Original raw audio
+                - 'room_response': Dict[int, np.ndarray] - Averaged aligned/normalized responses
+                - 'impulse': Dict[int, np.ndarray] - Impulse responses (aligned room_response)
+                - 'metadata': Dict - Processing metadata
 
         Raises:
             ValueError: If multi-channel not configured or calibration_channel missing
         """
         from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
-
-        print(f"\n{'=' * 60}")
-        print(f"Calibration Mode Recording")
-        print(f"{'=' * 60}")
 
         # Validate calibration setup
         if not self.multichannel_config.get('enabled', False):
@@ -1277,135 +1299,169 @@ class RoomResponseRecorder:
         if cal_ch is None:
             raise ValueError("Calibration mode requires 'calibration_channel' in multichannel_config")
 
-        try:
-            # Record audio
-            recorded_audio = self._record_method_2()
-            if recorded_audio is None:
-                raise RuntimeError("Recording failed - no data captured")
+        if recorded_audio is None:
+            raise RuntimeError("Recording failed - no data captured")
 
-            if not isinstance(recorded_audio, dict):
-                raise ValueError("Calibration mode requires multi-channel recording")
+        if not isinstance(recorded_audio, dict):
+            raise ValueError("Calibration mode requires multi-channel recording")
 
-            if cal_ch not in recorded_audio:
-                raise ValueError(f"Calibration channel {cal_ch} not found in recorded channels")
+        if cal_ch not in recorded_audio:
+            raise ValueError(f"Calibration channel {cal_ch} not found in recorded channels")
 
-            print(f"Processing calibration data (channel {cal_ch})...")
+        print(f"Processing calibration data (channel {cal_ch})...")
 
-            # Extract cycles from calibration channel using helper method
-            cal_raw = recorded_audio[cal_ch]
-            initial_cycles = self._extract_cycles(cal_raw)
+        # STEP 1: Validate cycles on calibration channel
+        cal_raw = recorded_audio[cal_ch]
+        initial_cycles = self._extract_cycles(cal_raw)
 
-            # Validate each cycle
-            thresholds = QualityThresholds.from_config(self.calibration_quality_config)
-            validator = CalibrationValidatorV2(thresholds, self.sample_rate)
+        thresholds = QualityThresholds.from_config(self.calibration_quality_config)
+        validator = CalibrationValidatorV2(thresholds, self.sample_rate)
 
-            validation_results = []
-            for i, cycle in enumerate(initial_cycles):
-                validation = validator.validate_cycle(cycle, i)
-                validation_dict = {
-                    'cycle_index': i,
-                    'is_valid': validation.calibration_valid,
-                    'calibration_valid': validation.calibration_valid,
-                    'calibration_metrics': validation.calibration_metrics,
-                    'calibration_failures': validation.calibration_failures
-                }
-                validation_results.append(validation_dict)
+        validation_results = []
+        for i, cycle in enumerate(initial_cycles):
+            validation = validator.validate_cycle(cycle, i)
+            validation_dict = {
+                'cycle_index': i,
+                'is_valid': validation.calibration_valid,
+                'calibration_valid': validation.calibration_valid,
+                'calibration_metrics': validation.calibration_metrics,
+                'calibration_failures': validation.calibration_failures
+            }
+            validation_results.append(validation_dict)
 
-            # Count valid cycles
-            num_valid = sum(1 for v in validation_results if v['is_valid'])
-            print(f"Calibration validation: {num_valid}/{len(validation_results)} valid cycles")
+        num_valid = sum(1 for v in validation_results if v['is_valid'])
+        print(f"  Validation: {num_valid}/{len(validation_results)} valid cycles")
 
-            # Align cycles by onset
-            correlation_threshold = 0.7
-            alignment_result = self.align_cycles_by_onset(
-                initial_cycles,
-                validation_results,
-                correlation_threshold=correlation_threshold
+        # STEP 2: Align cycles by onset
+        correlation_threshold = self.multichannel_config.get('alignment_correlation_threshold', 0.7)
+        alignment_result = self.align_cycles_by_onset(
+            initial_cycles,
+            validation_results,
+            correlation_threshold=correlation_threshold
+        )
+        num_aligned = len(alignment_result['valid_cycle_indices'])
+        print(f"  Alignment: {num_aligned} cycles passed correlation filter (threshold={correlation_threshold})")
+
+        # STEP 3: Apply alignment to all channels
+        aligned_multichannel_cycles = {}
+        for ch_idx, channel_data in recorded_audio.items():
+            aligned_channel = self.apply_alignment_to_channel(
+                channel_data,
+                alignment_result
             )
+            aligned_multichannel_cycles[ch_idx] = aligned_channel
 
-            # Apply alignment to all channels
-            aligned_multichannel_cycles = {}
-            for ch_idx, channel_data in recorded_audio.items():
-                aligned_channel = self.apply_alignment_to_channel(
-                    channel_data,
-                    alignment_result
-                )
-                aligned_multichannel_cycles[ch_idx] = aligned_channel
+        # STEP 4: Normalize by calibration magnitude (if enabled)
+        normalize_enabled = self.multichannel_config.get('normalize_by_calibration', False)
 
-            # Calculate number of aligned cycles
-            num_aligned = len(alignment_result['valid_cycle_indices'])
+        if normalize_enabled:
+            print(f"  Normalization: Enabled (dividing by impact magnitude)")
+            processed_cycles, normalization_factors = self._normalize_by_calibration(
+                aligned_multichannel_cycles,
+                validation_results,
+                cal_ch
+            )
+            print(f"    Impact magnitudes: min={min(normalization_factors):.4f}, "
+                  f"max={max(normalization_factors):.4f}, mean={np.mean(normalization_factors):.4f}")
+        else:
+            print(f"  Normalization: Disabled")
+            processed_cycles = aligned_multichannel_cycles
 
-            # Normalize by calibration magnitude (if enabled)
-            normalize_enabled = self.multichannel_config.get('normalize_by_calibration', False)
-            normalized_multichannel_cycles = {}
-            normalization_factors = []
+        # STEP 5: Average processed cycles (like standard mode does)
+        print(f"  Averaging: Computing mean of {num_aligned} aligned cycles per channel")
+        averaged_responses = {}
+        for ch_idx, cycles in processed_cycles.items():
+            # Average all aligned/normalized cycles (no skipping needed - already filtered)
+            averaged_responses[ch_idx] = np.mean(cycles, axis=0)
 
-            if normalize_enabled:
-                print("Normalizing response channels by calibration magnitude...")
-                normalized_multichannel_cycles, normalization_factors = self._normalize_by_calibration(
-                    aligned_multichannel_cycles,
-                    validation_results,
-                    cal_ch
-                )
-                print(f"   Normalization factors (negative peaks): "
-                      f"min={min(normalization_factors):.4f}, "
-                      f"max={max(normalization_factors):.4f}, "
-                      f"mean={np.mean(normalization_factors):.4f}")
-            else:
-                print("Calibration normalization disabled (normalize_by_calibration=False)")
+        # STEP 6: Extract impulse responses (onset already at target position from alignment)
+        impulse_responses = {}
+        for ch_idx, room_response in averaged_responses.items():
+            # In calibration mode, onset already aligned to target position
+            # No additional shift needed
+            impulse_responses[ch_idx] = room_response
 
-            print(f"🎉 Calibration recording completed!")
-            print(f"   Valid cycles: {num_valid}/{self.num_pulses}")
-            print(f"   Aligned cycles: {num_aligned}")
+        print(f"✓ Calibration processing completed")
+        first_channel = list(averaged_responses.keys())[0]
+        print(f"  Result: {len(averaged_responses)} channels, {len(averaged_responses[first_channel])} samples per channel")
 
-            result = {
-                'calibration_cycles': initial_cycles,
-                'validation_results': validation_results,
-                'aligned_multichannel_cycles': aligned_multichannel_cycles,
-                'alignment_metadata': alignment_result,
+        # Return in SAME format as standard mode for consistency
+        result = {
+            'raw': recorded_audio,  # Original raw audio
+            'room_response': averaged_responses,  # Averaged aligned/normalized responses
+            'impulse': impulse_responses,  # Impulse responses
+            'metadata': {
+                'mode': 'calibration',
+                'num_channels': len(recorded_audio),
+                'calibration_channel': cal_ch,
+                'num_pulses_recorded': self.num_pulses,
+                'num_cycles': self.num_pulses,  # For backward compatibility
                 'num_valid_cycles': num_valid,
                 'num_aligned_cycles': num_aligned,
-                'metadata': {
-                    'mode': 'calibration',
-                    'calibration_channel': cal_ch,
-                    'num_channels': len(recorded_audio),
-                    'num_cycles': self.num_pulses,
-                    'cycle_samples': self.cycle_samples,
-                    'correlation_threshold': correlation_threshold,
-                    'normalize_by_calibration': normalize_enabled
-                }
-            }
+                'correlation_threshold': correlation_threshold,
+                'normalize_by_calibration': normalize_enabled,
+                'validation_results': validation_results,
+                'alignment_metadata': alignment_result
+            },
+            # BACKWARD COMPATIBILITY: Keep old top-level keys for Audio Settings panel
+            'calibration_cycles': initial_cycles,  # Raw calibration channel cycles
+            'validation_results': validation_results,
+            'alignment_metadata': alignment_result,
+            'aligned_multichannel_cycles': aligned_multichannel_cycles,
+        }
 
-            # Add normalized data if enabled
-            if normalize_enabled and normalized_multichannel_cycles:
-                result['normalized_multichannel_cycles'] = normalized_multichannel_cycles
-                result['normalization_factors'] = normalization_factors
-
-            return result
-
-        except Exception as e:
-            print(f"Error during calibration recording: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        return result
 
     def take_record_calibration(self) -> Dict[str, Any]:
         """
-        Convenience method for calibration recording.
+        Convenience method for calibration recording WITHOUT file saving.
 
-        Equivalent to: take_record("", "", mode='calibration')
+        This is used by the Audio Settings → Calibration Impulse panel for testing/validation.
+        To save calibration data files, use: take_record(..., mode='calibration', save_files=True)
+
+        Equivalent to: take_record("", "", mode='calibration', save_files=False)
 
         Returns:
-            Dict with calibration cycle data (see _take_record_calibration_mode)
+            Dict with calibration cycle data (see _process_calibration_mode)
         """
         return self.take_record(
-            output_file="",  # Not used in calibration mode
-            impulse_file="",  # Not used in calibration mode
-            mode='calibration'
+            output_file="",
+            impulse_file="",
+            mode='calibration',
+            save_files=False  # Explicitly disable file saving for testing
         )
 
+    def _save_processed_data(self, processed_data: Dict, output_file: str, impulse_file: str):
+        """
+        Universal file saving - works for both standard and calibration modes.
+
+        This is the unified Stage 3 (Save) of the record-process-save pipeline.
+        Both modes now use the SAME file structure and naming convention.
+
+        Args:
+            processed_data: Dict with keys 'raw', 'room_response', 'impulse', 'metadata'
+            output_file: Filename for raw recording
+            impulse_file: Filename for impulse response
+
+        File structure (identical for both modes):
+            raw_NNN_TIMESTAMP_chX.wav        - Raw recording
+            impulse_NNN_TIMESTAMP_chX.wav    - Impulse response (averaged)
+            room_NNN_room_TIMESTAMP_chX.wav  - Room response (averaged)
+        """
+        is_multichannel = 'raw' in processed_data and isinstance(processed_data['raw'], dict)
+
+        if is_multichannel:
+            self._save_multichannel_files(output_file, impulse_file, processed_data)
+        else:
+            self._save_single_channel_files(output_file, impulse_file, processed_data)
+
     def _save_multichannel_files(self, output_file: str, impulse_file: str, processed_data: Dict):
-        """Save multi-channel measurement files"""
+        """
+        Save multi-channel measurement files (standard mode).
+
+        DEPRECATED: Use _save_processed_data() instead.
+        This method is kept for backward compatibility.
+        """
         # Get number of channels from processed data
         if 'raw' in processed_data and isinstance(processed_data['raw'], dict):
             num_channels = len(processed_data['raw'])
@@ -1438,7 +1494,12 @@ class RoomResponseRecorder:
             print(f"  Channel {ch_idx} ({ch_name}): saved 3 files")
 
     def _save_single_channel_files(self, output_file: str, impulse_file: str, processed_data: Dict):
-        """Save single-channel measurement files (legacy)"""
+        """
+        Save single-channel measurement files (standard mode).
+
+        DEPRECATED: Use _save_processed_data() instead.
+        This method is kept for backward compatibility.
+        """
         self._save_wav(processed_data['raw'], output_file)
         self._save_wav(processed_data['impulse'], impulse_file)
 

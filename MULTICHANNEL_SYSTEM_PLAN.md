@@ -1,10 +1,10 @@
 # Multi-Channel Room Response System
 
-**Document Version:** 3.0
+**Document Version:** 4.0
 **Created:** 2025-10-31
 **Last Updated:** 2025-11-02
 **Target:** Piano Response Measurement System
-**Status:** Core Implementation Complete | GUI Integration Complete | Phase 6 & 7 Complete
+**Status:** Core Implementation Complete | GUI Integration Complete | Pipeline Refactored ✅
 
 ---
 
@@ -78,19 +78,25 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 
 ## Signal Processing Pipeline
 
-### Current Implementation (Two Paths)
+### Universal Three-Stage Architecture (Refactored ✅)
 
-The system has **two processing paths** that diverge more than necessary:
+The system now implements a **clean three-stage universal pipeline** where Stages 1 and 3 are mode-independent:
 
-#### PATH 1: Standard Mode (File-Saving Recording)
+**Pipeline Design:**
+- **Stage 1 (Recording):** Universal - same for all modes
+- **Stage 2 (Processing):** Mode-specific - different logic per mode
+- **Stage 3 (Saving):** Universal - same file structure for all modes
+
+---
+
+#### PATH 1: Standard Mode (Averaged Room Response)
 
 ```
-User calls: recorder.take_record(output_file, impulse_file)
+User calls: recorder.take_record(output_file, impulse_file, mode='standard')
 
-RoomResponseRecorder.take_record(mode='standard')
     ↓
-STAGE 1: Recording
-    _record_method_2()
+STAGE 1: Recording (UNIVERSAL)
+    _record_audio()  # Renamed from _record_method_2
     ├─ If multichannel_config['enabled'] == False:
     │   sdl_audio_core.measure_room_response_auto()
     │   → Returns: np.ndarray [samples]
@@ -100,39 +106,42 @@ STAGE 1: Recording
         → Returns: Dict[int, np.ndarray] {0: ch0_data, 1: ch1_data, ...}
 
     ↓
-STAGE 2: Processing
+STAGE 2: Processing (MODE-SPECIFIC)
     _process_recorded_signal(recorded_audio)
     ├─ If isinstance(recorded_audio, np.ndarray):  # Single-channel
     │   _process_single_channel_signal()
     │   ├─ _extract_cycles() → [num_pulses, cycle_samples]
-    │   ├─ _average_cycles(skip_first_25%) → [cycle_samples]
+    │   ├─ _average_cycles(skip_first_25%) → [cycle_samples]  ← Averaging HERE
     │   └─ _extract_impulse_response() → [cycle_samples]
     │
     └─ If isinstance(recorded_audio, dict):  # Multi-channel
         _process_multichannel_signal()
         ├─ Process reference channel:
         │   ├─ _extract_cycles(ref_audio)
-        │   ├─ _average_cycles(ref_cycles)
+        │   ├─ _average_cycles(ref_cycles)  ← Averaging HERE
         │   └─ _find_onset_in_room_response() → onset_sample
         │
         └─ Process all channels with SAME shift:
             FOR each channel:
                 ├─ _extract_cycles(channel_audio)
-                ├─ _average_cycles(channel_cycles)
+                ├─ _average_cycles(channel_cycles)  ← Averaging HERE
                 └─ np.roll(room_response, -onset_sample)  # Same shift!
 
+    → Returns: {
+          'raw': Dict[int, np.ndarray],        # Original audio
+          'room_response': Dict[int, np.ndarray],  # Averaged responses
+          'impulse': Dict[int, np.ndarray],    # Impulse responses
+          'metadata': Dict                     # Processing metadata
+      }
+
     ↓
-STAGE 3: File Saving
-    ├─ Single-channel: _save_single_channel_files()
-    │   ├─ raw_000_20251031.wav
-    │   ├─ impulse_000_20251031.wav
-    │   └─ room_response_000_20251031.wav
-    │
-    └─ Multi-channel: _save_multichannel_files()
-        ├─ raw_000_20251031_ch0.wav
-        ├─ impulse_000_20251031_ch0.wav
-        ├─ room_response_000_20251031_ch0.wav
-        ├─ raw_000_20251031_ch1.wav
+STAGE 3: File Saving (UNIVERSAL)
+    _save_processed_data(processed_data, output_file, impulse_file)
+    └─ _save_multichannel_files() OR _save_single_channel_files()
+        ├─ raw_000_TIMESTAMP_ch0.wav
+        ├─ impulse_000_TIMESTAMP_ch0.wav
+        ├─ room_raw_000_room_TIMESTAMP_ch0.wav
+        ├─ raw_000_TIMESTAMP_ch1.wav
         ├─ ...
 
     ↓
@@ -140,73 +149,153 @@ Returns: recorded_audio (np.ndarray or Dict[int, np.ndarray])
          BACKWARD COMPATIBLE - raw audio only
 ```
 
-#### PATH 2: Calibration Mode (Analysis-Only Recording)
+**Key Points:**
+- ⚠️ **No cycle alignment** - assumes perfect timing from audio engine
+- Cycles averaged "as is" without onset detection
+- Works well for synthetic pulses with precise timing
+
+#### PATH 2: Calibration Mode (Quality-Validated Averaged Response) ✅ REFACTORED
 
 ```
-User calls: recorder.take_record_calibration()
+User calls: recorder.take_record(output_file, impulse_file, mode='calibration', save_files=True)
+         OR: recorder.take_record_calibration()  # No files (testing only)
 
-RoomResponseRecorder._take_record_calibration_mode()
     ↓
-STAGE 1: Recording (Identical to Standard)
-    _record_method_2()
+STAGE 1: Recording (UNIVERSAL - Identical to Standard)
+    _record_audio()
     → Returns: Dict[int, np.ndarray] (multichannel required)
 
     ↓
-STAGE 2: Processing (Different Implementation!)
-    Extract calibration channel:
-        cal_raw = recorded_audio[calibration_channel]
+STAGE 2: Processing (MODE-SPECIFIC - Quality Pipeline)
+    _process_calibration_mode(recorded_audio)
 
-    ⚠️ DUPLICATED CODE: Inline cycle extraction
-        expected_samples = cycle_samples * num_pulses
-        if len(cal_raw) < expected_samples:
-            padded = np.zeros(expected_samples)
-            padded[:len(cal_raw)] = cal_raw
-            cal_raw = padded
-        else:
-            cal_raw = cal_raw[:expected_samples]
-        initial_cycles = cal_raw.reshape(num_pulses, cycle_samples)
+    STEP 1: Validate cycles
+        Extract calibration channel:
+            cal_raw = recorded_audio[calibration_channel]
+            initial_cycles = _extract_cycles(cal_raw)  ✅ Uses helper
 
-        (Should use _extract_cycles() helper instead!)
+        Validate each cycle:
+            validator = CalibrationValidatorV2(thresholds, sample_rate)
+            FOR each cycle in initial_cycles:
+                validation = validator.validate_cycle(cycle, index)
+                ├─ Check negative peak in range [min, max]
+                ├─ Check positive peak in range [min, max]
+                ├─ Check aftershock in range [min, max]
+                └─ Mark as valid/invalid
 
-    ↓
-    Validate each cycle:
-        from calibration_validator_v2 import CalibrationValidatorV2
-        validator = CalibrationValidatorV2(thresholds, sample_rate)
-
-        FOR each cycle in initial_cycles:
-            validation = validator.validate_cycle(cycle, index)
-            ├─ Check negative peak in range [min, max]
-            ├─ Check positive peak in range [min, max]
-            ├─ Check aftershock in range [min, max]
-            └─ Mark as valid/invalid
-
-    ↓
-    Align cycles:
-        align_cycles_by_onset(initial_cycles, validation_results, threshold=0.7)
+    STEP 2: Align cycles by onset
+        alignment_result = align_cycles_by_onset(
+            initial_cycles,
+            validation_results,
+            correlation_threshold=config['alignment_correlation_threshold']  # Tunable!
+        )
         ├─ Filter to valid cycles only
         ├─ Detect onset in each valid cycle
-        ├─ Align all to common position
+        ├─ Align all to target position (config['alignment_target_onset_position'])  # Tunable!
         └─ Cross-correlation filtering (removes outliers)
 
-    ↓
-    Apply alignment to all channels:
+    STEP 3: Apply alignment to all channels
         FOR each channel in recorded_audio:
-            aligned = apply_alignment_to_channel(channel_data, alignment_result)
+            aligned_cycles[ch] = apply_alignment_to_channel(
+                channel_data,
+                alignment_result  # Uses SAME shifts from calibration channel
+            )
+
+    STEP 4: Normalize by impact magnitude (optional)
+        IF config['normalize_by_calibration'] == True:
+            FOR each cycle, each response channel:
+                normalized[cycle] = aligned[cycle] / |negative_peak[cycle]|
+
+    STEP 5: Average processed cycles ✅ NEW!
+        FOR each channel:
+            room_response[ch] = np.mean(processed_cycles[ch], axis=0)
+
+        ← Averages aligned/normalized cycles (no skipping - already filtered)
+
+    STEP 6: Output impulse responses
+        FOR each channel:
+            impulse[ch] = room_response[ch]  # Onset already at target position
+
+    → Returns: {
+          'raw': Dict[int, np.ndarray],        # Original audio
+          'room_response': Dict[int, np.ndarray],  # Averaged aligned/normalized
+          'impulse': Dict[int, np.ndarray],    # Impulse responses
+          'metadata': Dict,                    # Processing metadata
+          # BACKWARD COMPATIBILITY for GUI:
+          'calibration_cycles': np.ndarray,
+          'validation_results': List[Dict],
+          'alignment_metadata': Dict,
+          'aligned_multichannel_cycles': Dict[int, np.ndarray]
+      }
 
     ↓
-STAGE 3: NO File Saving (calibration mode)
+STAGE 3: File Saving (UNIVERSAL - Same as Standard Mode) ✅ NEW!
+    IF save_files == True:
+        _save_processed_data(processed_data, output_file, impulse_file)
+        └─ _save_multichannel_files()
+            ├─ raw_000_TIMESTAMP_ch0.wav       # Original recording
+            ├─ impulse_000_TIMESTAMP_ch0.wav   # Averaged response
+            ├─ room_raw_000_room_TIMESTAMP_ch0.wav
+            ├─ raw_000_TIMESTAMP_ch1.wav
+            ├─ ...
 
     ↓
-Returns: Dict with cycle-level data
-    {
-        'calibration_cycles': np.ndarray [N, samples],
-        'validation_results': List[Dict],
-        'aligned_multichannel_cycles': Dict[int, np.ndarray],
-        'alignment_metadata': Dict,
-        'num_valid_cycles': int,
-        'num_aligned_cycles': int
-    }
+Returns: Dict with averaged responses + cycle-level data (backward compatible)
 ```
+
+**Key Improvements:**
+- ✅ **Per-cycle alignment** - robust for physical impacts with timing variance
+- ✅ **Quality validation** - filters out bad cycles before averaging
+- ✅ **Averaging after alignment** - produces clean averaged response
+- ✅ **Universal file structure** - same format as standard mode
+- ✅ **Tunable parameters** - correlation threshold and onset position configurable
+
+---
+
+### Recent Refactoring (Version 4.0 - November 2025) ✅
+
+**Changes Implemented:**
+
+1. **Renamed `_record_method_2()` → `_record_audio()`**
+   - More descriptive name reflecting actual functionality
+   - Updated docstring to clarify SDL audio core usage
+
+2. **Unified Output Format**
+   - Both modes now return: `{'raw', 'room_response', 'impulse', 'metadata'}`
+   - Calibration mode also includes backward-compatible keys for GUI
+
+3. **Universal Save Method**
+   - Single `_save_processed_data()` dispatcher for all modes
+   - Removed mode-specific `_save_calibration_dataset()`
+   - Both modes use identical file structure
+
+4. **Added Averaging to Calibration Mode**
+   - Pipeline: Validate → Align → Normalize → **Average** → Save
+   - Produces single averaged response per channel (like standard mode)
+   - Uses `_average_cycles()` helper (now universal)
+
+5. **Tunable Calibration Parameters**
+   - `alignment_correlation_threshold` (default: 0.7)
+   - `alignment_target_onset_position` (default: 100)
+   - Both configurable in `multichannel_config`
+
+6. **Optional File Saving**
+   - Added `save_files` parameter to `take_record()`
+   - Calibration mode can now save files (for dataset collection)
+   - Audio Settings panel continues to work (no files saved)
+
+7. **Backward Compatibility Maintained**
+   - Deprecated methods kept: `_save_multichannel_files()`, `_save_single_channel_files()`
+   - Convenience method preserved: `take_record_calibration()`
+   - GUI continues to work without changes
+
+**Benefits:**
+- Cleaner architecture with universal Stage 1 (record) and Stage 3 (save)
+- Calibration mode produces comparable output to standard mode
+- Higher quality averaged responses (validation + alignment before averaging)
+- Simplified code with less duplication
+
+---
 
 ### Critical Synchronization Requirement
 
@@ -249,7 +338,12 @@ When the system finds the impulse onset at sample position N in the reference ch
     ],
     "calibration_channel": 2,           // Ch2 = calibration sensor
     "reference_channel": 5,             // Ch5 = alignment reference
-    "response_channels": [0,1,3,4,5,6,7] // All except calibration
+    "response_channels": [0,1,3,4,5,6,7], // All except calibration
+
+    // ✅ NEW: Tunable calibration parameters
+    "alignment_correlation_threshold": 0.7,     // Min correlation for cycle filtering
+    "alignment_target_onset_position": 100,     // Target onset sample position
+    "normalize_by_calibration": false           // Enable impact magnitude normalization
   }
 }
 ```
@@ -269,6 +363,9 @@ When the system finds the impulse onset at sample position N in the reference ch
 | `calibration_channel` | Channel with calibration sensor | `None` | `2` |
 | `reference_channel` | Channel for onset alignment | `0` | `5` |
 | `response_channels` | Channels to process (excl. calibration) | `[0]` | `[0,1,3,4,5,6,7]` |
+| `alignment_correlation_threshold` ✅ NEW | Min correlation for cycle filtering | `0.7` | `0.7` |
+| `alignment_target_onset_position` ✅ NEW | Target onset sample position | `100` | `100` |
+| `normalize_by_calibration` ✅ NEW | Enable impact magnitude normalization | `false` | `false` |
 
 ---
 

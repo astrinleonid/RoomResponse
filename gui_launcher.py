@@ -155,7 +155,6 @@ class RoomResponseGUI:
         st.sidebar.text_input(
             "Dataset folder (name or path)",
             key=SK_DATASET_NAME,
-            value=st.session_state[SK_DATASET_NAME],
             help=f"{folder_hint}. A bare name will be treated as a subfolder of the working directory.",
         )
 
