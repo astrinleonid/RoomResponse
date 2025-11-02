@@ -1091,7 +1091,9 @@ class RoomResponseRecorder:
         # Extract negative peak values for each cycle
         normalization_factors = []
         for v_result in validation_results:
-            metrics = v_result.get('calibration_metrics', {})
+            metrics = v_result.get('calibration_metrics') or {}
+            if not isinstance(metrics, dict):
+                metrics = {}
             neg_peak = abs(metrics.get('negative_peak', 0.0))
             normalization_factors.append(neg_peak)
 
@@ -1366,11 +1368,19 @@ class RoomResponseRecorder:
         else:
             print(f"  Normalization: Disabled")
             processed_cycles = aligned_multichannel_cycles
+            normalization_factors = []
 
         # STEP 5: Average processed cycles (like standard mode does)
         print(f"  Averaging: Computing mean of {num_aligned} aligned cycles per channel")
         averaged_responses = {}
         for ch_idx, cycles in processed_cycles.items():
+            # Debug: Check cycles shape
+            if not isinstance(cycles, np.ndarray):
+                print(f"  WARNING: Channel {ch_idx} cycles is not ndarray, it's {type(cycles)}")
+                cycles = np.array(cycles)
+
+            print(f"    Channel {ch_idx}: cycles shape = {cycles.shape}, dtype = {cycles.dtype}")
+
             # Average all aligned/normalized cycles (no skipping needed - already filtered)
             averaged_responses[ch_idx] = np.mean(cycles, axis=0)
 
@@ -1382,8 +1392,16 @@ class RoomResponseRecorder:
             impulse_responses[ch_idx] = room_response
 
         print(f"✓ Calibration processing completed")
-        first_channel = list(averaged_responses.keys())[0]
-        print(f"  Result: {len(averaged_responses)} channels, {len(averaged_responses[first_channel])} samples per channel")
+        if averaged_responses:
+            first_channel = list(averaged_responses.keys())[0]
+            first_channel_data = averaged_responses[first_channel]
+            if hasattr(first_channel_data, '__len__'):
+                print(f"  Result: {len(averaged_responses)} channels, {len(first_channel_data)} samples per channel")
+            else:
+                print(f"  Result: {len(averaged_responses)} channels, but channel data is scalar: {type(first_channel_data)}")
+                print(f"  ERROR: averaged_responses contains scalar instead of array!")
+        else:
+            print(f"  WARNING: No averaged responses generated")
 
         # Return in SAME format as standard mode for consistency
         result = {
@@ -1408,6 +1426,9 @@ class RoomResponseRecorder:
             'validation_results': validation_results,
             'alignment_metadata': alignment_result,
             'aligned_multichannel_cycles': aligned_multichannel_cycles,
+            # NORMALIZATION DATA: Include normalized cycles and factors if normalization was enabled
+            'normalized_multichannel_cycles': processed_cycles if normalize_enabled else {},
+            'normalization_factors': normalization_factors if normalize_enabled else [],
         }
 
         return result

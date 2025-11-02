@@ -683,6 +683,9 @@ class CalibrationImpulsePanel:
             'aligned_cycles': recorder_result['aligned_multichannel_cycles'].get(cal_ch),
             'aligned_multichannel_cycles': recorder_result['aligned_multichannel_cycles'],
             'aligned_validation_results': aligned_validation_results,
+            # Normalization - FOR MULTI-CHANNEL RESPONSE REVIEW
+            'normalized_multichannel_cycles': recorder_result.get('normalized_multichannel_cycles', {}),
+            'normalization_factors': recorder_result.get('normalization_factors', []),
             'cycle_duration_s': self.recorder.cycle_samples / self.recorder.sample_rate
         }
 

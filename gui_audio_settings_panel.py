@@ -336,7 +336,8 @@ class AudioSettingsPanel:
                     'channel_names': list(mc_config.get('channel_names', ['Channel 0'])),
                     'calibration_channel': mc_config.get('calibration_channel'),  # None or int
                     'reference_channel': int(mc_config.get('reference_channel', 0)),
-                    'response_channels': list(mc_config.get('response_channels', [0]))
+                    'response_channels': list(mc_config.get('response_channels', [0])),
+                    'normalize_by_calibration': bool(mc_config.get('normalize_by_calibration', False))
                 }
 
                 # Update calibration quality configuration
@@ -383,6 +384,7 @@ class AudioSettingsPanel:
                     self.recorder.multichannel_config['calibration_channel'] = mc_config_file.get('calibration_channel')
                     self.recorder.multichannel_config['reference_channel'] = int(mc_config_file.get('reference_channel', 0))
                     self.recorder.multichannel_config['response_channels'] = list(mc_config_file.get('response_channels', [0]))
+                    self.recorder.multichannel_config['normalize_by_calibration'] = bool(mc_config_file.get('normalize_by_calibration', False))
 
                 # Load and apply calibration quality config (only on first load)
                 cal_quality_config_file = config.get('calibration_quality_config', {})
@@ -744,6 +746,20 @@ class AudioSettingsPanel:
                 else:
                     calibration_channel = int(calibration_channel_str.replace("Ch ", ""))
 
+                # Normalize by calibration checkbox (only if calibration is enabled)
+                current_normalize = mc_config.get('normalize_by_calibration', False)
+                if calibration_channel is not None:
+                    normalize_by_calibration = st.checkbox(
+                        "Normalize by calibration",
+                        value=current_normalize,
+                        key="normalize_by_calibration_checkbox",
+                        help="Divide response channels by calibration impulse magnitude (negative peak) to normalize amplitude"
+                    )
+                else:
+                    normalize_by_calibration = False
+                    if current_normalize:
+                        st.info("ℹ️ Normalization disabled (no calibration channel selected)")
+
             with col2:
                 # 3. Channel naming
                 st.markdown("**Channel Names**")
@@ -774,6 +790,7 @@ class AudioSettingsPanel:
                         self.recorder.multichannel_config['channel_names'] = channel_names
                         self.recorder.multichannel_config['reference_channel'] = reference_channel
                         self.recorder.multichannel_config['calibration_channel'] = calibration_channel
+                        self.recorder.multichannel_config['normalize_by_calibration'] = normalize_by_calibration
 
                         # Ensure response_channels list is updated
                         if calibration_channel is not None:
