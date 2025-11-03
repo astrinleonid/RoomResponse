@@ -26,7 +26,7 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 - ✅ Multi-channel response review GUI (interactive visualization)
 - ✅ Series Settings calibration mode integration (complete with cycle overlay, statistics)
 - ✅ Code cleanup and refactoring (Phase 6 complete)
-- ⚠️ Collect Panel calibration mode (needs review - may already be implemented)
+- ❌ Collection Panel calibration mode (needs UI to select mode - currently standard only)
 - ❌ Scenarios Panel analysis integration (needs implementation)
 - ❌ Full multi-channel scenario visualization GUI (planned for future)
 
@@ -896,7 +896,22 @@ gui_series_worker.py:302
 
 ## Roadmap
 
-### Immediate: Scenarios Panel Integration (High Priority)
+### Priority 1: Collection Panel Calibration Mode (Immediate)
+
+**Task:** Add UI to select recording mode (standard vs calibration) in Collection Panel.
+
+**Current State:**
+- Collection Panel uses `SingleScenarioCollector` → `recorder.take_record()` with default mode='standard'
+- No UI to select calibration mode
+
+**Implementation:**
+- Add radio button or dropdown for mode selection in Collection Panel UI
+- Pass selected mode to `SingleScenarioCollector` (modify constructor/execute)
+- Update `DatasetCollector.py` to pass mode to `take_record(mode=...)`
+
+**Effort:** 2-4 hours
+
+### Priority 2: Scenarios Panel Integration (High Priority)
 
 **Task:** Add Series Recording Analysis capabilities to Scenarios Panel for reviewing saved calibration recordings.
 
@@ -1213,8 +1228,14 @@ def take_record_calibration(self) -> Dict[str, Any]
 - Configuration profile management
 
 **Remaining Work:**
-1. **Collection Panel Calibration Mode** - Needs review (may already work)
+1. **Collection Panel Calibration Mode** - Add mode selector UI and pass to `take_record(mode=...)`
+   - Current: Uses standard mode only (default)
+   - Needed: Radio button or dropdown to select standard/calibration mode
+   - Implementation: Pass selected mode to `SingleScenarioCollector`
+   - Effort: 2-4 hours
 2. **Scenarios Panel Integration** - Add analysis capabilities for saved recordings
+   - Effort: 1-2 days
 3. **Hardware Testing** - Validate with various multi-channel interfaces
+   - Effort: 1 week
 
-**System Maturity:** Production-ready for single and multi-channel recording with calibration validation. Scenarios Panel integration is the only major feature gap.
+**System Maturity:** Production-ready for single and multi-channel recording with calibration validation. Collection Panel and Scenarios Panel are the main feature gaps.
