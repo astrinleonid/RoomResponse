@@ -143,10 +143,6 @@ class RoomResponseRecorder:
         self.gap_samples = self.cycle_samples - self.pulse_samples
         self.total_duration = self.cycle_duration * self.num_pulses
 
-        # Initialize signal processor (extracted signal processing logic)
-        from signal_processor import SignalProcessor, SignalProcessingConfig
-        self._init_signal_processor()
-
         # Signal generation
         self.playback_signal = self._generate_complete_signal()
 
@@ -164,13 +160,6 @@ class RoomResponseRecorder:
         else:
             self.input_device = -1
             self.output_device = -1
-
-    def _init_signal_processor(self):
-        """Initialize or reinitialize the signal processor with current config"""
-        from signal_processor import SignalProcessor, SignalProcessingConfig
-        self.signal_processor = SignalProcessor(
-            SignalProcessingConfig.from_recorder(self)
-        )
 
     def get_sdl_core_info(self) -> dict:
         """
@@ -704,7 +693,7 @@ class RoomResponseRecorder:
 
     def _extract_cycles(self, audio: np.ndarray) -> np.ndarray:
         """
-        Extract cycles from raw audio (delegates to SignalProcessor).
+        Extract cycles from raw audio using simple reshape.
 
         Pads or trims audio to expected length, then reshapes into cycles.
 
@@ -714,11 +703,22 @@ class RoomResponseRecorder:
         Returns:
             Cycles array [num_cycles, cycle_samples]
         """
-        return self.signal_processor.extract_cycles(audio)
+        expected_samples = self.cycle_samples * self.num_pulses
+
+        # Pad or trim to expected length
+        if len(audio) < expected_samples:
+            padded = np.zeros(expected_samples, dtype=audio.dtype)
+            padded[:len(audio)] = audio
+            audio = padded
+        else:
+            audio = audio[:expected_samples]
+
+        # Reshape into cycles
+        return audio.reshape(self.num_pulses, self.cycle_samples)
 
     def _average_cycles(self, cycles: np.ndarray, start_cycle: int = None) -> np.ndarray:
         """
-        Average cycles starting from start_cycle (delegates to SignalProcessor).
+        Average cycles starting from start_cycle.
 
         Skips initial cycles to allow system settling.
 
@@ -732,14 +732,14 @@ class RoomResponseRecorder:
         if start_cycle is None:
             start_cycle = max(1, self.num_pulses // 4)
 
-        return self.signal_processor.average_cycles(cycles, start_cycle=start_cycle)
+        return np.mean(cycles[start_cycle:], axis=0)
 
     def _compute_spectral_analysis(self,
                                     responses: Dict[int, np.ndarray],
                                     window_start: float = 0.0,
                                     window_end: float = 1.0) -> Dict[str, Any]:
         """
-        Compute FFT spectral analysis of responses (delegates to SignalProcessor).
+        Compute FFT spectral analysis of responses.
 
         Args:
             responses: Response signals per channel (Dict[ch_idx -> np.ndarray])
@@ -754,9 +754,33 @@ class RoomResponseRecorder:
                 'window': [start_frac, end_frac] - Window used
                 'n_fft': int - FFT size
         """
-        return self.signal_processor.compute_spectral_analysis(
-            responses, window_start=window_start, window_end=window_end
-        )
+        # Get first response to determine length
+        first_response = next(iter(responses.values()))
+        n_samples = len(first_response)
+
+        # Apply window
+        start_idx = int(window_start * n_samples)
+        end_idx = int(window_end * n_samples)
+
+        # Compute FFT for each channel
+        frequencies = np.fft.rfftfreq(n_samples, 1 / self.sample_rate)
+        magnitudes = {}
+        magnitude_db = {}
+
+        for ch_idx, response in responses.items():
+            windowed = response[start_idx:end_idx]
+            fft = np.fft.rfft(windowed, n=n_samples)
+            mag = np.abs(fft)
+            magnitudes[ch_idx] = mag
+            magnitude_db[ch_idx] = 20 * np.log10(mag + 1e-10)
+
+        return {
+            'frequencies': frequencies,
+            'magnitudes': magnitudes,
+            'magnitude_db': magnitude_db,
+            'window': [window_start, window_end],
+            'n_fft': n_samples
+        }
 
     def _process_single_channel_signal(self, recorded_audio: np.ndarray) -> Dict[str, Any]:
         """
@@ -868,29 +892,42 @@ class RoomResponseRecorder:
 
     def _find_onset_in_room_response(self, room_response: np.ndarray) -> int:
         """
-        Find onset position in a room response (delegates to SignalProcessor).
-
-        NOTE ON ALIGNMENT SYSTEMS:
-        This method is part of the SIMPLE alignment system used in standard mode.
-        It assumes good timing from the audio engine (synthetic pulses with minimal jitter).
-
-        The system finds the onset once in the averaged response and applies the same
-        shift to all channels, which is fast and works well for controlled conditions.
-
-        For comparison, calibration mode uses ADVANCED per-cycle alignment:
-        - Detects onset in EACH individual cycle (handles timing variance)
-        - Aligns cycles individually before averaging
-        - Applies cross-correlation filtering to remove outliers
-        - More robust but slower - designed for physical impacts with variable timing
-
-        Both approaches are INTENTIONAL design decisions serving different use cases.
+        Find onset position in a room response (extracted helper method)
         """
-        return self.signal_processor.find_onset_in_room_response(room_response)
+        max_index = np.argmax(np.abs(room_response))
+
+        if max_index > 50:
+            search_start = max(0, max_index - 100)
+            search_window = room_response[search_start:max_index + 50]
+            onset_in_window = self._find_sound_onset(search_window)
+            onset = search_start + onset_in_window
+        else:
+            onset = 0
+
+        return onset
 
     def _extract_impulse_response(self, room_response: np.ndarray) -> np.ndarray:
-        """Extract impulse response (delegates to SignalProcessor)"""
+        """Extract impulse response by finding onset and rotating signal"""
         try:
-            return self.signal_processor.extract_impulse_response(room_response)
+            max_index = np.argmax(np.abs(room_response))
+
+            if max_index > 50:  # Search for onset if peak not at beginning
+                search_start = max(0, max_index - 100)
+                search_window = room_response[search_start:max_index + 50]
+
+                onset_in_window = self._find_sound_onset(search_window)
+                onset = search_start + onset_in_window
+
+                print(f"Found onset at sample {onset} (peak at {max_index})")
+
+                # Rotate signal to put onset at beginning
+                impulse_response = np.concatenate([room_response[onset:], room_response[:onset]])
+            else:
+                print("Peak near beginning, using room response as impulse response")
+                impulse_response = room_response.copy()
+
+            return impulse_response
+
         except Exception as e:
             print(f"Error extracting impulse response: {e}")
             return room_response.copy()

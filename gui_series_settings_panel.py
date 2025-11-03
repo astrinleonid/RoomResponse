@@ -772,9 +772,6 @@ class SeriesSettingsPanel:
 
         r.playback_signal = r._generate_complete_signal()
 
-        # Reinitialize signal processor with updated config
-        r._init_signal_processor()
-
     # ----------------------
     # Analysis / Visualization
     # ----------------------
