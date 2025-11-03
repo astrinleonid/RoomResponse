@@ -87,7 +87,8 @@ class SingleScenarioCollector:
         resume: bool = True,                      # continue from next index if appending
         pause_file_name: str = "PAUSE",           # drop this file into the scenario root to pause
         stop_file_name: str = "STOP",             # drop this file into the scenario root to stop
-        recorder: Optional[RoomResponseRecorder] = None
+        recorder: Optional[RoomResponseRecorder] = None,
+        recording_mode: str = "standard"          # 'standard' (default) or 'calibration'
     ):
         self.base_output_dir = Path(base_output_dir)
         self.merge_mode = merge_mode.lower()
@@ -95,6 +96,7 @@ class SingleScenarioCollector:
         self.resume_enabled = bool(resume)
         self.pause_file_name = pause_file_name
         self.stop_file_name = stop_file_name
+        self.recording_mode = recording_mode.lower()  # Store recording mode
 
         if scenario_config:
             self.setup_scenario_from_dict(**scenario_config)
@@ -533,7 +535,7 @@ class SingleScenarioCollector:
             for i in range(self.scenario.warm_up_measurements):
                 print(f"  Warm-up {i + 1}/{self.scenario.warm_up_measurements}")
                 try:
-                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav")
+                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav", mode=self.recording_mode)
                 except Exception as e:
                     print(f"    Warm-up failed: {e}")
                 for tmp in ["temp_warmup.wav", "temp_warmup_impulse.wav"]:
@@ -568,7 +570,8 @@ class SingleScenarioCollector:
             try:
                 audio_data = self.recorder.take_record(
                     str(raw_path),
-                    str(impulse_path)
+                    str(impulse_path),
+                    mode=self.recording_mode
                 )
 
                 # If the recorder writes the room response under a derived name, relocate it to our target name.

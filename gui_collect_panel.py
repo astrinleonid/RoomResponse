@@ -251,6 +251,34 @@ class CollectionPanel:
 
     def _render_common_configuration(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
         st.markdown("### Common Configuration")
+
+        # Recording mode selection
+        st.markdown("**Recording Mode**")
+        mc_config = self.recorder.multichannel_config if self.recorder else {}
+        mc_enabled = mc_config.get('enabled', False)
+        cal_channel = mc_config.get('calibration_channel')
+
+        recording_mode = st.radio(
+            "Select recording mode:",
+            options=["Standard", "Calibration"],
+            index=0,
+            help="Standard: Simple averaged response. Calibration: Advanced per-cycle alignment with quality filtering.",
+            horizontal=True
+        )
+
+        # Show warning if calibration selected without proper setup
+        if recording_mode == "Calibration":
+            if not mc_enabled:
+                st.error("⚠️ Calibration mode requires multi-channel recording to be enabled.")
+                st.info("Go to Audio Settings → Device Selection & Testing → Enable multi-channel recording")
+            elif cal_channel is None:
+                st.error("⚠️ Calibration mode requires a calibration channel to be configured.")
+                st.info("Go to Audio Settings → Device Selection & Testing → Multi-Channel Configuration → Set calibration channel")
+            else:
+                st.success(f"✓ Calibration mode ready (Calibration channel: Ch {cal_channel})")
+
+        st.markdown("---")
+
         c1, c2 = st.columns([1, 1])
         with c1:
             computer_name = st.text_input("Computer name", value=config_data["defaults"].get("computer", "Unknown_Computer"))
@@ -288,6 +316,9 @@ class CollectionPanel:
                 st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = st.session_state.get(SK_DATASET_ROOT, os.getcwd()); st.rerun()
         st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = resolved
 
+        # Convert recording mode to lowercase for API compatibility
+        mode_param = recording_mode.lower()  # "Standard" -> "standard", "Calibration" -> "calibration"
+
         return {
             "computer_name": computer_name,
             "room_name": room_name,
@@ -296,6 +327,7 @@ class CollectionPanel:
             "interactive_devices": bool(interactive_devices),
             "config_file": config_file,
             "output_dir": resolved,
+            "recording_mode": mode_param,
         }
 
     def _render_single_scenario_mode(self, common_cfg: Dict[str, Any]) -> None:
@@ -396,6 +428,7 @@ class CollectionPanel:
                     beep_dur_ms=int(beep_dur),
                     record_timeout_s=float(max_record_time),
                     interval_mode=interval_mode,
+                    recording_mode=common_cfg["recording_mode"],
                 )
                 st.session_state[SK_SERIES_EVT_Q] = evt_q
                 st.session_state[SK_SERIES_CMD_Q] = cmd_q
@@ -507,7 +540,8 @@ class SingleScenarioExecutor:
                 recorder_config=common_config["config_file"],
                 scenario_config=params,
                 merge_mode="append", allow_config_mismatch=False, resume=True,
-                recorder=self.recorder
+                recorder=self.recorder,
+                recording_mode=common_config["recording_mode"]
             )
             st.info("🎵 Collection started (blocking). Monitor the console for progress.")
             collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
