@@ -2,9 +2,9 @@
   "sample_rate": 48000,
   "pulse_duration": 0.019,
   "pulse_fade": 0.018,
-  "cycle_duration": 0.5,
-  "num_pulses": 6,
-  "volume": 0.15,
+  "cycle_duration": 1.0,
+  "num_pulses": 10,
+  "volume": 0.1,
   "pulse_frequency": 1000.0,
   "impulse_form": "voice_coil",
   "computer": "System Default",
@@ -42,21 +42,22 @@
       5,
       6,
       7
-    ]
+    ],
+    "normalize_by_calibration": true
   },
-  "last_updated": 1762003041.6434119,
-  "last_updated_by": "Calibration Impulse Panel",
+  "last_updated": 1762196642.2154286,
+  "last_updated_by": "Series Settings Panel",
   "calibration_quality_config": {
-    "min_negative_peak": 0.8575256371498108,
-    "max_negative_peak": 0.977734694480896,
-    "max_precursor_ratio": 0.2,
-    "min_negative_peak_width_ms": 0.3,
-    "max_negative_peak_width_ms": 3.0,
-    "max_first_positive_ratio": 0.3,
-    "min_first_positive_time_ms": 0.1,
-    "max_first_positive_time_ms": 5.0,
-    "max_highest_positive_ratio": 0.5,
-    "max_secondary_negative_ratio": 0.3,
+    "min_negative_peak": 0.3,
+    "max_negative_peak": 0.5,
+    "max_precursor_ratio": 0.1,
+    "min_negative_peak_width_ms": 0.15,
+    "max_negative_peak_width_ms": 0.25,
+    "max_first_positive_ratio": 1.0,
+    "min_first_positive_time_ms": 0.2,
+    "max_first_positive_time_ms": 0.56875,
+    "max_highest_positive_ratio": 1.0,
+    "max_secondary_negative_ratio": 0.5355669260025024,
     "secondary_negative_window_ms": 10.0
   }
 }

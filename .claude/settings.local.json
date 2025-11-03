@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(.venv/Scripts/python.exe:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(cp:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull:*)",
+      "Bash(git merge:*)",
+      "Bash(\"d:\\repos\\RoomResponse\\.venv\\Scripts\\python.exe\" -m py_compile \"d:\\repos\\RoomResponse\\gui_series_settings_panel.py\")"
     ],
     "deny": [],
     "ask": []
