@@ -146,7 +146,6 @@ class AudioCollectionGUI:
         st.sidebar.text_input(
             "Folder",
             key=SK_DATASET_NAME,
-            value=st.session_state[SK_DATASET_NAME],
             help="Folder name or full path"
         )
 

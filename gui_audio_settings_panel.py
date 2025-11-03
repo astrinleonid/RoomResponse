@@ -760,6 +760,37 @@ class AudioSettingsPanel:
                     if current_normalize:
                         st.info("ℹ️ Normalization disabled (no calibration channel selected)")
 
+                # Advanced calibration alignment parameters (only if calibration is enabled)
+                if calibration_channel is not None:
+                    st.markdown("**Calibration Alignment Settings**")
+
+                    # Correlation threshold
+                    current_corr_threshold = mc_config.get('alignment_correlation_threshold', 0.7)
+                    alignment_correlation_threshold = st.slider(
+                        "Correlation threshold",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=float(current_corr_threshold),
+                        step=0.05,
+                        key="alignment_correlation_threshold_slider",
+                        help="Minimum cross-correlation value to keep a cycle after alignment (default: 0.7). Higher = stricter filtering"
+                    )
+
+                    # Target onset position
+                    current_target_onset = mc_config.get('alignment_target_onset_position', 0)
+                    alignment_target_onset_position = st.number_input(
+                        "Target onset position (samples)",
+                        min_value=0,
+                        max_value=1000,
+                        value=int(current_target_onset),
+                        step=10,
+                        key="alignment_target_onset_position_input",
+                        help="Target sample position for aligned onset (default: 0). Set to 0 for onset at beginning, or >0 to preserve pre-onset data (e.g., 100 samples ≈ 2ms at 48kHz)"
+                    )
+                else:
+                    alignment_correlation_threshold = 0.7
+                    alignment_target_onset_position = 0
+
             with col2:
                 # 3. Channel naming
                 st.markdown("**Channel Names**")
@@ -791,6 +822,8 @@ class AudioSettingsPanel:
                         self.recorder.multichannel_config['reference_channel'] = reference_channel
                         self.recorder.multichannel_config['calibration_channel'] = calibration_channel
                         self.recorder.multichannel_config['normalize_by_calibration'] = normalize_by_calibration
+                        self.recorder.multichannel_config['alignment_correlation_threshold'] = alignment_correlation_threshold
+                        self.recorder.multichannel_config['alignment_target_onset_position'] = alignment_target_onset_position
 
                         # Ensure response_channels list is updated
                         if calibration_channel is not None:

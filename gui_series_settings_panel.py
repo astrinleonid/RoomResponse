@@ -1006,7 +1006,9 @@ class SeriesSettingsPanel:
             self._render_cycle_analysis(analysis, sr)
             self._render_cycle_consistency_overlay(analysis, sr)
 
-        if analysis.get('averaged_cycle') is not None:
+        # Only render averaged analysis for standard mode (calibration mode shows it in cycle statistics section)
+        recording_mode = st.session_state.get('series_recording_mode_used', 'standard')
+        if analysis.get('averaged_cycle') is not None and recording_mode == 'standard':
             self._render_averaged_analysis(analysis, sr)
 
     def _display_analysis_metrics(self, analysis: Dict[str, Any]) -> None:
@@ -1064,9 +1066,26 @@ class SeriesSettingsPanel:
         aligned_onset_position = alignment_metadata.get('aligned_onset_position', 0)
         correlation_threshold = metadata.get('correlation_threshold', 0.7)
 
-        # Get selected channel
-        selected_ch = st.session_state.get('series_analysis_channel',
-                                           metadata.get('reference_channel', 0))
+        # Get selected channel with UI selector
+        available_channels = list(aligned_multichannel.keys()) if aligned_multichannel else [0]
+        default_ch = st.session_state.get('series_analysis_channel',
+                                         metadata.get('reference_channel', 0))
+
+        # Channel selector for cycle statistics and overlay
+        col_ch1, col_ch2 = st.columns([3, 1])
+        with col_ch1:
+            selected_ch = st.selectbox(
+                "Analysis Channel",
+                available_channels,
+                index=available_channels.index(default_ch) if default_ch in available_channels else 0,
+                key="series_cycle_analysis_channel",
+                help="Select which channel to display in cycle statistics and overlay chart"
+            )
+        with col_ch2:
+            st.caption(f"{len(available_channels)} channels")
+
+        # Update session state with selected channel
+        st.session_state['series_analysis_channel'] = selected_ch
 
         # Build statistics table
         st.markdown("---")
@@ -1295,6 +1314,27 @@ class SeriesSettingsPanel:
                 if not peak_alignment_ok:
                     st.warning(f"⚠️ Peak positions deviate significantly from aligned position {aligned_pos}. "
                               "This may indicate an alignment issue.")
+
+            # Render averaged cycle visualization for selected channel
+            st.markdown("---")
+            st.markdown("**📈 Averaged Cycle — Final Result**")
+            st.caption(f"Averaged response for Channel {selected_ch}")
+
+            # Compute averaged cycle from aligned/normalized multichannel data
+            cycles_to_average = normalized_multichannel if normalize_enabled else aligned_multichannel
+            if selected_ch in cycles_to_average:
+                averaged_cycle_for_channel = np.mean(cycles_to_average[selected_ch], axis=0)
+
+                # Render using AudioVisualizer (VISUALIZER_AVAILABLE defined at module level)
+                if VISUALIZER_AVAILABLE:
+                    AudioVisualizer("series_averaged_cycle_selected_channel").render(
+                        audio_data=averaged_cycle_for_channel,
+                        sample_rate=metadata.get('sample_rate', 48000),
+                        title=f"Averaged Cycle — Channel {selected_ch}",
+                        show_controls=True,
+                        show_analysis=True,
+                        height=400
+                    )
 
     def _render_visualization_controls(self) -> None:
         with st.expander("Visualization Options"):

@@ -143,6 +143,10 @@ class RoomResponseRecorder:
         self.gap_samples = self.cycle_samples - self.pulse_samples
         self.total_duration = self.cycle_duration * self.num_pulses
 
+        # Initialize signal processor (extracted signal processing logic)
+        from signal_processor import SignalProcessor, SignalProcessingConfig
+        self._init_signal_processor()
+
         # Signal generation
         self.playback_signal = self._generate_complete_signal()
 
@@ -160,6 +164,13 @@ class RoomResponseRecorder:
         else:
             self.input_device = -1
             self.output_device = -1
+
+    def _init_signal_processor(self):
+        """Initialize or reinitialize the signal processor with current config"""
+        from signal_processor import SignalProcessor, SignalProcessingConfig
+        self.signal_processor = SignalProcessor(
+            SignalProcessingConfig.from_recorder(self)
+        )
 
     def get_sdl_core_info(self) -> dict:
         """
@@ -693,7 +704,7 @@ class RoomResponseRecorder:
 
     def _extract_cycles(self, audio: np.ndarray) -> np.ndarray:
         """
-        Extract cycles from raw audio using simple reshape.
+        Extract cycles from raw audio (delegates to SignalProcessor).
 
         Pads or trims audio to expected length, then reshapes into cycles.
 
@@ -703,22 +714,11 @@ class RoomResponseRecorder:
         Returns:
             Cycles array [num_cycles, cycle_samples]
         """
-        expected_samples = self.cycle_samples * self.num_pulses
-
-        # Pad or trim to expected length
-        if len(audio) < expected_samples:
-            padded = np.zeros(expected_samples, dtype=audio.dtype)
-            padded[:len(audio)] = audio
-            audio = padded
-        else:
-            audio = audio[:expected_samples]
-
-        # Reshape into cycles
-        return audio.reshape(self.num_pulses, self.cycle_samples)
+        return self.signal_processor.extract_cycles(audio)
 
     def _average_cycles(self, cycles: np.ndarray, start_cycle: int = None) -> np.ndarray:
         """
-        Average cycles starting from start_cycle.
+        Average cycles starting from start_cycle (delegates to SignalProcessor).
 
         Skips initial cycles to allow system settling.
 
@@ -732,10 +732,38 @@ class RoomResponseRecorder:
         if start_cycle is None:
             start_cycle = max(1, self.num_pulses // 4)
 
-        return np.mean(cycles[start_cycle:], axis=0)
+        return self.signal_processor.average_cycles(cycles, start_cycle=start_cycle)
+
+    def _compute_spectral_analysis(self,
+                                    responses: Dict[int, np.ndarray],
+                                    window_start: float = 0.0,
+                                    window_end: float = 1.0) -> Dict[str, Any]:
+        """
+        Compute FFT spectral analysis of responses (delegates to SignalProcessor).
+
+        Args:
+            responses: Response signals per channel (Dict[ch_idx -> np.ndarray])
+            window_start: Start of analysis window (fraction 0.0-1.0)
+            window_end: End of analysis window (fraction 0.0-1.0)
+
+        Returns:
+            Dict with:
+                'frequencies': np.ndarray - Frequency bins (Hz)
+                'magnitudes': Dict[ch_idx -> np.ndarray] - FFT magnitude per channel
+                'magnitude_db': Dict[ch_idx -> np.ndarray] - Magnitude in dB per channel
+                'window': [start_frac, end_frac] - Window used
+                'n_fft': int - FFT size
+        """
+        return self.signal_processor.compute_spectral_analysis(
+            responses, window_start=window_start, window_end=window_end
+        )
 
     def _process_single_channel_signal(self, recorded_audio: np.ndarray) -> Dict[str, Any]:
-        """Process single-channel standard recording using helper methods"""
+        """
+        Process single-channel standard recording using helper methods
+
+        UPDATED: Now returns complete processed data dict including individual cycles
+        """
 
         # Extract cycles using helper
         cycles = self._extract_cycles(recorded_audio)
@@ -748,10 +776,28 @@ class RoomResponseRecorder:
         # Extract impulse response
         impulse_response = self._extract_impulse_response(room_response)
 
+        # Compute spectral analysis (NEW: Phase 4)
+        spectral_analysis = self._compute_spectral_analysis(
+            {0: room_response},
+            window_start=0.0,
+            window_end=1.0
+        )
+
         return {
-            'raw': recorded_audio,
-            'room_response': room_response,
-            'impulse': impulse_response
+            'raw': {0: recorded_audio},  # Wrap in dict for consistency with multi-channel
+            'individual_cycles': {0: cycles},  # Individual cycles for visualization
+            'room_response': {0: room_response},  # Wrap in dict for consistency
+            'impulse': {0: impulse_response},  # Wrap in dict for consistency
+            'spectral_analysis': spectral_analysis,  # NEW: Spectral analysis from backend
+            'metadata': {
+                'mode': 'standard',
+                'num_channels': 1,
+                'num_cycles': self.num_pulses,
+                'cycles_used_for_averaging': self.num_pulses - start_cycle,
+                'averaging_start_cycle': start_cycle,
+                'cycle_samples': self.cycle_samples,
+                'sample_rate': self.sample_rate,
+            }
         }
 
     def _process_multichannel_signal(self, multichannel_audio: Dict[int, np.ndarray]) -> Dict[str, Any]:
@@ -759,6 +805,7 @@ class RoomResponseRecorder:
         Process multi-channel recording with synchronized alignment using helper methods
 
         CRITICAL: All channels are aligned using the SAME shift calculated from reference channel
+        UPDATED: Now returns complete processed data dict including individual cycles
         """
         num_channels = len(multichannel_audio)
         ref_channel = self.multichannel_config.get('reference_channel', 0)
@@ -778,10 +825,17 @@ class RoomResponseRecorder:
         # 3. Apply cycle averaging to ALL channels and align with SAME shift
         result = {
             'raw': {},
+            'individual_cycles': {},  # Individual cycles for visualization
             'room_response': {},
             'impulse': {},
             'metadata': {
+                'mode': 'standard',
                 'num_channels': num_channels,
+                'num_cycles': self.num_pulses,
+                'cycles_used_for_averaging': self.num_pulses - start_cycle,
+                'averaging_start_cycle': start_cycle,
+                'cycle_samples': self.cycle_samples,
+                'sample_rate': self.sample_rate,
                 'reference_channel': ref_channel,
                 'onset_sample': onset_sample,
                 'shift_applied': shift_amount
@@ -797,51 +851,46 @@ class RoomResponseRecorder:
             impulse_response = np.roll(room_response, shift_amount)
 
             result['raw'][ch_idx] = audio
+            result['individual_cycles'][ch_idx] = cycles  # Store individual cycles
             result['room_response'][ch_idx] = room_response
             result['impulse'][ch_idx] = impulse_response
 
             print(f"  Channel {ch_idx}: aligned with shift={shift_amount}")
 
+        # 4. Compute spectral analysis for all channels (NEW: Phase 4)
+        result['spectral_analysis'] = self._compute_spectral_analysis(
+            result['room_response'],
+            window_start=0.0,
+            window_end=1.0
+        )
+
         return result
 
     def _find_onset_in_room_response(self, room_response: np.ndarray) -> int:
         """
-        Find onset position in a room response (extracted helper method)
+        Find onset position in a room response (delegates to SignalProcessor).
+
+        NOTE ON ALIGNMENT SYSTEMS:
+        This method is part of the SIMPLE alignment system used in standard mode.
+        It assumes good timing from the audio engine (synthetic pulses with minimal jitter).
+
+        The system finds the onset once in the averaged response and applies the same
+        shift to all channels, which is fast and works well for controlled conditions.
+
+        For comparison, calibration mode uses ADVANCED per-cycle alignment:
+        - Detects onset in EACH individual cycle (handles timing variance)
+        - Aligns cycles individually before averaging
+        - Applies cross-correlation filtering to remove outliers
+        - More robust but slower - designed for physical impacts with variable timing
+
+        Both approaches are INTENTIONAL design decisions serving different use cases.
         """
-        max_index = np.argmax(np.abs(room_response))
-
-        if max_index > 50:
-            search_start = max(0, max_index - 100)
-            search_window = room_response[search_start:max_index + 50]
-            onset_in_window = self._find_sound_onset(search_window)
-            onset = search_start + onset_in_window
-        else:
-            onset = 0
-
-        return onset
+        return self.signal_processor.find_onset_in_room_response(room_response)
 
     def _extract_impulse_response(self, room_response: np.ndarray) -> np.ndarray:
-        """Extract impulse response by finding onset and rotating signal"""
+        """Extract impulse response (delegates to SignalProcessor)"""
         try:
-            max_index = np.argmax(np.abs(room_response))
-
-            if max_index > 50:  # Search for onset if peak not at beginning
-                search_start = max(0, max_index - 100)
-                search_window = room_response[search_start:max_index + 50]
-
-                onset_in_window = self._find_sound_onset(search_window)
-                onset = search_start + onset_in_window
-
-                print(f"Found onset at sample {onset} (peak at {max_index})")
-
-                # Rotate signal to put onset at beginning
-                impulse_response = np.concatenate([room_response[onset:], room_response[:onset]])
-            else:
-                print("Peak near beginning, using room response as impulse response")
-                impulse_response = room_response.copy()
-
-            return impulse_response
-
+            return self.signal_processor.extract_impulse_response(room_response)
         except Exception as e:
             print(f"Error extracting impulse response: {e}")
             return room_response.copy()
@@ -868,7 +917,26 @@ class RoomResponseRecorder:
         return onset_candidates[0] if len(onset_candidates) > 0 else 0
 
     # ========================================================================
-    # Cycle Alignment Methods (for Calibration Test) - Two-Stage Process
+    # Cycle Alignment Methods (for Calibration Mode) - Advanced Per-Cycle Alignment
+    # ========================================================================
+    #
+    # NOTE ON ALIGNMENT SYSTEMS:
+    #
+    # This is the ADVANCED alignment system for calibration mode, designed for
+    # physical impacts with variable timing (e.g., piano hammer strikes).
+    #
+    # KEY DIFFERENCES FROM STANDARD MODE:
+    # 1. PER-CYCLE alignment - Each cycle is aligned individually
+    # 2. QUALITY FILTERING - Only validated cycles are used
+    # 3. CROSS-CORRELATION - Outliers are removed based on similarity
+    # 4. ROBUST to timing variance - Handles ±several samples of jitter
+    #
+    # Standard mode uses SIMPLE alignment (see _find_onset_in_room_response):
+    # - Single onset detection in averaged response
+    # - Fast and efficient for synthetic pulses
+    # - Assumes minimal timing jitter
+    #
+    # Both are INTENTIONAL - choose based on signal source characteristics.
     # ========================================================================
 
     def align_cycles_by_onset(self, initial_cycles: np.ndarray, validation_results: list,
@@ -931,9 +999,9 @@ class RoomResponseRecorder:
             onset_positions.append(onset_idx)
 
         # STEP 3: Determine common onset position
-        # Use a position near the beginning to ensure onset is at chart start
-        # This leaves some space for pre-onset data but puts the peak near the beginning
-        target_onset_position = self.multichannel_config.get('alignment_target_onset_position', 100)
+        # Default: 0 (onset at beginning of waveform)
+        # User can override to preserve pre-onset data (e.g., 100 samples for ~2ms buffer)
+        target_onset_position = self.multichannel_config.get('alignment_target_onset_position', 0)
         aligned_onset_position = target_onset_position
 
         # STEP 4: Align all cycles by shifting to common onset position
@@ -1061,7 +1129,8 @@ class RoomResponseRecorder:
     def _normalize_by_calibration(self,
                                    aligned_multichannel_cycles: Dict[int, np.ndarray],
                                    validation_results: List[Dict],
-                                   calibration_channel: int) -> Tuple[Dict[int, np.ndarray], List[float]]:
+                                   calibration_channel: int,
+                                   valid_cycle_indices: List[int]) -> Tuple[Dict[int, np.ndarray], List[float]]:
         """
         Normalize response channels by calibration signal magnitude.
 
@@ -1076,6 +1145,8 @@ class RoomResponseRecorder:
             validation_results: List of validation dicts with calibration_metrics
                                containing 'negative_peak' values
             calibration_channel: Channel index of calibration sensor
+            valid_cycle_indices: List of original cycle indices for aligned cycles
+                                (maps aligned_idx -> original_idx)
 
         Returns:
             Tuple of:
@@ -1128,18 +1199,31 @@ class RoomResponseRecorder:
             # Normalize response channel
             normalized_cycles = []
             for cycle_idx, cycle_data in enumerate(channel_cycles):
-                if cycle_idx < len(normalization_factors):
-                    norm_factor = normalization_factors[cycle_idx]
+                # Map aligned cycle index to original cycle index
+                if cycle_idx < len(valid_cycle_indices):
+                    original_idx = valid_cycle_indices[cycle_idx]
 
-                    # Protect against division by zero
-                    if norm_factor > 1e-6:
-                        normalized_cycle = cycle_data / norm_factor
-                        normalized_cycles.append(normalized_cycle)
+                    # Get normalization factor for the original cycle
+                    if original_idx < len(normalization_factors):
+                        norm_factor = normalization_factors[original_idx]
+
+                        # Protect against division by zero
+                        if norm_factor > 1e-6:
+                            normalized_cycle = cycle_data / norm_factor
+                            normalized_cycles.append(normalized_cycle)
+                        else:
+                            print(f"Warning: Skipping cycle {original_idx} (aligned position {cycle_idx}) "
+                                  f"in channel {ch_idx} (normalization factor too small: {norm_factor})")
+                            # Keep unnormalized if factor is too small
+                            normalized_cycles.append(cycle_data)
                     else:
-                        print(f"Warning: Skipping cycle {cycle_idx} in channel {ch_idx} "
-                              f"(normalization factor too small: {norm_factor})")
-                        # Keep unnormalized if factor is too small
+                        print(f"Warning: Original cycle index {original_idx} out of range for "
+                              f"normalization factors (len={len(normalization_factors)})")
                         normalized_cycles.append(cycle_data)
+                else:
+                    print(f"Warning: Aligned cycle {cycle_idx} out of range for "
+                          f"valid_cycle_indices (len={len(valid_cycle_indices)})")
+                    normalized_cycles.append(cycle_data)
 
             normalized_multichannel_cycles[ch_idx] = np.array(normalized_cycles)
 
@@ -1258,9 +1342,17 @@ class RoomResponseRecorder:
             if mode == 'calibration':
                 return processed_data  # Calibration always returns processed data
             elif return_processed:
-                return processed_data  # Internal use only
+                return processed_data  # Internal use: Returns complete processed dict
             else:
-                return recorded_audio  # EXISTING BEHAVIOR - returns raw audio
+                # BACKWARD COMPATIBLE: Return raw audio in original format
+                # Extract raw audio from processed_data for backward compatibility
+                raw_audio = processed_data.get('raw', {})
+                if len(raw_audio) == 1 and 0 in raw_audio:
+                    # Single channel: return np.ndarray (legacy format)
+                    return raw_audio[0]
+                else:
+                    # Multi-channel: return Dict[int, np.ndarray] (legacy format)
+                    return raw_audio
 
         except Exception as e:
             print(f"Error during recording: {e}")
@@ -1361,7 +1453,8 @@ class RoomResponseRecorder:
             processed_cycles, normalization_factors = self._normalize_by_calibration(
                 aligned_multichannel_cycles,
                 validation_results,
-                cal_ch
+                cal_ch,
+                alignment_result['valid_cycle_indices']
             )
             print(f"    Impact magnitudes: min={min(normalization_factors):.4f}, "
                   f"max={max(normalization_factors):.4f}, mean={np.mean(normalization_factors):.4f}")
@@ -1370,7 +1463,7 @@ class RoomResponseRecorder:
             processed_cycles = aligned_multichannel_cycles
             normalization_factors = []
 
-        # STEP 5: Average processed cycles (like standard mode does)
+        # STEP 5: Average processed cycles using unified helper method
         print(f"  Averaging: Computing mean of {num_aligned} aligned cycles per channel")
         averaged_responses = {}
         for ch_idx, cycles in processed_cycles.items():
@@ -1381,8 +1474,9 @@ class RoomResponseRecorder:
 
             print(f"    Channel {ch_idx}: cycles shape = {cycles.shape}, dtype = {cycles.dtype}")
 
-            # Average all aligned/normalized cycles (no skipping needed - already filtered)
-            averaged_responses[ch_idx] = np.mean(cycles, axis=0)
+            # Use unified averaging helper method
+            # start_cycle=0 because cycles are already validated and filtered
+            averaged_responses[ch_idx] = self._average_cycles(cycles, start_cycle=0)
 
         # STEP 6: Extract impulse responses (onset already at target position from alignment)
         impulse_responses = {}
