@@ -122,7 +122,7 @@ class AudioVisualizer:
             f"{self.session_key_prefix}_view_mode": "waveform",
             f"{self.session_key_prefix}_zoom_start": 0.0,
             f"{self.session_key_prefix}_zoom_end": 1.0,
-            f"{self.session_key_prefix}_show_markers": True,
+            f"{self.session_key_prefix}_show_markers": False,
         }
         
         for key, value in defaults.items():
@@ -164,7 +164,7 @@ class AudioVisualizer:
         with col2:
             show_markers = st.checkbox(
                 "Show Markers",
-                value=st.session_state.get(f"{self.session_key_prefix}_show_markers", True),
+                value=st.session_state.get(f"{self.session_key_prefix}_show_markers", False),
                 key=f"{self.session_key_prefix}_markers_checkbox"
             )
             st.session_state[f"{self.session_key_prefix}_show_markers"] = show_markers

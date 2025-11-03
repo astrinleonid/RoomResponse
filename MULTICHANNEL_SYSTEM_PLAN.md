@@ -1,10 +1,10 @@
 # Multi-Channel Room Response System
 
-**Document Version:** 4.0
+**Document Version:** 4.1
 **Created:** 2025-10-31
-**Last Updated:** 2025-11-02
+**Last Updated:** 2025-11-03
 **Target:** Piano Response Measurement System
-**Status:** Core Implementation Complete | GUI Integration Complete | Pipeline Refactored ✅
+**Status:** Core Implementation Complete | GUI Integration Complete | Pipeline Refactored ✅ | Series Settings Calibration Mode Complete ✅
 
 ---
 
@@ -15,15 +15,19 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 **Implementation Status:**
 - ✅ Multi-channel audio recording (C++/Python)
 - ✅ Signal processing pipeline (single & multi-channel)
-- ✅ Calibration quality validation system (V3 - comprehensive 7-criteria)
+- ✅ Signal processing extracted to SignalProcessor class (clean architecture)
+- ✅ Calibration quality validation system (V2 - comprehensive 7-criteria)
 - ✅ Multi-channel file management
-- ✅ Calibration testing GUI interface
+- ✅ Calibration testing GUI interface (Calibration Impulse panel)
 - ✅ Multi-channel configuration GUI (fully implemented)
 - ✅ Configuration profile management system (save/load/delete)
 - ✅ Collection Panel multi-channel status display
 - ✅ Calibration-based normalization system
 - ✅ Multi-channel response review GUI (interactive visualization)
+- ✅ Series Settings calibration mode integration (complete with cycle overlay, statistics)
 - ✅ Code cleanup and refactoring (Phase 6 complete)
+- ⚠️ Collect Panel calibration mode (needs review - may already be implemented)
+- ❌ Scenarios Panel analysis integration (needs implementation)
 - ❌ Full multi-channel scenario visualization GUI (planned for future)
 
 ---
@@ -64,7 +68,7 @@ The Room Response system has been upgraded to support **synchronized multi-chann
   │   │   ├─ Device selection                             │
   │   │   ├─ Multi-channel configuration ✅              │
   │   │   ├─ Calibration Impulse testing ✅              │
-  │   │   └─ Series Settings                              │
+  │   │   └─ Series Settings ✅ (calibration mode complete)│
   │   ├─ CollectionPanel (23 KB) ✅                      │
   │   │   └─ Multi-channel status display ✅             │
   │   ├─ ConfigProfileManager (NEW) ✅                   │
@@ -840,32 +844,44 @@ gui_audio_settings_panel.py:1291
 
 **Status:** ✅ FULLY FUNCTIONAL
 
-### 2. Series Recording (Series Settings Panel) ⚠️ PARTIALLY WORKING
+### 2. Series Recording (Series Settings Panel) ✅ FULLY IMPLEMENTED
 
 **User Workflow:**
-1. Open Audio Settings → Series Settings tab
-2. Configure pulse parameters
-3. Click "Test Recording"
-4. System calls `recorder.take_record()`
-5. Files saved (multi-channel if enabled)
+1. Open Audio Settings → Series Controls tab
+2. Configure pulse parameters (num_pulses, duration, frequency, etc.)
+3. Select recording mode: **Standard** or **Calibration** (default: Calibration)
+4. Click "🎵 Record Series"
+5. Recording & Analysis section appears below with:
+   - Cycle Statistics table (for calibration mode)
+   - Cycle selection checkboxes
+   - Cycle overlay chart with zoom controls
+   - Display mode selector (Aligned/Normalized/Both)
+   - Overlay statistics (peak range, range width %, std dev)
 
 **Code Path:**
 ```
-gui_series_settings_panel.py:414
-    → recorder.take_record(output_file, impulse_file, method=2)
-        → RoomResponseRecorder.take_record(mode='standard')
-            → _record_method_2() [respects multichannel_config]
-            → _process_recorded_signal()
-                → _process_multichannel_signal() [if dict]
-                → _process_single_channel_signal() [if ndarray]
-            → _save_multichannel_files() [if multichannel]
-            → Returns raw audio
+gui_series_settings_panel.py
+    → _execute_series_recording()
+        → recorder.take_record(output_file, impulse_file, method=2, mode=recording_mode)
+            → RoomResponseRecorder.take_record(mode='calibration' or 'standard')
+                → _record_audio() [universal recording stage]
+                → _process_calibration_mode() [if mode='calibration']
+                    → Validation → Alignment → Normalization
+                → _process_standard_mode() [if mode='standard']
+                    → Averaging → Spectral analysis
+                → _save_multichannel_files() [if multichannel enabled]
+                → Returns complete processed dict
 ```
 
 **Status:**
 - ✅ Single-channel recording: TESTED, WORKING
-- ⚠️ Multi-channel recording: IMPLEMENTED, **NOT TESTED IN GUI**
-  (Works if `multichannel_config.enabled = true` in JSON)
+- ✅ Multi-channel recording: TESTED, WORKING
+- ✅ Calibration mode integration: COMPLETE
+- ✅ Cycle overlay visualization: COMPLETE (with zoom controls)
+- ✅ Display mode selector: COMPLETE (Aligned/Normalized/Both)
+- ✅ Cycle statistics display: COMPLETE (7-criteria validation results)
+- ✅ Overlay statistics: COMPLETE (peak range, range width %, std dev)
+- ✅ SignalProcessor integration: COMPLETE (settings auto-update processor)
 
 ### 3. Background Series Recording (Series Worker) ⚠️ PARTIALLY WORKING
 
@@ -1695,21 +1711,45 @@ The multi-channel recording system is **90% complete**. The core signal processi
 2. No GUI to visualize multi-channel recordings
 3. Code duplication between standard and calibration modes (maintenance risk)
 
-**Recommended Next Steps:**
+**Remaining Work:**
 
-**Core Development Track:**
-1. **Phase 6 (Refactoring)** - Clean up code duplication before hardware testing (3-4 days)
-2. **Phase 5 (Testing)** - Validate with real hardware (2, 4, 8 channels) (1 week)
-3. **Phase 7 (GUI - Core)** - Multi-channel configuration and visualization (1-2 weeks)
+### Priority 1: Collection Panel Calibration Mode (Immediate)
+**Status:** ⚠️ Needs review - may already be implemented
+**Task:** Verify Collection Panel supports calibration mode recording
+- Review if `gui_collection_panel.py` uses `mode` parameter in `take_record()`
+- Test calibration mode from Collection Panel
+- Add UI indicators for calibration mode if missing
+**Estimated Effort:** 2-4 hours (review + minor updates if needed)
 
-**Enhanced Features Track (Optional):** 🆕
-1. **Phase 7 (GUI - Profiles)** - Configuration profile management in sidebar (3-4 hours)
-2. **Phase 6.5 (Validation V3)** - Extensible validation system with custom metrics (2 weeks)
+### Priority 2: Scenarios Panel Analysis Integration (High Priority)
+**Status:** ❌ Not implemented
+**Task:** Integrate Series Recording Analysis functionality into Scenarios Panel
+**Features Needed:**
+- Load saved calibration recordings (NPZ files with aligned/normalized cycles)
+- Display Cycle Statistics table with validation results
+- Cycle selection checkboxes
+- Cycle overlay visualization with zoom controls
+- Display mode selector (Aligned/Normalized/Both)
+- Overlay statistics (peak range, range width %, std dev)
+- Channel selector for multi-channel recordings
+**Code to Reuse:**
+- `gui_series_settings_panel.py`: `_render_cycle_statistics_table()`
+- `gui_series_settings_panel.py`: `_render_calibration_cycle_overlay()`
+- `gui_series_settings_panel.py`: `_display_cycle_overlay_statistics()`
+**Estimated Effort:** 1-2 days
 
-**Flexibility:** Core track delivers essential multi-channel functionality. Enhanced track adds power-user features for advanced validation scenarios.
+### Priority 3: Hardware Testing (Medium Priority)
+**Status:** Pending
+**Task:** Validate with real multi-channel hardware (2, 4, 8 channels)
+**Estimated Effort:** 1 week
 
-**Total Remaining Effort:** ~5-6 weeks
-- Phase 6: 3-4 days (Pipeline refactoring)
-- Phase 5: 1 week (Hardware testing)
-- Phase 6.5: 2 weeks (Extensible calibration validation - optional)
-- Phase 7: 1-2 weeks (Multi-channel GUI + Configuration profiles)
+### Priority 4: Advanced Visualization (Future)
+**Status:** ❌ Planned for future
+**Task:** Full multi-channel scenario visualization GUI
+**Estimated Effort:** 2-3 weeks
+
+**Total Remaining Effort:** ~2-3 weeks
+- Collection Panel review: 2-4 hours
+- Scenarios Panel integration: 1-2 days
+- Hardware testing: 1 week
+- Advanced visualization: 2-3 weeks (future/optional)

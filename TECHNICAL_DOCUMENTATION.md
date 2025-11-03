@@ -2956,6 +2956,263 @@ When loading a profile, the system:
 
 ---
 
+### 10.9 Series Settings Panel - Calibration Mode Integration (NEW - 2025-11-03)
+
+**Purpose**: Configure multi-pulse series recordings with full calibration mode support, interactive cycle analysis, and comprehensive quality visualization.
+
+**Component**: `SeriesSettingsPanel` (`gui_series_settings_panel.py`)
+
+**Major Features**:
+1. **Calibration Mode Integration** (default mode)
+2. **Cycle Selection & Overlay Visualization**
+3. **Interactive Statistics Display**
+4. **Unified Recording & Analysis Workflow**
+
+#### 10.9.1 Panel Layout
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Series Settings — Multi-pulse Configuration             │
+├─────────────────────────────────────────────────────────┤
+│ [Series Controls] [Advanced Settings]                   │
+├─────────────────────────────────────────────────────────┤
+│ Multi-pulse Series Configuration                        │
+│                                                          │
+│ Choose recording mode:                                  │
+│ ○ Standard (Room Response)                             │
+│ ● Calibration (Physical Impact)  ← DEFAULT             │
+│                                                          │
+│ Pulse Properties    │ Timing & Playback │ Processing   │
+│ ─────────────────────────────────────────────────────  │
+│ Number of pulses: 15│ Cycle duration:   │ Averaging:   │
+│ Pulse duration: 8ms │   100 ms          │ Start: 4     │
+│ Pulse frequency:    │ Fade: 0.1 ms      │              │
+│   1000 Hz           │                   │              │
+│                                                          │
+│ Series Controls                                         │
+│ [🎵 Record Series] [💾 Save Config] [🔄 Reset] [⚙️]   │
+│                                                          │
+│ ═════════════════════════════════════════════════════  │
+│ Recording & Analysis (appears after recording)          │
+│ ═════════════════════════════════════════════════════  │
+│                                                          │
+│ 🔨 Last recording used **Calibration Mode**            │
+│                                                          │
+│ Analysis Results                                        │
+│ Cycles Extracted: 15 │ Cycles Averaged: 14             │
+│ Max Amplitude: 0.36  │ RMS Level: 0.014                │
+│                                                          │
+│ 📊 Cycle Statistics (Quality Control)                  │
+│ Select cycles to display in the overlay chart below    │
+│ ┌────┬───────┬────────┬────────────┬──────┬──────┐   │
+│ │[✓] │ Cycle │ Status │ Rejection  │ Peak │ Norm │   │
+│ ├────┼───────┼────────┼────────────┼──────┼──────┤   │
+│ │[✓] │   0   │ ✓ Kept │     -      │ 0.43 │ 0.85 │   │
+│ │[✓] │   1   │ ✓ Kept │     -      │ 0.39 │ 0.89 │   │
+│ │[ ] │   2   │✗Reject │ Validation │  -   │  -   │   │
+│ │[✓] │   3   │ ✓ Kept │     -      │ 0.42 │ 0.85 │   │
+│ │... │  ...  │  ...   │    ...     │ ...  │ ...  │   │
+│ └────┴───────┴────────┴────────────┴──────┴──────┘   │
+│ ✓ Selected 14 cycle(s): 0, 1, 3, 4, 5, 6, ...         │
+│                                                          │
+│ Cycle Consistency Overlay                               │
+│ Display Mode: ○ Aligned (Raw) ● Normalized ○ Both     │
+│                                                          │
+│ 📊 Cycle Overlay Statistics                            │
+│ Peak Range │ Range Width % │ Std Dev                   │
+│   0.0427   │    4.87%      │ 0.0167                    │
+│                                                          │
+│ Waveform Overlay - Normalized (14 cycles)              │
+│ ┌─────────────────────────────────────────────────┐   │
+│ │ [Interactive zoom chart with all cycles]         │   │
+│ │ - Zoom slider                                    │   │
+│ │ - Show Markers checkbox (off by default)        │   │
+│ │ - View Mode selector (waveform/spectrum)        │   │
+│ │ - Analysis metrics panel                        │   │
+│ └─────────────────────────────────────────────────┘   │
+│                                                          │
+│ ▶ Full Recording (collapsed)                           │
+│                                                          │
+│ Averaged Cycle Analysis                                │
+│ [Waveform visualization + spectrum]                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 10.9.2 Key Features
+
+**1. Calibration Mode as Default:**
+- Recording mode defaults to "Calibration (Physical Impact)"
+- Provides 7-criteria quality validation for each cycle
+- Displays validation results in Cycle Statistics table
+
+**2. Cycle Statistics Table:**
+- Checkbox selection for each cycle
+- Status column (✓ Kept / ✗ Rejected) with color coding
+- Rejection reasons for failed cycles
+- Peak amplitudes before/after normalization
+- Onset and aligned positions
+- Only kept cycles can be selected for overlay
+
+**3. Display Mode Selector:**
+- **Aligned (Raw)**: Shows cycles after alignment, before normalization
+- **Normalized**: Shows cycles after normalization (default)
+- **Both (Side-by-Side)**: Shows aligned and normalized in two columns
+- Same pattern as Calibration Impulse panel for consistency
+
+**4. Cycle Overlay Statistics:**
+- **Peak Range**: Range of main peak amplitudes across selected cycles
+- **Range Width %**: Range as percentage of average peak amplitude
+- **Std Dev**: Standard deviation of peak amplitudes
+- Helps assess cycle-to-cycle consistency
+- Displayed for both aligned and normalized data in side-by-side mode
+
+**5. Interactive Overlay Chart:**
+- Uses `AudioVisualizer.render_multi_waveform_with_zoom()`
+- Zoom controls for detailed inspection
+- View mode selector (waveform/spectrum)
+- Show Markers option (off by default)
+- Analysis metrics panel
+- Persistent zoom state per component
+
+**6. SignalProcessor Integration:**
+- Settings changes automatically reinitialize `SignalProcessor`
+- Ensures `num_pulses` changes are reflected immediately
+- Fixes display issues when changing pulse count
+
+#### 10.9.3 User Workflow
+
+**Step 1: Configure Recording**
+```
+1. Open Audio Settings → Series Controls
+2. Calibration mode pre-selected
+3. Set num_pulses (e.g., 15)
+4. Configure pulse duration, frequency, etc.
+5. Click "🎵 Record Series"
+```
+
+**Step 2: Recording & Analysis Appears**
+```
+1. Recording & Analysis section unfolds below
+2. Cycle Statistics table shows all 15 cycles
+3. Default: All kept cycles selected
+4. Rejected cycles shown with rejection reasons
+```
+
+**Step 3: Select Cycles & Visualize**
+```
+1. Check/uncheck cycles in table
+2. Choose display mode (Aligned/Normalized/Both)
+3. View overlay statistics (peak range, width %, std dev)
+4. Inspect overlay chart with zoom controls
+5. Compare waveforms for consistency
+```
+
+**Step 4: Review Full Data (Optional)**
+```
+1. Expand "Full Recording" section
+2. Select channel to visualize (multi-channel)
+3. Review averaged cycle analysis
+4. Check magnitude spectrum
+```
+
+#### 10.9.4 Code Architecture
+
+**Panel Structure:**
+```python
+class SeriesSettingsPanel:
+    def render(self):
+        # Two tabs (simplified from three)
+        tab1: "Series Controls"
+        tab2: "Advanced Settings"
+
+        # Recording & Analysis appears in tab1 after recording
+        if recording_exists:
+            self._render_recording_analysis()
+
+    def _render_recording_analysis(self):
+        # Mode indicator
+        # Analysis metrics
+        # Cycle Statistics table (calibration mode)
+        # Cycle overlay visualization
+        # Full recording (collapsed)
+        # Averaged cycle analysis
+
+    def _render_cycle_statistics_table(self):
+        # Checkbox-based table for calibration mode
+        # Shows validation results, peaks, alignment
+        # Updates session state with selections
+
+    def _render_calibration_cycle_overlay(self):
+        # Display mode selector (Aligned/Normalized/Both)
+        # Cycle overlay statistics
+        # Interactive charts with zoom
+
+    def _display_cycle_overlay_statistics(self):
+        # Compute peak range, width %, std dev
+        # Display in metric cards
+        # Adapts to display mode
+
+    def _apply_series_settings_to_recorder(self, recorder):
+        # Apply all GUI settings to recorder
+        # Reinitialize SignalProcessor ← CRITICAL
+        recorder._init_signal_processor()
+```
+
+**SignalProcessor Update Fix:**
+```python
+def _apply_series_settings_to_recorder(self, r):
+    # ... update recorder attributes ...
+    r.num_pulses = int(st.session_state['series_num_pulses'])
+    r.cycle_samples = int(r.cycle_duration * r.sample_rate)
+    # ... etc ...
+
+    # CRITICAL: Reinitialize signal processor with updated config
+    r._init_signal_processor()  # Ensures num_pulses is current
+```
+
+#### 10.9.5 Integration Points
+
+**With Calibration Impulse Panel:**
+- Shares same display mode pattern (Aligned/Normalized/Both)
+- Reuses cycle overlay visualization components
+- Consistent checkbox-based cycle selection
+
+**With SignalProcessor:**
+- Delegates all signal processing to `SignalProcessor` class
+- Auto-updates processor config when settings change
+- Universal and mode-specific methods cleanly separated
+
+**With Audio Visualizer:**
+- Uses `AudioVisualizer.render_multi_waveform_with_zoom()`
+- Zoom state persisted per component ID
+- Show Markers defaults to OFF (cleaner display)
+
+#### 10.9.6 File Structure
+
+**Modified Files:**
+- `gui_series_settings_panel.py`: Main panel implementation
+- `gui_audio_visualizer.py`: Show Markers default to FALSE
+- `RoomResponseRecorder.py`: `_init_signal_processor()` method
+- `signal_processor.py`: Extracted signal processing logic
+
+**Data Flow:**
+```
+User changes num_pulses to 15
+    ↓
+_apply_series_settings_to_recorder()
+    ↓
+recorder.num_pulses = 15
+recorder._init_signal_processor()  ← Recreates with new config
+    ↓
+SignalProcessor.config.num_pulses = 15
+    ↓
+Recording extracts 15 cycles
+    ↓
+All 15 cycles appear in table
+```
+
+---
+
 ## 11. Configuration & Metadata
 
 ### 11.1 Recorder Configuration (recorderConfig.json)
