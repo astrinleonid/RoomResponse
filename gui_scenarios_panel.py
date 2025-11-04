@@ -13,7 +13,7 @@ Provides:
 import os
 import numpy as np
 import streamlit as st
-from typing import Optional
+from typing import Optional, Dict
 
 # Optional: Audio visualizer
 try:
