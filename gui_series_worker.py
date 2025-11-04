@@ -1,6 +1,6 @@
 # gui_series_worker.py — v5
 from __future__ import annotations
-import time, json, queue, threading, math
+import time, json, queue, threading, math, random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -204,7 +204,9 @@ class SeriesWorker(threading.Thread):
 
             # ---- Wait strategy for start→start cadence ----
             if self.interval_mode == "start_to_start" and last_start is not None:
-                target = last_start + self.measurement_interval
+                # Add random jitter (±100ms) to help cancel periodic noises
+                jitter = random.uniform(-0.1, 0.1)
+                target = last_start + self.measurement_interval + jitter
                 wait = max(0.0, target - time.time())
                 if wait > 0:
                     self._wait_with_ticks(wait, allow_pause=True, scenario_dir=sc.scenario_dir)
@@ -265,8 +267,11 @@ class SeriesWorker(threading.Thread):
 
             # ---- Cooldown after each measurement (end_to_start mode) ----
             if self.interval_mode == "end_to_start" and (local_idx < self.num_measurements - 1):
-                self._emit_status("cooldown", seconds=self.measurement_interval)
-                self._wait_with_ticks(self.measurement_interval, allow_pause=True, scenario_dir=sc.scenario_dir)
+                # Add random jitter (±100ms) to help cancel periodic noises
+                jitter = random.uniform(-0.1, 0.1)
+                wait_time = self.measurement_interval + jitter
+                self._emit_status("cooldown", seconds=wait_time)
+                self._wait_with_ticks(wait_time, allow_pause=True, scenario_dir=sc.scenario_dir)
                 if self._stop_requested: return False
 
         try:

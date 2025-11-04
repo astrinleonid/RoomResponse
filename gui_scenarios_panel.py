@@ -464,6 +464,33 @@ class ScenariosPanel:
         num_channels = self.scenario_manager.detect_num_channels_in_scenario(exp_path)
         st.info(f"Debug: is_multichannel={is_multichannel} | num_channels={num_channels} | Utils available: {MULTICHANNEL_UTILS_AVAILABLE} | Files: {len(files_of_type)}")
 
+        # Add averaging tool for multi-channel scenarios
+        if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE and len(files_of_type) > 1:
+            with st.expander("🧮 Average Impulse Responses by Channel", expanded=False):
+                st.markdown("Generate averaged impulse response for each channel across all measurements")
+
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.caption(f"This will average {len(files_of_type)} impulse response files across {num_channels} channels")
+                with col2:
+                    if st.button("Generate Averages", key=f"gen_avg_{os.path.basename(exp_path)}"):
+                        with st.spinner("Averaging impulse responses..."):
+                            try:
+                                averaged_files = self.scenario_manager.average_impulse_responses_by_channel(
+                                    exp_path,
+                                    subfolder="impulse_responses",
+                                    output_subfolder="averaged_responses"
+                                )
+
+                                if averaged_files:
+                                    st.success(f"✓ Generated {len(averaged_files)} averaged responses")
+                                    for ch_idx, file_path in sorted(averaged_files.items()):
+                                        st.text(f"  Channel {ch_idx}: {os.path.basename(file_path)}")
+                                else:
+                                    st.warning("No averaged files were generated")
+                            except Exception as e:
+                                st.error(f"Averaging failed: {e}")
+
         # View mode tabs: Single File, Overlay All, or Channel Exploration
         if len(files_of_type) > 1:
             if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE:

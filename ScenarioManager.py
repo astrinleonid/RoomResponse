@@ -13,6 +13,7 @@ Handles:
 import os
 import re
 import json
+import numpy as np
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple, Set
 
@@ -212,7 +213,92 @@ class ScenarioManager:
             return False
 
         return is_multichannel_dataset(audio_files)
-    
+
+    @staticmethod
+    def average_impulse_responses_by_channel(scenario_path: str, subfolder: str = "impulse_responses",
+                                             output_subfolder: str = "averaged_responses") -> Dict[int, str]:
+        """
+        Average impulse responses by channel across all measurements within a scenario.
+
+        Args:
+            scenario_path: Path to the scenario folder
+            subfolder: Subfolder containing impulse response files (default: "impulse_responses")
+            output_subfolder: Subfolder to save averaged responses (default: "averaged_responses")
+
+        Returns:
+            Dict mapping channel index to output file path
+
+        Example:
+            >>> averages = ScenarioManager.average_impulse_responses_by_channel("path/to/scenario")
+            >>> # Returns: {0: "path/to/scenario/averaged_responses/average_ch0.npy", ...}
+        """
+        from gui_audio_visualizer import AudioVisualizer
+
+        audio_folder = os.path.join(scenario_path, subfolder)
+        if not os.path.isdir(audio_folder):
+            return {}
+
+        # Get all audio files
+        audio_files = []
+        try:
+            for filename in os.listdir(audio_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    audio_files.append(os.path.join(audio_folder, filename))
+        except (OSError, PermissionError):
+            return {}
+
+        if not audio_files:
+            return {}
+
+        # Group files by channel
+        channels_dict = group_files_by_channel(audio_files)
+
+        if not channels_dict:
+            return {}
+
+        # Create output directory
+        output_dir = os.path.join(scenario_path, output_subfolder)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Average each channel
+        averaged_files = {}
+
+        for channel_idx, channel_files in channels_dict.items():
+            # Load all files for this channel
+            signals = []
+            sample_rate = None
+
+            for file_path in channel_files:
+                audio_data, sr, fmt = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+                if audio_data is not None:
+                    signals.append(audio_data)
+                    if sample_rate is None:
+                        sample_rate = sr
+
+            if not signals:
+                continue
+
+            # Find minimum length to handle signals of different lengths
+            min_length = min(len(s) for s in signals)
+
+            # Truncate all signals to minimum length
+            truncated_signals = [s[:min_length] for s in signals]
+
+            # Average the signals
+            averaged_signal = np.mean(truncated_signals, axis=0)
+
+            # Save averaged signal
+            output_filename = f"average_ch{channel_idx}.npy"
+            output_path = os.path.join(output_dir, output_filename)
+
+            try:
+                np.save(output_path, averaged_signal.astype(np.float64))
+                averaged_files[channel_idx] = output_path
+            except Exception as e:
+                print(f"Failed to save averaged channel {channel_idx}: {e}")
+
+        return averaged_files
+
     @staticmethod
     def count_feature_samples(scenario_path: str, wav_subfolder: str = "impulse_responses", 
                              recording_type: str = "any") -> int:
