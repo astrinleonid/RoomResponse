@@ -346,17 +346,17 @@ class ScenariosPanel:
         room_dir = os.path.join(scenario_path, "room_responses")
 
         if os.path.exists(raw_dir):
-            raw_count = len([f for f in os.listdir(raw_dir) if f.endswith('.wav')])
+            raw_count = len([f for f in os.listdir(raw_dir) if f.endswith(('.wav', '.npy'))])
             if raw_count > 0:
                 info_parts.append(f"Raw: {raw_count}")
 
         if os.path.exists(impulse_dir):
-            impulse_count = len([f for f in os.listdir(impulse_dir) if f.endswith('.wav')])
+            impulse_count = len([f for f in os.listdir(impulse_dir) if f.endswith(('.wav', '.npy'))])
             if impulse_count > 0:
                 info_parts.append(f"Impulse: {impulse_count}")
 
         if os.path.exists(room_dir):
-            room_count = len([f for f in os.listdir(room_dir) if f.endswith('.wav')])
+            room_count = len([f for f in os.listdir(room_dir) if f.endswith(('.wav', '.npy'))])
             if room_count > 0:
                 info_parts.append(f"Room: {room_count}")
 
@@ -484,7 +484,7 @@ class ScenariosPanel:
                 self._render_audio_file(selected_file)
 
     def _get_audio_files_by_type(self, scenario_path: str) -> dict:
-        """Get audio files grouped by type."""
+        """Get audio files grouped by type (supports both WAV and NumPy formats)."""
         files_by_type = {
             "impulse_responses": [],
             "impulse_responses_aligned": [],
@@ -496,12 +496,22 @@ class ScenariosPanel:
             type_dir = os.path.join(scenario_path, file_type)
             if os.path.exists(type_dir):
                 try:
-                    wav_files = [
+                    # Find both WAV and NumPy files
+                    audio_files = [
                         os.path.join(type_dir, f)
                         for f in os.listdir(type_dir)
-                        if f.lower().endswith('.wav')
+                        if f.lower().endswith(('.wav', '.npy'))
                     ]
-                    files_by_type[file_type] = sorted(wav_files)
+
+                    # Remove duplicates: if both .wav and .npy exist for same base name,
+                    # keep only one entry (the loader will prefer .npy automatically)
+                    unique_files = {}
+                    for filepath in audio_files:
+                        base_name = filepath.rsplit('.', 1)[0]  # Remove extension
+                        if base_name not in unique_files:
+                            unique_files[base_name] = filepath
+
+                    files_by_type[file_type] = sorted(unique_files.values())
                 except (OSError, PermissionError):
                     pass
 
@@ -554,17 +564,22 @@ class ScenariosPanel:
             )
             self._render_folder_structure(scenario_path)
 
-        # Load audio files
+        # Load audio files (supports both WAV and NumPy formats)
         with st.spinner(f"Loading {max_files} audio files..."):
             audio_signals = []
             labels = []
             sample_rate = None
+            format_counts = {"npy": 0, "wav": 0, "error": 0}
 
             for i, file_path in enumerate(file_paths[:max_files]):
                 try:
-                    audio_data, sr = AudioVisualizer.load_wav_file(file_path)
+                    # Try loading with new method that supports both WAV and NumPy
+                    audio_data, sr, format_type = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+
                     if audio_data is not None and len(audio_data) > 0:
                         audio_signals.append(audio_data)
+                        format_counts[format_type] += 1
+
                         # Extract file index from filename (e.g., "impulse_..._42_..." -> "42")
                         basename = os.path.basename(file_path)
                         # Try to find index number in filename
@@ -579,7 +594,10 @@ class ScenariosPanel:
                             sample_rate = sr
                         elif sample_rate != sr:
                             st.warning(f"Sample rate mismatch: {basename} has {sr} Hz (expected {sample_rate} Hz)")
+                    else:
+                        format_counts["error"] += 1
                 except Exception as e:
+                    format_counts["error"] += 1
                     st.warning(f"Failed to load {os.path.basename(file_path)}: {e}")
 
         # Show loading results
@@ -587,7 +605,17 @@ class ScenariosPanel:
             st.error("Failed to load any audio files")
             return
 
-        st.info(f"✓ Loaded {len(audio_signals)} of {len(file_paths)} files")
+        # Show format breakdown
+        format_info = []
+        if format_counts["npy"] > 0:
+            format_info.append(f"{format_counts['npy']} NumPy (full resolution)")
+        if format_counts["wav"] > 0:
+            format_info.append(f"{format_counts['wav']} WAV")
+        if format_counts["error"] > 0:
+            format_info.append(f"{format_counts['error']} errors")
+
+        format_summary = ", ".join(format_info) if format_info else "unknown format"
+        st.info(f"✓ Loaded {len(audio_signals)} of {len(file_paths)} files ({format_summary})")
 
         # Render overlay plot using AudioVisualizer
         try:
@@ -939,19 +967,23 @@ class ScenariosPanel:
         # Use AudioVisualizer if available
         if VISUALIZER_AVAILABLE:
             try:
-                # Load audio data using AudioVisualizer utility
-                audio_data, sample_rate = AudioVisualizer.load_wav_file(file_path)
+                # Load audio data using AudioVisualizer utility (supports both WAV and NumPy)
+                audio_data, sample_rate, format_type = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
 
                 if audio_data is not None:
                     # Create unique ID for this visualizer
                     viz_id = f"explorer_{hash(file_path)}"
                     visualizer = AudioVisualizer(viz_id)
 
+                    # Add format indicator to title
+                    format_label = "NumPy (full resolution)" if format_type == "npy" else "WAV"
+                    title = f"Waveform: {os.path.basename(file_path)} [{format_label}]"
+
                     # Render with full features
                     visualizer.render(
                         audio_data=audio_data,
                         sample_rate=sample_rate,
-                        title=f"Waveform: {os.path.basename(file_path)}",
+                        title=title,
                         show_controls=True,
                         show_analysis=True,
                         height=350

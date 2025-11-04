@@ -737,6 +737,47 @@ class AudioVisualizer:
         return fig
 
     @staticmethod
+    def load_audio_file(file_path: str, default_sample_rate: int = 48000) -> Tuple[Optional[np.ndarray], int, str]:
+        """
+        Load audio file supporting both WAV and NumPy formats.
+        Tries NumPy format first, falls back to WAV if not found.
+
+        Args:
+            file_path: Path to audio file (with or without extension)
+            default_sample_rate: Sample rate to use for NumPy files (default: 48000)
+
+        Returns:
+            Tuple of (audio_data, sample_rate, format_type)
+            format_type is "npy", "wav", or "error"
+            Returns (None, 0, "error") on error
+        """
+        from pathlib import Path
+
+        # Convert to Path object
+        path = Path(file_path)
+        base_path = path.with_suffix('')  # Remove extension
+
+        # Try NumPy format first (.npy)
+        npy_path = base_path.with_suffix('.npy')
+        if npy_path.exists():
+            try:
+                audio_data = np.load(str(npy_path))
+                # NumPy files contain calibration-normalized float64 data
+                return audio_data.astype(np.float32), default_sample_rate, "npy"
+            except Exception as e:
+                pass  # Fall through to WAV
+
+        # Try WAV format (.wav)
+        wav_path = base_path.with_suffix('.wav')
+        if wav_path.exists():
+            audio_data, sample_rate = AudioVisualizer.load_wav_file(str(wav_path))
+            if audio_data is not None:
+                return audio_data, sample_rate, "wav"
+
+        # Neither format found
+        return None, 0, "error"
+
+    @staticmethod
     def load_wav_file(file_path: str) -> Tuple[Optional[np.ndarray], int]:
         """
         Load WAV file and return normalized audio data.

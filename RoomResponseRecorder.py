@@ -87,6 +87,12 @@ class RoomResponseRecorder:
             'ir_fade_length_ms': 50.0
         }
 
+        # Save format configuration defaults
+        self.save_format_config = {
+            'save_wav': True,
+            'save_npy': False
+        }
+
         # Load configuration from file if provided
         file_config = {}  # Initialize outside try block so it's available later
         if config_file_path:
@@ -136,6 +142,10 @@ class RoomResponseRecorder:
                 # Load truncation config
                 if 'truncate_config' in file_config:
                     self.truncate_config.update(file_config['truncate_config'])
+
+                # Load save format config
+                if 'save_format' in file_config:
+                    self.save_format_config.update(file_config['save_format'])
 
             except FileNotFoundError:
                 print(f"Warning: Config file '{config_file_path}' not found. Using default configuration.")
@@ -872,27 +882,46 @@ class RoomResponseRecorder:
     # ========================================================================
 
     def _save_wav(self, audio_data: np.ndarray, filename: str):
-        """Save audio data to WAV file"""
+        """
+        Save audio data to WAV file (16-bit) and optionally to full resolution format.
+
+        WAV format: Normalized to max value (0-95% range) for audio software compatibility
+        NumPy format: Preserves calibration-normalized values without max normalization
+        """
         wav_file = None
         try:
-            # Normalize and convert to int16
-            max_val = np.max(np.abs(audio_data))
-            if max_val > 0:
-                audio_data = audio_data / max_val * 0.95  # Leave headroom
-
-            audio_int16 = (audio_data * 32767).astype(np.int16)
+            # Check save format configuration
+            save_wav = self.save_format_config.get('save_wav', True)
+            save_npy = self.save_format_config.get('save_npy', False)
 
             # Ensure directory exists
             Path(filename).parent.mkdir(parents=True, exist_ok=True)
 
-            wav_file = wave.open(filename, 'w')
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 2 bytes per sample
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-            wav_file.close()
+            # Save WAV format (normalize to max value for audio software compatibility)
+            if save_wav:
+                # Normalize to max value for WAV
+                max_val = np.max(np.abs(audio_data))
+                if max_val > 0:
+                    audio_normalized = audio_data / max_val * 0.95  # Leave headroom
+                else:
+                    audio_normalized = audio_data
 
-            print(f"Audio saved to {filename}")
+                audio_int16 = (audio_normalized * 32767).astype(np.int16)
+
+                wav_file = wave.open(filename, 'w')
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 2 bytes per sample
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(audio_int16.tobytes())
+                wav_file.close()
+
+                print(f"Audio saved to {filename} (16-bit WAV, normalized to max)")
+
+            # Save full resolution format (preserve calibration-normalized values)
+            if save_npy:
+                npy_filename = str(Path(filename).with_suffix('.npy'))
+                np.save(npy_filename, audio_data)  # Save original calibration-normalized data
+                print(f"Full resolution audio saved to {npy_filename} (float64, calibration-normalized)")
 
         except Exception as e:
             print(f"Error saving {filename}: {e}")
