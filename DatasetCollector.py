@@ -87,7 +87,8 @@ class SingleScenarioCollector:
         resume: bool = True,                      # continue from next index if appending
         pause_file_name: str = "PAUSE",           # drop this file into the scenario root to pause
         stop_file_name: str = "STOP",             # drop this file into the scenario root to stop
-        recorder: Optional[RoomResponseRecorder] = None
+        recorder: Optional[RoomResponseRecorder] = None,
+        recording_mode: str = "standard"          # 'standard' (default) or 'calibration'
     ):
         self.base_output_dir = Path(base_output_dir)
         self.merge_mode = merge_mode.lower()
@@ -95,6 +96,7 @@ class SingleScenarioCollector:
         self.resume_enabled = bool(resume)
         self.pause_file_name = pause_file_name
         self.stop_file_name = stop_file_name
+        self.recording_mode = recording_mode.lower()  # Store recording mode
 
         if scenario_config:
             self.setup_scenario_from_dict(**scenario_config)
@@ -533,14 +535,37 @@ class SingleScenarioCollector:
             for i in range(self.scenario.warm_up_measurements):
                 print(f"  Warm-up {i + 1}/{self.scenario.warm_up_measurements}")
                 try:
-                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav")
+                    # Note: Warm-up files are temporary and will be deleted immediately
+                    # In calibration mode, files are saved to temp location as well
+                    _ = self.recorder.take_record("temp_warmup.wav", "temp_warmup_impulse.wav", mode=self.recording_mode)
                 except Exception as e:
                     print(f"    Warm-up failed: {e}")
+
+                # Clean up temporary files (including multi-channel files in calibration mode)
                 for tmp in ["temp_warmup.wav", "temp_warmup_impulse.wav"]:
                     try:
                         Path(tmp).unlink()
                     except Exception:
                         pass
+
+                # Also clean up any temp multi-channel files
+                temp_dir = Path(".")
+                for f in temp_dir.glob("temp_warmup*_ch*.wav"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+                for f in temp_dir.glob("temp_warmup*_ch*.npy"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+                for f in temp_dir.glob("room_temp_warmup*"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+
                 time.sleep(self.scenario.measurement_interval)
 
         # Main loop
@@ -568,7 +593,8 @@ class SingleScenarioCollector:
             try:
                 audio_data = self.recorder.take_record(
                     str(raw_path),
-                    str(impulse_path)
+                    str(impulse_path),
+                    mode=self.recording_mode
                 )
 
                 # If the recorder writes the room response under a derived name, relocate it to our target name.
@@ -581,8 +607,58 @@ class SingleScenarioCollector:
                         pass
 
                 if audio_data is not None:
-                    q = self.calculate_quality_metrics(audio_data)
-                    _ = self.assess_measurement_quality(q)  # currently informational
+                    # Handle mode-specific quality metrics and metadata
+                    if self.recording_mode == 'calibration' and isinstance(audio_data, dict):
+                        # CALIBRATION MODE: Use validation results from processing pipeline
+                        # Files are already saved by take_record() with correct alignment
+
+                        metadata = audio_data.get('metadata', {})
+                        validation_results = audio_data.get('validation_results', [])
+
+                        # Extract quality info from calibration validation
+                        num_total = len(validation_results)
+                        num_valid = metadata.get('num_valid_cycles', 0)
+                        num_aligned = metadata.get('num_aligned_cycles', 0)
+
+                        print(f"  ✓ Calibration: {num_valid}/{num_total} valid cycles, {num_aligned} aligned")
+
+                        # Store calibration-specific quality metrics
+                        q = {
+                            'mode': 'calibration',
+                            'total_cycles': num_total,
+                            'valid_cycles': num_valid,
+                            'aligned_cycles': num_aligned,
+                            'validation_pass_rate': (num_valid / max(num_total, 1)) * 100.0,
+                            'alignment_pass_rate': (num_aligned / max(num_valid, 1)) * 100.0 if num_valid > 0 else 0.0,
+                            'normalize_by_calibration': metadata.get('normalize_by_calibration', False)
+                        }
+
+                        # Get sample count from raw audio for metadata
+                        raw_audio_dict = audio_data.get('raw', {})
+                        if raw_audio_dict:
+                            first_ch = list(raw_audio_dict.values())[0]
+                            samples_count = int(len(first_ch))
+                        else:
+                            samples_count = 0
+
+                    else:
+                        # STANDARD MODE: Use traditional quality metrics
+                        # Extract raw audio for quality metrics
+                        if isinstance(audio_data, dict):
+                            # Multi-channel: get first channel
+                            raw_for_metrics = list(audio_data.values())[0] if audio_data else None
+                        else:
+                            # Single-channel
+                            raw_for_metrics = audio_data
+
+                        # Calculate quality metrics on raw audio
+                        if raw_for_metrics is not None:
+                            q = self.calculate_quality_metrics(raw_for_metrics)
+                            _ = self.assess_measurement_quality(q)  # currently informational
+                            samples_count = int(len(raw_for_metrics))
+                        else:
+                            q = {}
+                            samples_count = 0
 
                     mm = MeasurementMetadata(
                         scenario_name=self.scenario.scenario_name,
@@ -593,7 +669,7 @@ class SingleScenarioCollector:
                         filename_room_response=room_filename,
                         signal_params=self.recorder_config_dict,
                         quality_metrics=q,
-                        recording_stats={'samples_recorded': int(len(audio_data))}
+                        recording_stats={'samples_recorded': samples_count}
                     )
                     scenario_measurements.append(mm)
                     self.measurements.append(mm)

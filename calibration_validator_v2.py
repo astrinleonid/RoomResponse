@@ -486,6 +486,7 @@ class CalibrationValidatorV2:
         # Look for first value above zero, then find the peak
         first_pos_idx = search_start
         first_pos_val = 0.0
+        found_positive_peak = False
 
         # Find first crossing above zero
         for i in range(search_start, len(cycle)):
@@ -497,7 +498,17 @@ class CalibrationValidatorV2:
                     local_peak_idx = np.argmax(peak_region)
                     first_pos_idx = i + local_peak_idx
                     first_pos_val = cycle[first_pos_idx]
+                    found_positive_peak = True
                 break
+
+        # If no positive peak found, consider it valid (no problematic rebound)
+        if not found_positive_peak:
+            return True, {
+                'first_positive_peak': 0.0,
+                'first_positive_ratio': 0.0,
+                'first_positive_time_ms': 0.0,
+                'first_positive_idx': search_start
+            }
 
         # Calculate ratio and timing
         first_pos_ratio = first_pos_val / neg_peak_abs if neg_peak_abs > 0 else 0.0

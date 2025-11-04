@@ -1,34 +1,28 @@
 # Multi-Channel Room Response System
 
-**Document Version:** 4.1
+**Document Version:** 5.0
 **Created:** 2025-10-31
-**Last Updated:** 2025-11-03
+**Last Updated:** 2025-11-03 (Phase 8 complete - Collection Panel calibration mode integration)
 **Target:** Piano Response Measurement System
-**Status:** Core Implementation Complete | GUI Integration Complete | Pipeline Refactored ✅ | Series Settings Calibration Mode Complete ✅
+**Status:** Core Complete | GUI Complete | SignalProcessor Refactored ✅ | Collection Panel Calibration Mode ✅
 
 ---
 
 ## Executive Summary
 
-The Room Response system has been upgraded to support **synchronized multi-channel impulse response recording** with calibration-driven quality validation. The system can record from 1-32 channels simultaneously while maintaining sample-perfect synchronization across all channels.
+The Room Response system supports **synchronized multi-channel impulse response recording** with calibration-driven quality validation. The system records from 1-32 channels simultaneously with sample-perfect synchronization.
 
 **Implementation Status:**
 - ✅ Multi-channel audio recording (C++/Python)
-- ✅ Signal processing pipeline (single & multi-channel)
-- ✅ Signal processing extracted to SignalProcessor class (clean architecture)
+- ✅ Signal processing pipeline refactored (SignalProcessor class extraction)
 - ✅ Calibration quality validation system (V2 - comprehensive 7-criteria)
 - ✅ Multi-channel file management
-- ✅ Calibration testing GUI interface (Calibration Impulse panel)
 - ✅ Multi-channel configuration GUI (fully implemented)
 - ✅ Configuration profile management system (save/load/delete)
-- ✅ Collection Panel multi-channel status display
-- ✅ Calibration-based normalization system
+- ✅ Collection Panel calibration mode integration (recording mode selector)
+- ✅ Series Settings calibration mode integration (cycle overlay, statistics)
 - ✅ Multi-channel response review GUI (interactive visualization)
-- ✅ Series Settings calibration mode integration (complete with cycle overlay, statistics)
-- ✅ Code cleanup and refactoring (Phase 6 complete)
-- ⚠️ Collect Panel calibration mode (needs review - may already be implemented)
-- ❌ Scenarios Panel analysis integration (needs implementation)
-- ❌ Full multi-channel scenario visualization GUI (planned for future)
+- ❌ Scenarios Panel analysis integration (**NEXT PRIORITY** - see detailed plan below)
 
 ---
 
@@ -38,9 +32,13 @@ The Room Response system has been upgraded to support **synchronized multi-chann
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CORE SIGNAL PROCESSING                        │
+│                    SIGNAL PROCESSING LAYER                       │
 │                   RoomResponseRecorder.py                        │
-│                     (1,385 lines, 31 methods)                    │
+│                     (1,275 lines, 25 methods)                    │
+│                  ↓ delegates to ↓                                 │
+│                   SignalProcessor.py                             │
+│                     (625 lines, 9 methods)                       │
+│              ✅ Clean architecture separation                    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
         ┌─────────────────────┼─────────────────────┐
@@ -64,253 +62,155 @@ The Room Response system has been upgraded to support **synchronized multi-chann
         ↓                     ↓                     ↓
   ┌──────────────────────────────────────────────────────┐
   │                   GUI LAYER                           │
-  │   ├─ AudioSettingsPanel (79 KB) ✅                   │
+  │   ├─ AudioSettingsPanel ✅                           │
   │   │   ├─ Device selection                             │
   │   │   ├─ Multi-channel configuration ✅              │
   │   │   ├─ Calibration Impulse testing ✅              │
-  │   │   └─ Series Settings ✅ (calibration mode complete)│
-  │   ├─ CollectionPanel (23 KB) ✅                      │
-  │   │   └─ Multi-channel status display ✅             │
-  │   ├─ ConfigProfileManager (NEW) ✅                   │
+  │   │   └─ Series Settings ✅ (calibration mode)      │
+  │   ├─ CollectionPanel ✅                              │
+  │   │   ├─ Multi-channel status display ✅             │
+  │   │   └─ Recording mode selector ✅ (standard/calib)│
+  │   ├─ ConfigProfileManager ✅                         │
   │   │   └─ Save/load/delete profiles ✅                │
-  │   ├─ ScenariosPanel (72 KB)                           │
-  │   └─ SeriesWorker (background recording)             │
+  │   ├─ ScenariosPanel ⚠️                              │
+  │   │   └─ NEEDS REFACTORING (see plan below)          │
+  │   └─ SeriesWorker (background recording) ✅          │
   └──────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Signal Processing Pipeline
+## Signal Processing Architecture
 
-### Universal Three-Stage Architecture (Refactored ✅)
+### SignalProcessor Class Extraction ✅ **COMPLETE** (Phase 6)
 
-The system now implements a **clean three-stage universal pipeline** where Stages 1 and 3 are mode-independent:
+**Clean Separation of Concerns:**
 
-**Pipeline Design:**
-- **Stage 1 (Recording):** Universal - same for all modes
-- **Stage 2 (Processing):** Mode-specific - different logic per mode
-- **Stage 3 (Saving):** Universal - same file structure for all modes
+```
+Before:
+RoomResponseRecorder (1,586 lines)
+├─ Audio I/O (recording, playback, device management) ❌ MIXED
+├─ Signal Processing (cycle extraction, averaging, FFT) ❌ MIXED
+└─ File I/O (WAV, NPZ saving/loading) ❌ MIXED
+
+After:
+RoomResponseRecorder (1,275 lines) - Recording Orchestrator
+├─ Audio I/O (recording, playback, device management) ✅
+├─ File I/O (WAV, NPZ saving/loading) ✅
+└─ Delegates signal processing to SignalProcessor ✅
+
+SignalProcessor (625 lines) - Pure Signal Processing
+├─ Universal methods (extract_cycles, average_cycles, spectral_analysis) ✅
+├─ Standard mode methods (find_onset, extract_impulse) ✅
+└─ Calibration mode methods (align_cycles, apply_alignment, normalize) ✅
+```
+
+**Key Benefits:**
+- ✅ Independent testability (SignalProcessor tested without hardware)
+- ✅ Reusable in CLI tools, web APIs, batch scripts
+- ✅ 100% backward compatible (all existing code works)
+- ✅ Reduced code duplication (all signal processing in one place)
+
+**Delegation Pattern:**
+- RoomResponseRecorder calls `self.signal_processor.extract_cycles()` instead of doing signal processing itself
+- SignalProcessor is stateless - configured via `SignalProcessingConfig` dataclass
+- Processor reinitializes when recorder config changes
 
 ---
 
-#### PATH 1: Standard Mode (Averaged Room Response)
+## Recording Pipeline
+
+### Universal Three-Stage Architecture
+
+The system implements a **clean three-stage pipeline** where Stages 1 and 3 are mode-independent:
+
+**Stage 1 (Recording):** Universal - same for all modes
+**Stage 2 (Processing):** Mode-specific - different logic per mode
+**Stage 3 (Saving):** Universal - same file structure for all modes
+
+### PATH 1: Standard Mode (Averaged Room Response)
 
 ```
-User calls: recorder.take_record(output_file, impulse_file, mode='standard')
+recorder.take_record(output_file, impulse_file, mode='standard')
 
-    ↓
 STAGE 1: Recording (UNIVERSAL)
-    _record_audio()  # Renamed from _record_method_2
-    ├─ If multichannel_config['enabled'] == False:
-    │   sdl_audio_core.measure_room_response_auto()
+    _record_audio()
+    ├─ Single-channel: sdl_audio_core.measure_room_response_auto()
     │   → Returns: np.ndarray [samples]
-    │
-    └─ If multichannel_config['enabled'] == True:
-        sdl_audio_core.measure_room_response_auto_multichannel()
-        → Returns: Dict[int, np.ndarray] {0: ch0_data, 1: ch1_data, ...}
+    └─ Multi-channel: sdl_audio_core.measure_room_response_auto_multichannel()
+        → Returns: Dict[int, np.ndarray]
 
-    ↓
 STAGE 2: Processing (MODE-SPECIFIC)
     _process_recorded_signal(recorded_audio)
-    ├─ If isinstance(recorded_audio, np.ndarray):  # Single-channel
-    │   _process_single_channel_signal()
-    │   ├─ _extract_cycles() → [num_pulses, cycle_samples]
-    │   ├─ _average_cycles(skip_first_25%) → [cycle_samples]  ← Averaging HERE
-    │   └─ _extract_impulse_response() → [cycle_samples]
-    │
-    └─ If isinstance(recorded_audio, dict):  # Multi-channel
-        _process_multichannel_signal()
-        ├─ Process reference channel:
-        │   ├─ _extract_cycles(ref_audio)
-        │   ├─ _average_cycles(ref_cycles)  ← Averaging HERE
-        │   └─ _find_onset_in_room_response() → onset_sample
-        │
-        └─ Process all channels with SAME shift:
-            FOR each channel:
-                ├─ _extract_cycles(channel_audio)
-                ├─ _average_cycles(channel_cycles)  ← Averaging HERE
-                └─ np.roll(room_response, -onset_sample)  # Same shift!
+    ├─ Single-channel: _process_single_channel_signal()
+    │   ├─ signal_processor.extract_cycles() → [num_pulses, cycle_samples]
+    │   ├─ signal_processor.average_cycles(skip_first_25%) → [cycle_samples]
+    │   └─ signal_processor.extract_impulse_response() → [cycle_samples]
+    └─ Multi-channel: _process_multichannel_signal()
+        ├─ Process reference channel (find onset)
+        └─ Apply SAME shift to all channels (sample-perfect sync)
 
-    → Returns: {
-          'raw': Dict[int, np.ndarray],        # Original audio
-          'room_response': Dict[int, np.ndarray],  # Averaged responses
-          'impulse': Dict[int, np.ndarray],    # Impulse responses
-          'metadata': Dict                     # Processing metadata
-      }
-
-    ↓
 STAGE 3: File Saving (UNIVERSAL)
-    _save_processed_data(processed_data, output_file, impulse_file)
-    └─ _save_multichannel_files() OR _save_single_channel_files()
-        ├─ raw_000_TIMESTAMP_ch0.wav
-        ├─ impulse_000_TIMESTAMP_ch0.wav
-        ├─ room_raw_000_room_TIMESTAMP_ch0.wav
-        ├─ raw_000_TIMESTAMP_ch1.wav
-        ├─ ...
+    _save_processed_data()
+    └─ Saves: raw_*.wav, impulse_*.wav, room_*.wav (per channel)
 
-    ↓
-Returns: recorded_audio (np.ndarray or Dict[int, np.ndarray])
-         BACKWARD COMPATIBLE - raw audio only
+Returns: recorded_audio (backward compatible)
 ```
 
-**Key Points:**
-- ⚠️ **No cycle alignment** - assumes perfect timing from audio engine
-- Cycles averaged "as is" without onset detection
-- Works well for synthetic pulses with precise timing
-
-#### PATH 2: Calibration Mode (Quality-Validated Averaged Response) ✅ REFACTORED
+### PATH 2: Calibration Mode (Quality-Validated Response) ✅
 
 ```
-User calls: recorder.take_record(output_file, impulse_file, mode='calibration', save_files=True)
-         OR: recorder.take_record_calibration()  # No files (testing only)
+recorder.take_record(output_file, impulse_file, mode='calibration', save_files=True)
 
-    ↓
-STAGE 1: Recording (UNIVERSAL - Identical to Standard)
-    _record_audio()
-    → Returns: Dict[int, np.ndarray] (multichannel required)
+STAGE 1: Recording (UNIVERSAL - same as standard)
+    _record_audio() → Dict[int, np.ndarray]
 
-    ↓
 STAGE 2: Processing (MODE-SPECIFIC - Quality Pipeline)
     _process_calibration_mode(recorded_audio)
-
-    STEP 1: Validate cycles
-        Extract calibration channel:
-            cal_raw = recorded_audio[calibration_channel]
-            initial_cycles = _extract_cycles(cal_raw)  ✅ Uses helper
-
-        Validate each cycle:
-            validator = CalibrationValidatorV2(thresholds, sample_rate)
-            FOR each cycle in initial_cycles:
-                validation = validator.validate_cycle(cycle, index)
-                ├─ Check negative peak in range [min, max]
-                ├─ Check positive peak in range [min, max]
-                ├─ Check aftershock in range [min, max]
-                └─ Mark as valid/invalid
-
-    STEP 2: Align cycles by onset
-        alignment_result = align_cycles_by_onset(
-            initial_cycles,
-            validation_results,
-            correlation_threshold=config['alignment_correlation_threshold']  # Tunable!
-        )
-        ├─ Filter to valid cycles only
-        ├─ Detect onset in each valid cycle
-        ├─ Align all to target position (config['alignment_target_onset_position'])  # Tunable!
-        └─ Cross-correlation filtering (removes outliers)
-
-    STEP 3: Apply alignment to all channels
-        FOR each channel in recorded_audio:
-            aligned_cycles[ch] = apply_alignment_to_channel(
-                channel_data,
-                alignment_result  # Uses SAME shifts from calibration channel
-            )
-
+    STEP 1: Validate cycles (CalibrationValidatorV2 - 7 criteria)
+    STEP 2: Align cycles by onset (per-cycle alignment)
+    STEP 3: Apply alignment to all channels (SAME shifts)
     STEP 4: Normalize by impact magnitude (optional)
-        IF config['normalize_by_calibration'] == True:
-            FOR each cycle, each response channel:
-                normalized[cycle] = aligned[cycle] / |negative_peak[cycle]|
-
-    STEP 5: Average processed cycles ✅ NEW!
-        FOR each channel:
-            room_response[ch] = np.mean(processed_cycles[ch], axis=0)
-
-        ← Averages aligned/normalized cycles (no skipping - already filtered)
-
+    STEP 5: Average aligned/normalized cycles
     STEP 6: Output impulse responses
-        FOR each channel:
-            impulse[ch] = room_response[ch]  # Onset already at target position
 
-    → Returns: {
-          'raw': Dict[int, np.ndarray],        # Original audio
-          'room_response': Dict[int, np.ndarray],  # Averaged aligned/normalized
-          'impulse': Dict[int, np.ndarray],    # Impulse responses
-          'metadata': Dict,                    # Processing metadata
-          # BACKWARD COMPATIBILITY for GUI:
-          'calibration_cycles': np.ndarray,
-          'validation_results': List[Dict],
-          'alignment_metadata': Dict,
-          'aligned_multichannel_cycles': Dict[int, np.ndarray]
-      }
+STAGE 3: File Saving (UNIVERSAL - same format as standard) ✅
+    _save_processed_data()
+    └─ Saves: raw_*.wav, impulse_*.wav, room_*.wav
 
-    ↓
-STAGE 3: File Saving (UNIVERSAL - Same as Standard Mode) ✅ NEW!
-    IF save_files == True:
-        _save_processed_data(processed_data, output_file, impulse_file)
-        └─ _save_multichannel_files()
-            ├─ raw_000_TIMESTAMP_ch0.wav       # Original recording
-            ├─ impulse_000_TIMESTAMP_ch0.wav   # Averaged response
-            ├─ room_raw_000_room_TIMESTAMP_ch0.wav
-            ├─ raw_000_TIMESTAMP_ch1.wav
-            ├─ ...
-
-    ↓
-Returns: Dict with averaged responses + cycle-level data (backward compatible)
+Returns: Dict with averaged responses + cycle-level data
 ```
 
 **Key Improvements:**
-- ✅ **Per-cycle alignment** - robust for physical impacts with timing variance
-- ✅ **Quality validation** - filters out bad cycles before averaging
-- ✅ **Averaging after alignment** - produces clean averaged response
-- ✅ **Universal file structure** - same format as standard mode
-- ✅ **Tunable parameters** - correlation threshold and onset position configurable
+- ✅ Per-cycle alignment (robust for physical impacts)
+- ✅ Quality validation (filters bad cycles)
+- ✅ Averaging after alignment (clean averaged response)
+- ✅ Universal file structure (same format as standard mode)
+- ✅ Tunable parameters (correlation threshold, onset position)
 
 ---
 
-### Recent Refactoring (Version 4.0 - November 2025) ✅
+## Collection Panel Integration ✅ **COMPLETE** (Phase 8)
 
-**Changes Implemented:**
+### Recording Mode Selector
 
-1. **Renamed `_record_method_2()` → `_record_audio()`**
-   - More descriptive name reflecting actual functionality
-   - Updated docstring to clarify SDL audio core usage
+**Location:** CollectionPanel → Common Configuration section
 
-2. **Unified Output Format**
-   - Both modes now return: `{'raw', 'room_response', 'impulse', 'metadata'}`
-   - Calibration mode also includes backward-compatible keys for GUI
+**Features:**
+- Recording mode radio selector: "Standard" / "Calibration"
+- Real-time validation warnings:
+  - Error if calibration mode selected without multi-channel enabled
+  - Error if no calibration channel configured
+  - Success message when calibration mode ready
+- Mode parameter passed throughout collection chain:
+  - CollectionPanel → SingleScenarioCollector → DatasetCollector → take_record(mode=...)
+  - SeriesWorker also receives and passes mode parameter
 
-3. **Universal Save Method**
-   - Single `_save_processed_data()` dispatcher for all modes
-   - Removed mode-specific `_save_calibration_dataset()`
-   - Both modes use identical file structure
-
-4. **Added Averaging to Calibration Mode**
-   - Pipeline: Validate → Align → Normalize → **Average** → Save
-   - Produces single averaged response per channel (like standard mode)
-   - Uses `_average_cycles()` helper (now universal)
-
-5. **Tunable Calibration Parameters**
-   - `alignment_correlation_threshold` (default: 0.7)
-   - `alignment_target_onset_position` (default: 100)
-   - Both configurable in `multichannel_config`
-
-6. **Optional File Saving**
-   - Added `save_files` parameter to `take_record()`
-   - Calibration mode can now save files (for dataset collection)
-   - Audio Settings panel continues to work (no files saved)
-
-7. **Backward Compatibility Maintained**
-   - Deprecated methods kept: `_save_multichannel_files()`, `_save_single_channel_files()`
-   - Convenience method preserved: `take_record_calibration()`
-   - GUI continues to work without changes
-
-**Benefits:**
-- Cleaner architecture with universal Stage 1 (record) and Stage 3 (save)
-- Calibration mode produces comparable output to standard mode
-- Higher quality averaged responses (validation + alignment before averaging)
-- Simplified code with less duplication
-
----
-
-### Critical Synchronization Requirement
-
-**All channels maintain sample-perfect synchronization:**
-
-When the system finds the impulse onset at sample position N in the reference channel, **ALL channels** from that measurement are shifted by exactly the same number of samples (-N). This preserves:
-- Inter-channel phase relationships
-- Time-of-arrival differences between microphones
-- Spatial information in multi-mic recordings
-
-**Implementation:** Lines 753-801 in `RoomResponseRecorder.py`
+**Implementation:** (commit 4b77f80)
+- `gui_collect_panel.py`: Added recording mode UI and validation
+- `DatasetCollector.py`: Added `recording_mode` parameter
+- `gui_series_worker.py`: Added `recording_mode` parameter
+- Full integration for both single scenario and series modes
 
 ---
 
@@ -318,1105 +218,524 @@ When the system finds the impulse onset at sample position N in the reference ch
 
 ### recorderConfig.json Structure
 
-**Current Active Configuration (User's System):**
-
 ```json
 {
   "sample_rate": 48000,
   "pulse_duration": 0.019,
-  "pulse_fade": 0.018,
   "cycle_duration": 0.5,
   "num_pulses": 4,
   "volume": 0.15,
-  "pulse_frequency": 1000.0,
   "impulse_form": "voice_coil",
   "input_device": 5,
   "output_device": 6,
 
   "multichannel_config": {
-    "enabled": true,                    // ✅ Multi-channel ACTIVE
-    "num_channels": 8,                  // Recording 8 channels
-    "channel_names": [
-      "Channel 0", "Channel 1", "Channel 2", "Channel 3",
-      "Channel 4", "Channel 5", "Channel 6", "Channel 7"
-    ],
-    "calibration_channel": 2,           // Ch2 = calibration sensor
-    "reference_channel": 5,             // Ch5 = alignment reference
-    "response_channels": [0,1,3,4,5,6,7], // All except calibration
+    "enabled": true,
+    "num_channels": 8,
+    "channel_names": [...],
+    "calibration_channel": 2,
+    "reference_channel": 5,
+    "response_channels": [0,1,3,4,5,6,7],
+    "alignment_correlation_threshold": 0.7,
+    "alignment_target_onset_position": 100,
+    "normalize_by_calibration": false
+  },
 
-    // ✅ NEW: Tunable calibration parameters
-    "alignment_correlation_threshold": 0.7,     // Min correlation for cycle filtering
-    "alignment_target_onset_position": 100,     // Target onset sample position
-    "normalize_by_calibration": false           // Enable impact magnitude normalization
+  "calibration_quality_config": {
+    // V3 format: 11 parameters for 7 quality criteria
+    "min_negative_peak": 0.1,
+    "max_negative_peak": 0.95,
+    "max_precursor_ratio": 0.2,
+    "min_negative_peak_width_ms": 0.3,
+    "max_negative_peak_width_ms": 3.0,
+    "max_first_positive_ratio": 0.3,
+    "min_first_positive_time_ms": 0.1,
+    "max_first_positive_time_ms": 5.0,
+    "max_highest_positive_ratio": 0.5,
+    "max_secondary_negative_ratio": 0.3,
+    "secondary_negative_window_ms": 10.0
   }
 }
 ```
 
-**Configuration Loading:**
-- File location: `recorderConfig.json` (root directory)
-- Loaded by: `RoomResponseRecorder.__init__(config_file_path)`
-- Fallback: Uses default config if file not found
-- Supports legacy format: `multichannel` → `multichannel_config` (auto-migration)
+---
 
-**Key Fields:**
+## Scenarios Panel Refactoring Plan
 
-| Field | Purpose | Default | User's Value |
-|-------|---------|---------|--------------|
-| `enabled` | Toggle multi-channel mode | `false` | `true` ✅ |
-| `num_channels` | Total input channels | `1` | `8` |
-| `calibration_channel` | Channel with calibration sensor | `None` | `2` |
-| `reference_channel` | Channel for onset alignment | `0` | `5` |
-| `response_channels` | Channels to process (excl. calibration) | `[0]` | `[0,1,3,4,5,6,7]` |
-| `alignment_correlation_threshold` ✅ NEW | Min correlation for cycle filtering | `0.7` | `0.7` |
-| `alignment_target_onset_position` ✅ NEW | Target onset sample position | `100` | `100` |
-| `normalize_by_calibration` ✅ NEW | Enable impact magnitude normalization | `false` | `false` |
+### Current State Analysis
+
+**Existing Scenarios Panel** (`gui_scenarios_panel.py` - 72 KB, ~1,800 lines)
+
+**Current Capabilities:**
+- Browse scenarios (Computer-Scenario-Room hierarchy)
+- Load and display single-channel measurements
+- Waveform visualization (room response, impulse, spectrum)
+- Measurement comparison (overlay multiple measurements)
+- Basic statistics display
+- NPZ file loading support
+
+**Current Limitations:**
+- ❌ No multi-channel support
+- ❌ No calibration mode analysis
+- ❌ No per-channel browsing
+- ❌ No cycle-level visualization (only averaged responses)
+- ❌ No overlay/averaging across channels
+- ❌ Cannot view channels from same scenario side-by-side
+- ❌ No validation results display
 
 ---
 
-## File Management
+### Refactoring Requirements
 
-### Naming Convention
+#### **1. Multi-Channel Data Structure Support**
 
-**Single-Channel (Legacy):**
-```
-raw_000_20251031_143022.wav
-impulse_000_20251031_143022.wav
-room_response_000_20251031_143022.wav
-```
+**Goal:** Handle both standard (averaged) and calibration (cycle-level) data formats.
 
-**Multi-Channel (New):**
+**Data Formats to Support:**
+
+**Standard Mode Files:**
 ```
-raw_000_20251031_143022_ch0.wav
-raw_000_20251031_143022_ch1.wav
-raw_000_20251031_143022_ch2.wav
-...
-impulse_000_20251031_143022_ch0.wav
-impulse_000_20251031_143022_ch1.wav
-...
-room_response_000_20251031_143022_ch0.wav
-room_response_000_20251031_143022_ch1.wav
+raw_000_TIMESTAMP_ch0.wav
+impulse_000_TIMESTAMP_ch0.wav
+room_000_TIMESTAMP_ch0.wav
 ...
 ```
 
-**Pattern:** `{type}_{index}_{timestamp}_ch{N}.wav`
-
-### File Management Utilities
-
-**multichannel_filename_utils.py** (7.6 KB)
-
-Functions:
-- `parse_multichannel_filename(filename)` → `ParsedFilename(type, index, timestamp, channel)`
-- `group_files_by_measurement(files)` → `Dict[index, List[files]]`
-- `group_files_by_channel(files)` → `Dict[channel, List[files]]`
-- `detect_num_channels(files)` → `int`
-
-**ScenarioManager.py** (28 KB) - Extended with multi-channel support
-
-New methods:
-- `is_multichannel_scenario(scenario_path)` → `bool`
-- `detect_num_channels_in_scenario(scenario_path)` → `int`
-- `get_measurement_files_from_scenario(scenario_path, measurement_index, file_type)` → `Dict[channel, filepath]`
-
----
-
-## Calibration Quality Validation
-
-### CalibrationValidatorV2 (Current - V3 Comprehensive Format)
-
-**File:** `calibration_validator_v2.py` (25 KB)
-**Replaced:** `calibration_validator.py` (V1, deprecated 2025-10-30)
-**Updated to V3:** 2025-11-01
-**Status:** ✅ Production Ready
-
-**Validation Approach: Comprehensive 7-Criteria System**
-
-V3 uses a comprehensive validation system with 11 parameters covering 7 quality criteria:
-
-```python
-@dataclass
-class QualityThresholds:
-    # 1. Negative Peak Range (absolute amplitude)
-    min_negative_peak: float
-    max_negative_peak: float
-
-    # 2. Precursor (peaks before negative peak)
-    max_precursor_ratio: float  # Relative to negative peak
-
-    # 3. Negative Peak Width
-    min_negative_peak_width_ms: float  # Width at 50% amplitude
-    max_negative_peak_width_ms: float
-
-    # 4. First Positive Peak After Negative
-    max_first_positive_ratio: float  # Relative to negative peak
-
-    # 5. First Positive Peak Timing
-    min_first_positive_time_ms: float
-    max_first_positive_time_ms: float
-
-    # 6. Highest Positive Peak After Negative
-    max_highest_positive_ratio: float  # Relative to negative peak
-
-    # 7. Secondary Negative Peak (replaces aftershock)
-    max_secondary_negative_ratio: float  # Relative to main negative
-    secondary_negative_window_ms: float
+**Calibration Mode Files + NPZ:**
+```
+raw_000_TIMESTAMP_ch0.wav
+impulse_000_TIMESTAMP_ch0.wav
+room_000_TIMESTAMP_ch0.wav
+...
+calibration_cycles_000_TIMESTAMP.npz  # NEW: Cycle-level data
 ```
 
-**7 Quality Criteria:**
-
-1. **Negative Peak Range**: Ensures impact amplitude is within acceptable bounds
-2. **Precursor**: Detects pre-impact vibrations (excludes 1ms rise time)
-3. **Negative Peak Width**: Validates impulse duration (width at 50% amplitude)
-4. **First Positive Peak Magnitude**: Checks initial rebound intensity
-5. **First Positive Peak Timing**: Validates rebound timing
-6. **Highest Positive Peak**: Monitors maximum positive excursion
-7. **Secondary Negative Peak**: Detects hammer bounces/rebounds
-
-**Validation Logic:**
-
-For each calibration cycle:
-1. Find negative peak and its properties
-2. Check for precursors (before negative peak, excluding rise time)
-3. Measure negative peak width at 50% amplitude
-4. Locate first positive peak after negative
-5. Measure timing from negative to first positive
-6. Find highest positive peak in entire response
-7. Search for secondary negative peaks (bounces)
-8. Mark cycle as valid only if ALL 7 criteria pass
-
-**Threshold Learning Workflow:**
-
-GUI allows user to:
-1. Run calibration test → Get initial cycles with full metrics
-2. Visually inspect waveforms with detailed validation results
-3. Mark 3+ "good" cycles with checkboxes
-4. Click "Calculate Thresholds" → System analyzes all 11 parameters
-5. Thresholds saved to `recorderConfig.json` (V3 format)
-6. Future recordings validated against comprehensive criteria
-
-**Key Benefits:**
-- ✅ Comprehensive impulse quality assessment
-- ✅ Detects subtle issues (precursors, bounces, timing problems)
-- ✅ User-driven quality definition with detailed metrics
-- ✅ Backward compatible with V1/V2 config formats
-- ✅ 5% safety margin for learned thresholds (reduced from 20%)
-
-### Calibration-Based Normalization (NEW - 2025-11-02)
-
-**Purpose:** Normalize response channel amplitudes by calibration signal magnitude for quantitative, reproducible measurements.
-
-**File:** `RoomResponseRecorder.py` → `_normalize_by_calibration()`
-**Status:** ✅ Implemented
-**Configuration:** `multichannel_config.normalize_by_calibration` (default: False)
-
-**Problem Solved:**
-- Variations in calibration impulse magnitude across recording takes
-- Differences in sensor sensitivity between channels
-- Need for quantitative comparison between measurements
-
-**Normalization Strategy:**
-
-For each recording cycle `i`:
-```
-normalized_response[channel][cycle_i] = raw_response[channel][cycle_i] / |negative_peak[cycle_i]|
-```
-
-Where:
-- `negative_peak[cycle_i]`: Calibration impulse magnitude (from validation results)
-- Result: Response amplitude per unit impact strength
-
-**Processing Pipeline:**
-
-1. Record multi-channel audio
-2. Extract cycles from calibration channel
-3. Validate each cycle → Get `negative_peak` for each cycle
-4. Align all cycles by onset
-5. Apply alignment to all channels → `aligned_multichannel_cycles`
-6. **Normalize response channels** (if enabled) → `normalized_multichannel_cycles`
-7. Return both aligned (raw) and normalized cycles
-
-**Output Structure:**
-
+**NPZ File Structure (Calibration Mode):**
 ```python
 {
-    'calibration_cycles': np.ndarray,
-    'validation_results': List[Dict],
-    'aligned_multichannel_cycles': Dict[int, np.ndarray],      # Raw aligned
-    'normalized_multichannel_cycles': Dict[int, np.ndarray],   # NEW: Calibrated
-    'normalization_factors': List[float],                      # NEW: Negative peaks
+    'aligned_multichannel_cycles': Dict[int, np.ndarray],  # [N_cycles, samples] per channel
+    'normalized_multichannel_cycles': Dict[int, np.ndarray],  # Optional
+    'validation_results': List[Dict],  # Per-cycle validation
     'alignment_metadata': Dict,
-    'metadata': {
-        'normalize_by_calibration': bool  # NEW: Flag indicating if normalization applied
-    }
+    'normalization_factors': List[float],  # If normalized
+    'metadata': Dict
 }
 ```
 
-**Key Features:**
-- ✅ **Optional:** Disabled by default, enabled via config
-- ✅ **Per-cycle normalization:** Each cycle normalized by its own calibration magnitude
-- ✅ **Calibration channel preserved:** Kept unnormalized (or normalized to 1.0)
-- ✅ **Division-by-zero protection:** Skips cycles with peak < 1e-6
-- ✅ **Dual output:** Returns both raw aligned and normalized cycles
-- ✅ **Normalization factors logged:** Min/max/mean negative peaks printed
+#### **2. Hierarchical Navigation Structure**
 
-**Use Cases:**
+**New Navigation Hierarchy:**
 
-1. **Piano Hammer Impact Studies:**
-   - Measure string response per unit force
-   - Compare different striking techniques
-   - Normalize for varying impact strengths
-
-2. **Room Acoustic Measurements:**
-   - Normalize by source impulse magnitude
-   - Compare responses across different sessions
-   - Remove source strength variability
-
-3. **Sensor Calibration:**
-   - Account for sensor gain differences
-   - Produce sensor-independent measurements
-   - Enable cross-system comparisons
-
-**Benefits:**
-- ✅ **Quantitative Analysis:** Results in units of "response per unit impact"
-- ✅ **Reproducibility:** Removes impact strength variability
-- ✅ **Comparability:** Different measurements directly comparable
-- ✅ **Physical Meaning:** Clear physical interpretation of results
-- ✅ **Backward Compatible:** Optional feature, doesn't affect existing workflows
-
----
-
-### Multi-Channel Response Review (NEW - 2025-11-02)
-
-**Purpose:** Interactive GUI for reviewing aligned and normalized response cycles across all channels.
-
-**File:** `gui_calibration_impulse_panel.py` → `_render_multichannel_response_review()`
-**Status:** ✅ Implemented
-**Location:** Calibration Impulse panel, appears after "Alignment Results Review" section
-
-**Problem Solved:**
-- Visual validation of alignment quality across response channels
-- Comparison of raw vs normalized responses
-- Per-cycle quality assessment via detailed metrics
-- Side-by-side evaluation of normalization effectiveness
-
-**User Interface Components:**
-
-1. **Display Controls**
-   ```
-   ┌─────────────────────────────────────────────────────────┐
-   │ Display Controls                                         │
-   ├─────────────────────────────────────────────────────────┤
-   │ Select Response Channel: [Channel 1 ▼]                  │
-   │ Display Mode: ⚪ Aligned Only  ⚪ Normalized Only       │
-   │               ⚪ Both (Side-by-Side)                     │
-   └─────────────────────────────────────────────────────────┘
-   ```
-
-2. **Cycle Selection Table**
-   - Checkbox selection for each cycle
-   - Per-cycle metrics displayed:
-     - Negative Peak (max absolute negative value)
-     - Positive Peak (max positive value)
-     - RMS (Raw) - root mean square amplitude
-     - RMS (Norm) - normalized RMS (if available)
-     - Norm Factor - calibration magnitude used for normalization
-   - Adaptive columns: Shows normalized metrics only when available
-   - Selection count display: "✓ Selected N cycle(s): 0, 1, 2..."
-
-3. **Waveform Overlay Visualization**
-   - Interactive zoom controls (persistent zoom state per channel)
-   - View mode selector: Waveform / Spectrum
-   - Reset zoom button
-   - Analysis statistics display
-   - Three display modes:
-     - **Aligned Only:** Shows raw aligned cycles
-     - **Normalized Only:** Shows calibration-normalized cycles
-     - **Both (Side-by-Side):** Split view comparing raw vs normalized
-
-4. **Detailed Cycle Information** (Expandable)
-   - Per-cycle expandable sections
-   - Side-by-side metrics:
-     - **Aligned (Raw):** Original metrics
-     - **Normalized:** Post-normalization metrics
-   - Displays: Negative Peak, Positive Peak, RMS, Max Abs, Energy
-   - Shows normalization factor used
-
-**Implementation Details:**
-
-**Helper Methods:**
-```python
-_compute_channel_cycle_metrics(cycle_data: np.ndarray) -> dict
-    # Computes metrics for a single cycle
-    # Returns: negative_peak, positive_peak, rms, max_abs, energy
-
-_render_channel_cycles_table(channel_idx, channel_name, aligned_cycles,
-                              normalized_cycles, normalization_factors) -> list
-    # Renders checkbox table with per-cycle metrics
-    # Returns list of selected cycle indices
-
-_render_channel_cycles_overlay(selected_cycles, aligned_cycles, normalized_cycles,
-                                channel_name, channel_idx, sample_rate, display_mode)
-    # Renders waveform visualization based on display mode
-    # Handles: Aligned Only / Normalized Only / Both Side-by-Side
-
-_plot_cycle_overlay(selected_cycles, cycle_data, sample_rate,
-                    label_prefix, component_id)
-    # Plots cycle overlay using AudioVisualizer.render_multi_waveform_with_zoom()
-    # Provides zoom controls, view mode, analysis display
-
-_render_multichannel_response_review(test_results: Dict[str, Any])
-    # Main integration method
-    # Coordinates all sub-components
+```
+📁 Scenario (Computer-ScenarioN-Room)
+├─ 📊 Overview (scenario-level statistics)
+├─ 📈 Measurements (browse by measurement index)
+│   ├─ 📐 Measurement 000
+│   │   ├─ Channel 0 (Calibration Sensor)
+│   │   ├─ Channel 1 (Response)
+│   │   ├─ Channel 2 (Response)
+│   │   └─ ...
+│   ├─ 📐 Measurement 001
+│   └─ ...
+├─ 🎨 Channels (browse by channel)
+│   ├─ Channel 0 (all measurements)
+│   ├─ Channel 1 (all measurements)
+│   └─ ...
+└─ ⚙️ Configuration (display scenario config)
 ```
 
-**Session State Management:**
-- Per-channel cycle selection: `multichannel_review_selected_cycles_ch{channel_idx}`
-- Channel selector: `multichannel_review_channel_selector`
-- Display mode: `multichannel_review_display_mode`
-- Zoom state per channel/view: `multichannel_ch{channel_idx}_{aligned|normalized}_viz_zoom_*`
+**Implementation Strategy:**
+- Use expandable sections (st.expander) for each level
+- Session state to track current selection (scenario, measurement, channel)
+- Sidebar navigation for quick scenario switching
+- Breadcrumb display for current location
 
-**Visualization Features:**
-- ✅ **Zoom Controls:** Interactive zoom with persistent state
-- ✅ **View Modes:** Waveform and Spectrum display
-- ✅ **Analysis Stats:** Automatic statistics display
-- ✅ **Side-by-Side Comparison:** Compare raw vs normalized in split view
-- ✅ **Multi-Cycle Overlay:** Plot multiple cycles simultaneously
-- ✅ **Consistent UI:** Matches Alignment Results Review section
+#### **3. Measurement Visualization Components**
 
-**User Workflow:**
+**Component A: Single Measurement, Single Channel View**
 
-1. Run calibration test with multi-channel enabled
-2. Scroll to "Multi-Channel Response Review" section (appears after alignment review)
-3. Select response channel from dropdown (excludes calibration channel)
-4. Choose display mode (Aligned/Normalized/Both)
-5. Review metrics table for all cycles
-6. Check boxes to select cycles for visualization
-7. View waveform overlays with zoom controls
-8. Expand individual cycle details for in-depth analysis
-9. Switch channels to review other response channels
-
-**Integration:**
-- Automatically appears when multi-channel mode enabled AND response channels exist
-- Only shows if `aligned_multichannel_cycles` present in test results
-- Filters out calibration channel (only shows response channels)
-- Gracefully handles missing normalized data (falls back to aligned only)
-
-**Benefits:**
-- ✅ **Visual Quality Check:** Quickly assess alignment quality across channels
-- ✅ **Normalization Validation:** See effect of calibration normalization
-- ✅ **Per-Cycle Inspection:** Detailed metrics for individual cycles
-- ✅ **Interactive Exploration:** Zoom into specific regions of interest
-- ✅ **Quantitative Metrics:** Numerical values for objective assessment
-- ✅ **Multi-Channel Support:** Review all response channels systematically
-
----
-
-## GUI Implementation Status
-
-### Implemented GUIs
-
-#### 1. AudioSettingsPanel (79 KB) - ✅ COMPLETE
-
-**File:** `gui_audio_settings_panel.py`
-
-**Tabs:**
-- **Device Selection:** Audio input/output device picker
-- **Calibration Impulse:** ✅ **Multi-channel calibration testing**
-  - Run calibration test (calls `recorder.take_record_calibration()`)
-  - Display per-cycle validation results
-  - Checkbox-based cycle selection
-  - Automatic threshold learning
-  - Manual threshold editing (tabular form)
-  - Unified waveform visualization (1-N cycles)
-  - Save thresholds to config
-- **Series Settings:** Multi-pulse configuration (pulse duration, cycle duration, num pulses)
-
-**Multi-Channel Features:**
-- ✅ Calibration quality testing with V3 validator (7 criteria)
-- ✅ Per-cycle validation metrics display (all 11 parameters)
-- ✅ Multi-cycle waveform visualization
-- ✅ Threshold learning from user-selected cycles
-- ✅ **Multi-channel configuration UI** (enable/disable, channel setup)
-- ✅ Device capability detection
-- ✅ Per-channel naming and role assignment
-- ✅ **Calibration-based normalization** (normalize response by calibration magnitude)
-- ✅ **Multi-Channel Response Review** (interactive review of aligned/normalized cycles)
-
-#### 2. SeriesSettingsPanel (19 KB)
-
-**File:** `gui_series_settings_panel.py`
+**Purpose:** Display waveform/spectrum for one channel from one measurement.
 
 **Features:**
-- Configure multi-pulse recording parameters
-- Test recording and analysis
-- Cycle consistency overlay plots
-- Saves configuration to `recorderConfig.json`
+- Tab selector: Waveform / Spectrum / Cycles (if calibration mode)
+- Display mode: Averaged Response (standard mode) or Individual Cycles (calibration mode)
+- Zoom controls (inherited from AudioVisualizer)
+- Statistics panel (peak, RMS, energy)
+- Validation results (if calibration mode)
 
-**Multi-Channel Status:**
-- ✅ Works with multi-channel recorder
-- ✅ Uses `recorder.take_record()` (respects multichannel_config)
-- ✅ Multi-channel configuration UI in Device Selection tab
+**Component B: Single Measurement, Multi-Channel Overlay**
 
-#### 3. SeriesWorker (Background Recording)
-
-**File:** `gui_series_worker.py`
+**Purpose:** Compare multiple channels from the same measurement side-by-side.
 
 **Features:**
-- Background thread for series recording
-- Multi-scenario support
-- Measurement interval control
-- Warm-up measurements
-- File-based pause/stop control
-
-**Multi-Channel Status:**
-- ✅ Calls `recorder.take_record()` → Respects multichannel_config
-- ✅ Saves multi-channel files if enabled
-- ❌ No multi-channel-specific UI
-
-#### 4. CollectionPanel (23 KB)
-
-**File:** `gui_collect_panel.py`
-
-**Multi-Channel Status:**
-- ✅ **Multi-channel status display** (implemented in Phase 7)
-- ✅ **Per-channel indicators** (shows all active channels)
-- ✅ **Visual channel status** (green badges per channel)
-
-### Missing GUIs
-
-#### Multi-Channel Configuration Interface ✅ IMPLEMENTED
-
-**Location:** AudioSettingsPanel → Device Selection tab → Multi-Channel Configuration section
-
-**Status:** ✅ FULLY FUNCTIONAL (Implemented Phase 5)
-
-**Features Implemented:**
-- ✅ Enable/disable multi-channel recording toggle
-- ✅ Device capability detection (max input channels)
-- ✅ Number of channels selector (1-32, constrained by device)
-- ✅ Per-channel name editing
-- ✅ Reference channel selector
-- ✅ Calibration channel selector
-- ✅ Configuration profiles (save/load/delete named presets)
-- ✅ Save to recorderConfig.json
-- ✅ Real-time validation
-
-#### Multi-Channel Scenario Visualization ❌ NOT IMPLEMENTED
-
-**Should Exist In:** AudioAnalysisPanel or new panel
-
-**Required Features:**
-- Load multi-channel files from scenario
-- Display stacked waveform plots (one per channel)
-- Channel selection checkboxes (show/hide)
-- Synchronized zoom/pan across channels
-- Per-channel statistics (max amplitude, RMS, etc.)
+- Channel selection checkboxes (select which channels to overlay)
+- Layout mode: Stacked (vertical) / Overlaid (single plot)
+- Synchronized zoom/pan (linked axes)
+- Per-channel statistics table
 - Cross-correlation display (verify synchronization)
+- Color coding per channel (consistent throughout panel)
 
-**Effort Estimate:** 6-8 hours
+**Component C: Multi-Measurement, Single Channel View**
+
+**Purpose:** Compare same channel across multiple measurements (already exists, needs enhancement).
+
+**Features:**
+- Measurement selection checkboxes
+- Overlay plot with automatic averaging option
+- Statistics: mean, std dev, min/max envelope
+- Outlier detection/filtering
+- Export averaged response
+
+**Component D: Multi-Measurement, Multi-Channel Analysis**
+
+**Purpose:** Advanced analysis across measurements and channels.
+
+**Features:**
+- 2D selection grid: Measurements (rows) × Channels (columns)
+- Analysis modes:
+  - Channel-wise averaging (average same channel across measurements)
+  - Measurement-wise averaging (average all channels from same measurement)
+  - Grand average (all selected data)
+- Heatmap visualization (amplitude distribution)
+- Export results to CSV/NPZ
+
+#### **4. Cycle-Level Visualization (Calibration Mode)**
+
+**Purpose:** Display and analyze individual cycles from calibration recordings.
+
+**Features:**
+
+**Cycle Statistics Table:**
+- Per-cycle metrics (negative peak, positive peak, RMS)
+- Validation status (pass/fail with color coding)
+- Normalization factors (if normalized)
+- Checkbox selection for overlay
+
+**Cycle Overlay Plot:**
+- Display mode: Aligned / Normalized / Both Side-by-Side
+- Interactive zoom controls (per-channel persistent state)
+- Statistics overlay: peak range, std dev, range width %
+- View mode: Waveform / Spectrum
+- Analysis display: min/max/mean/std
+
+**Validation Results Display:**
+- Expandable per-cycle validation details
+- 7-criteria status (pass/fail indicators)
+- Threshold comparison (value vs threshold)
+- Failure reason highlighting
+
+**Implementation:** Reuse components from Series Settings panel (`gui_series_settings_panel.py` lines 200-400)
+
+#### **5. Channel Grouping and Averaging**
+
+**Purpose:** Analyze response characteristics across multiple channels.
+
+**Averaging Modes:**
+
+**A. Channel-Wise Averaging:**
+- Select multiple measurements, one channel
+- Compute: `mean_response = mean([meas_i[channel_j] for i in measurements])`
+- Display: averaged waveform + confidence interval (std dev envelope)
+- Use case: Representative response for a channel across session
+
+**B. Measurement-Wise Averaging:**
+- Select one measurement, multiple channels
+- Compute: `mean_response = mean([meas_i[channel_j] for j in channels])`
+- Display: averaged waveform across channels
+- Use case: Overall response characteristic for a measurement
+
+**C. Grand Averaging:**
+- Select multiple measurements, multiple channels
+- Compute: `grand_mean = mean([meas_i[channel_j] for i, j in selections])`
+- Display: overall averaged response with variance
+- Use case: System-level response characteristic
+
+**UI Components:**
+- Selection grid (measurements × channels)
+- Averaging mode selector (channel-wise / measurement-wise / grand)
+- "Compute Average" button
+- Export button (save averaged response as WAV/NPZ)
+
+#### **6. Side-by-Side Channel Comparison**
+
+**Purpose:** View multiple channels from same measurement simultaneously.
+
+**Layout Options:**
+
+**Stacked Layout (Vertical):**
+```
+┌─────────────────────────────────────┐
+│ Channel 0 (Calibration Sensor)      │
+│ [waveform plot]                     │
+├─────────────────────────────────────┤
+│ Channel 1 (Response)                │
+│ [waveform plot]                     │
+├─────────────────────────────────────┤
+│ Channel 2 (Response)                │
+│ [waveform plot]                     │
+└─────────────────────────────────────┘
+```
+
+**Overlaid Layout (Single Plot):**
+```
+┌─────────────────────────────────────┐
+│ All Selected Channels               │
+│ [overlaid waveforms, color-coded]  │
+│ Legend: Ch0 (blue), Ch1 (red), ...  │
+└─────────────────────────────────────┘
+```
+
+**Features:**
+- Toggle between stacked/overlaid layouts
+- Channel selection checkboxes
+- Synchronized zoom (linked X-axis for stacked, shared for overlaid)
+- Per-channel amplitude scaling (auto or manual)
+- Color legend with channel names
+- Export all channels to single figure (PNG/PDF)
+
+#### **7. Configuration Display**
+
+**Purpose:** Show recording and calibration configuration for the scenario.
+
+**Display Sections:**
+
+**A. Recording Configuration:**
+- Sample rate, num_pulses, cycle_duration
+- Input/output devices used
+- Recording mode (standard / calibration)
+
+**B. Multi-Channel Configuration:**
+- Enabled status
+- Number of channels
+- Channel names and roles (calibration, reference, response)
+- Alignment parameters (correlation threshold, target onset position)
+- Normalization status
+
+**C. Calibration Quality Configuration:**
+- 11 threshold parameters
+- Validation criteria summary
+
+**Implementation:**
+- Read from `session_metadata.json` (scenario metadata)
+- Display in tabular format with expandable sections
+- Copy-to-clipboard button for configuration JSON
 
 ---
 
-## Current Usage Patterns
+### Implementation Plan
 
-### 1. Calibration Testing (Audio Settings Panel) ✅ WORKING
+#### **Phase 1: Data Loading Infrastructure** (2-3 hours)
 
-**User Workflow:**
-1. Open Audio Settings → Calibration Impulse tab
-2. Ensure `multichannel_config.enabled = true` in JSON (manual edit)
-3. Click "Run Calibration Test"
-4. System calls `recorder.take_record_calibration()`
-5. Displays per-cycle validation results
-6. User selects "good" cycles with checkboxes
-7. Click "Calculate and Apply Thresholds"
-8. Thresholds saved to config
+**Tasks:**
+1. Extend `ScenarioManager` with multi-channel NPZ loading:
+   - `load_calibration_cycles(scenario_path, measurement_index) -> Dict`
+   - `get_measurement_mode(scenario_path, measurement_index) -> 'standard' | 'calibration'`
+   - `get_channel_list(scenario_path, measurement_index) -> List[int]`
 
-**Code Path:**
-```
-gui_audio_settings_panel.py:1291
-    → recorder.take_record_calibration()
-        → RoomResponseRecorder._take_record_calibration_mode()
-            → _record_method_2() [multi-channel]
-            → CalibrationValidatorV2.validate_cycle() [per cycle]
-            → align_cycles_by_onset()
-            → apply_alignment_to_channel() [all channels]
-            → Returns cycle data dict
-```
+2. Create data models for loaded data:
+   ```python
+   @dataclass
+   class MeasurementData:
+       mode: str  # 'standard' or 'calibration'
+       channels: Dict[int, np.ndarray]  # Channel index -> averaged response
+       sample_rate: int
+       metadata: Dict
 
-**Status:** ✅ FULLY FUNCTIONAL
+   @dataclass
+   class CalibrationCycleData:
+       aligned_cycles: Dict[int, np.ndarray]  # Channel -> [N_cycles, samples]
+       normalized_cycles: Optional[Dict[int, np.ndarray]]
+       validation_results: List[Dict]
+       alignment_metadata: Dict
+       normalization_factors: Optional[List[float]]
+   ```
 
-### 2. Series Recording (Series Settings Panel) ✅ FULLY IMPLEMENTED
+3. Implement caching for loaded measurements (session state)
 
-**User Workflow:**
-1. Open Audio Settings → Series Controls tab
-2. Configure pulse parameters (num_pulses, duration, frequency, etc.)
-3. Select recording mode: **Standard** or **Calibration** (default: Calibration)
-4. Click "🎵 Record Series"
-5. Recording & Analysis section appears below with:
-   - Cycle Statistics table (for calibration mode)
-   - Cycle selection checkboxes
-   - Cycle overlay chart with zoom controls
-   - Display mode selector (Aligned/Normalized/Both)
-   - Overlay statistics (peak range, range width %, std dev)
+#### **Phase 2: Navigation UI Refactoring** (4-5 hours)
 
-**Code Path:**
-```
-gui_series_settings_panel.py
-    → _execute_series_recording()
-        → recorder.take_record(output_file, impulse_file, method=2, mode=recording_mode)
-            → RoomResponseRecorder.take_record(mode='calibration' or 'standard')
-                → _record_audio() [universal recording stage]
-                → _process_calibration_mode() [if mode='calibration']
-                    → Validation → Alignment → Normalization
-                → _process_standard_mode() [if mode='standard']
-                    → Averaging → Spectral analysis
-                → _save_multichannel_files() [if multichannel enabled]
-                → Returns complete processed dict
-```
+**Tasks:**
+1. Replace flat scenario list with hierarchical navigation
+2. Add measurement/channel selection UI:
+   - Sidebar: Scenario selector dropdown
+   - Main panel: Tab selector (Overview / Measurements / Channels / Config)
+   - Measurements tab: Expandable sections per measurement
+   - Channels tab: Channel selector dropdown + measurement grid
 
-**Status:**
-- ✅ Single-channel recording: TESTED, WORKING
-- ✅ Multi-channel recording: TESTED, WORKING
-- ✅ Calibration mode integration: COMPLETE
-- ✅ Cycle overlay visualization: COMPLETE (with zoom controls)
-- ✅ Display mode selector: COMPLETE (Aligned/Normalized/Both)
-- ✅ Cycle statistics display: COMPLETE (7-criteria validation results)
-- ✅ Overlay statistics: COMPLETE (peak range, range width %, std dev)
-- ✅ SignalProcessor integration: COMPLETE (settings auto-update processor)
+3. Implement session state management:
+   ```python
+   # Session keys
+   'scenarios_selected_scenario': str
+   'scenarios_selected_measurement': Optional[int]
+   'scenarios_selected_channel': Optional[int]
+   'scenarios_view_mode': 'single' | 'multi_channel' | 'multi_measurement'
+   ```
 
-### 3. Background Series Recording (Series Worker) ⚠️ PARTIALLY WORKING
+4. Create breadcrumb display for current location
 
-**User Workflow:**
-1. Series Worker runs in background thread
-2. Calls `recorder.take_record()` periodically
-3. Saves files automatically
+#### **Phase 3: Single Measurement Visualization** (6-8 hours)
 
-**Code Path:**
-```
-gui_series_worker.py:302
-    → recorder.take_record(raw_path, impulse_path, method=2, interactive=False)
-        → [Same as Series Recording above]
-```
+**Tasks:**
+1. **Component A: Single Channel View**
+   - Implement tab selector (Waveform / Spectrum / Cycles)
+   - Standard mode: Display averaged response
+   - Calibration mode: Display cycles with statistics
+   - Reuse `AudioVisualizer` components for plotting
+   - Add validation results display (expandable)
 
-**Status:** Same as Series Recording (works if JSON configured)
+2. **Component B: Multi-Channel Overlay**
+   - Implement channel selection grid (checkboxes)
+   - Add layout mode toggle (Stacked / Overlaid)
+   - Create stacked plot layout (matplotlib subplots)
+   - Create overlaid plot (single plot, color-coded)
+   - Implement synchronized zoom (linked axes)
+   - Add per-channel statistics table
+   - Calculate and display cross-correlation matrix
 
-**Note:** `interactive=False` parameter is **not defined in signature** - likely ignored or legacy parameter
+#### **Phase 4: Cycle-Level Visualization** (4-5 hours)
 
----
+**Tasks:**
+1. Port cycle visualization components from Series Settings panel:
+   - `_render_cycle_statistics_table()`
+   - `_render_cycle_overlay_visualization()`
+   - Adapt for Scenarios Panel context (loaded data vs fresh recording)
 
-## Architectural Issues
+2. Add display mode selector (Aligned / Normalized / Both)
 
-### Issue 1: Duplicated Cycle Extraction ⚠️
+3. Implement per-cycle validation display:
+   - Expandable sections per cycle
+   - Color-coded pass/fail indicators
+   - Threshold comparison display
 
-**Location:** `RoomResponseRecorder.py` lines 1208-1221
+#### **Phase 5: Averaging and Analysis** (5-6 hours)
 
-**Problem:**
-- Standard mode uses `_extract_cycles()` helper (lines 690-713)
-- Calibration mode has **inline duplicate code** for same operation
+**Tasks:**
+1. **Channel-Wise Averaging:**
+   - Measurement selection grid (checkboxes)
+   - "Compute Average" button
+   - Display averaged waveform with std dev envelope
+   - Export averaged response (WAV/NPZ)
 
-**Impact:** Same logic in two places → risk of divergence, harder to maintain
+2. **Measurement-Wise Averaging:**
+   - Channel selection grid
+   - Compute and display averaged waveform
 
-**Fix:** Replace inline code with call to `_extract_cycles()`
+3. **Grand Averaging:**
+   - 2D selection grid (measurements × channels)
+   - Compute grand average with variance metrics
+   - Export results
 
-**Effort:** 15 minutes
+4. **Statistics Display:**
+   - Mean, std dev, min/max
+   - Outlier detection (Z-score, IQR method)
+   - Filtering options (exclude outliers)
 
-### Issue 2: Hardcoded File Saving ⚠️
+#### **Phase 6: Configuration Display** (2-3 hours)
 
-**Problem:**
-- Standard mode **always** saves files
-- Calibration mode **never** saves files
-- No flexibility for:
-  - Dry-run recordings (test without saving)
-  - Saving calibration cycles for later analysis
+**Tasks:**
+1. Load configuration from `session_metadata.json`
+2. Create configuration display UI (tabular format)
+3. Add copy-to-clipboard functionality
+4. Display channel roles and names
+5. Show calibration thresholds (if applicable)
 
-**Fix:** Add `save_files: bool = True` parameter to `take_record()`
+#### **Phase 7: Polish and Testing** (3-4 hours)
 
-**Effort:** 4 hours (includes updating all GUI calls)
-
-### Issue 3: Two Alignment Systems ⚠️
-
-**Problem:**
-- Standard mode: Simple onset detection + `np.roll()`
-- Calibration mode: Sophisticated per-cycle alignment + cross-correlation filtering
-- Both do similar work but cannot share implementation
-
-**Impact:** Standard mode cannot benefit from quality filtering that calibration mode provides
-
-**Fix:** Unify into single `_align_cycles_by_onset()` that accepts optional `validation_results`
-
-**Effort:** 8 hours
-
-### Issue 4: Deprecated Code Present ❌
-
-**Problem:**
-- `calibration_validator.py` (V1, 7 KB) still exists
-- Replaced by V2 on 2025-10-30
-- Still referenced in old test files
-
-**Fix:**
-1. Update `test_phase2_implementation.py` to use V2
-2. Update `test_calibration_visualizer.py` to use V2
-3. Remove `calibration_validator.py`
-4. Remove V1 migration code from `RoomResponseRecorder.__init__` (lines 110-125)
-
-**Effort:** 1 hour
+**Tasks:**
+1. Add loading spinners and progress indicators
+2. Error handling for missing files/data
+3. Performance optimization (lazy loading, caching)
+4. User documentation (inline help text)
+5. Test with various scenarios:
+   - Single-channel standard mode
+   - Multi-channel standard mode
+   - Multi-channel calibration mode
+   - Missing files/corrupted data
+6. UI refinements based on testing
 
 ---
 
-## Implementation History
+### Total Effort Estimate
 
-### Phase 1: SDL Audio Core (2025-10-25) ✅
+**Development Time:**
+- Phase 1: 2-3 hours
+- Phase 2: 4-5 hours
+- Phase 3: 6-8 hours
+- Phase 4: 4-5 hours
+- Phase 5: 5-6 hours
+- Phase 6: 2-3 hours
+- Phase 7: 3-4 hours
 
-**Files Modified:**
-- `sdl_audio_core/audio_engine.h`
-- `sdl_audio_core/audio_engine.cpp`
-- `sdl_audio_core/bindings.cpp`
-
-**Implemented:**
-- Multi-channel AudioSpec configuration (`input_channels` parameter)
-- Per-channel buffer management (`std::vector<std::vector<float>>`)
-- De-interleaving in audio callback
-- Python bindings: `measure_room_response_auto_multichannel()`
-- Thread-safe recording with per-channel mutexes
-
-**Test Results:** 7/7 tests passing
-
-### Phase 2: Recording Pipeline + Calibration (2025-10-26) ✅
-
-**Files Modified:**
-- `RoomResponseRecorder.py` (extended to 1,385 lines)
-- `calibration_validator_v2.py` (created 16 KB)
-- `test_phase2_implementation.py`
-
-**Implemented:**
-- Multi-channel configuration loading from JSON
-- `_record_method_2()` multi-channel support
-- `_process_multichannel_signal()` with synchronized alignment
-- Calibration mode: `_take_record_calibration_mode()`
-- CalibrationValidatorV2 with min/max range validation
-- Cycle alignment with cross-correlation filtering
-
-**Test Results:** All Phase 2 tests passing
-
-### Phase 3: Filesystem Structure (2025-10-26) ✅
-
-**Files Created:**
-- `multichannel_filename_utils.py` (7.6 KB)
-
-**Files Modified:**
-- `ScenarioManager.py` (extended to 28 KB)
-
-**Implemented:**
-- Multi-channel filename parsing
-- File grouping by measurement/channel
-- ScenarioManager multi-channel detection
-- Automatic channel count detection
-
-**Test Results:** All Phase 3 tests passing
-
-### Phase 4: GUI Calibration Interface (2025-10-30) ✅
-
-**Files Modified:**
-- `gui_audio_settings_panel.py` (extended to 79 KB)
-- `gui_audio_visualizer.py` (created 39 KB)
-
-**Implemented:**
-- Calibration Impulse tab in Audio Settings
-- CalibrationValidatorV2 integration
-- Checkbox-based cycle selection
-- Automatic threshold learning
-- Unified multi-waveform visualization
-- Threshold saving to config
-
-**Refactored:**
-- V1 → V2 calibration validator migration
-- Simplified validation logic (ratio-based → min/max ranges)
-
-**Test Results:** Calibration UI fully functional
-
-### Bug Fixes (2025-10-31) ✅
-
-**Issues Fixed:**
-- Config save not persisting calibration thresholds
-- Threshold calculation errors
-- Multi-channel series recording visualization
-- Series recording analysis (cycles, averaging, spectrum)
+**Total: 26-34 hours (~3-4 working days)**
 
 ---
 
-## Roadmap
-
-### Phase 5: Testing & Validation (Planned - 1 week)
-
-**Hardware Testing:**
-- Test with 2, 4, 8 channel interfaces
-- Various sample rates (44.1, 48, 96 kHz)
-- Verify no dropouts or synchronization drift
-
-**Synchronization Validation:**
-- Cross-correlation tests between channels
-- Verify all channels aligned to reference
-- Measure inter-channel lag (should be <10 samples)
-
-**Performance Benchmarking:**
-- Recording latency vs channel count
-- File I/O performance
-- Memory usage
-- GUI responsiveness
-
-**End-to-End Tests:**
-- Single-channel backward compatibility
-- Multi-channel recording (2, 4, 8 channels)
-- Mixed datasets (legacy + multi-channel files)
-- Reference channel alignment verification
-
-### Phase 6: Pipeline Refactoring ✅ **COMPLETE** (2025-11-01)
-
-**Priority 1: Code Cleanup** ✅ **DONE**
-- ✅ Removed `calibration_validator.py` (V1, deprecated)
-- ✅ Updated `test_calibration_visualizer.py` to use CalibrationValidatorV2
-- ✅ Eliminated all V1 references from codebase
-- ✅ Updated test configs to V3 format (11 parameters)
-
-**Priority 2: Unify Cycle Extraction** ✅ **DONE**
-- ✅ Replaced inline cycle extraction in calibration mode
-- ✅ Now uses `_extract_cycles()` helper consistently
-- ✅ Single source of truth for cycle extraction
-- ✅ Both standard and calibration modes use same logic
-
-**Priority 3: Decouple File Saving** ⏭️ **DEFERRED**
-- Not critical for current workflow
-- Can be addressed in future optimization phase
-- Current behavior acceptable (standard saves, calibration doesn't)
-
-**Priority 4: Unify Alignment** ⏭️ **DEFERRED**
-- Optional improvement
-- Current alignment strategy working well
-- Can be addressed if needed in future
-
-### Phase 6.5: Extensible Calibration Validation System (Future - 1-2 weeks) 🆕
-
-**Motivation:**
-Current CalibrationValidatorV2 uses hardcoded validation logic (3 metrics: negative peak, positive peak, aftershock). Different measurement scenarios may need different validation criteria with custom computation algorithms.
-
-**Goal:** Plugin-based validation system with:
-- User-defined validation criteria
-- Custom metric computation functions
-- Mix-and-match validation rules
-- Backward compatibility with V2
-
-#### Architecture
-
-```python
-# New plugin architecture
-class ValidationMetric:
-    """Base class for validation metrics"""
-    name: str
-    description: str
-
-    def compute(self, cycle: np.ndarray, sample_rate: int) -> float:
-        """Compute metric value from cycle"""
-        raise NotImplementedError
-
-    def validate(self, value: float, thresholds: Dict) -> bool:
-        """Check if value passes validation"""
-        raise NotImplementedError
-
-class CalibrationValidatorV3:
-    """Extensible validator with plugin system"""
-
-    def __init__(self, metrics: List[ValidationMetric], thresholds: Dict):
-        self.metrics = metrics
-        self.thresholds = thresholds
-
-    def validate_cycle(self, cycle: np.ndarray, cycle_index: int):
-        results = {}
-        for metric in self.metrics:
-            value = metric.compute(cycle, self.sample_rate)
-            passed = metric.validate(value, self.thresholds)
-            results[metric.name] = {'value': value, 'passed': passed}
-        return ValidationResult(results)
-```
-
-#### Built-in Metrics (Backward Compatible)
-
-```python
-# V2 compatibility metrics
-class NegativePeakMetric(ValidationMetric):
-    name = "negative_peak"
-
-    def compute(self, cycle, sample_rate):
-        return abs(np.min(cycle))
-
-    def validate(self, value, thresholds):
-        return thresholds['min_negative_peak'] <= value <= thresholds['max_negative_peak']
-
-class PositivePeakMetric(ValidationMetric):
-    name = "positive_peak"
-
-    def compute(self, cycle, sample_rate):
-        return abs(np.max(cycle))
-
-    def validate(self, value, thresholds):
-        return thresholds['min_positive_peak'] <= value <= thresholds['max_positive_peak']
-
-class AftershockMetric(ValidationMetric):
-    name = "aftershock"
-
-    def compute(self, cycle, sample_rate):
-        # Find main pulse, search aftershock window
-        # ... (existing V2 logic)
-        return aftershock_peak
-
-    def validate(self, value, thresholds):
-        return thresholds['min_aftershock'] <= value <= thresholds['max_aftershock']
-```
-
-#### Custom Metrics (User-Extensible)
-
-```python
-# Example: Frequency-domain validation
-class SpectralCentroidMetric(ValidationMetric):
-    name = "spectral_centroid"
-    description = "Center of mass of spectrum (Hz)"
-
-    def compute(self, cycle, sample_rate):
-        fft = np.fft.rfft(cycle)
-        freqs = np.fft.rfftfreq(len(cycle), 1/sample_rate)
-        magnitude = np.abs(fft)
-        centroid = np.sum(freqs * magnitude) / np.sum(magnitude)
-        return centroid
-
-    def validate(self, value, thresholds):
-        return thresholds['min_spectral_centroid'] <= value <= thresholds['max_spectral_centroid']
-
-# Example: Time-domain shape validation
-class ImpulseDurationMetric(ValidationMetric):
-    name = "impulse_duration"
-    description = "Duration above threshold (ms)"
-
-    def compute(self, cycle, sample_rate):
-        threshold = 0.1 * np.max(np.abs(cycle))
-        above_threshold = np.abs(cycle) > threshold
-        duration_samples = np.sum(above_threshold)
-        duration_ms = (duration_samples / sample_rate) * 1000
-        return duration_ms
-
-    def validate(self, value, thresholds):
-        return thresholds['min_duration_ms'] <= value <= thresholds['max_duration_ms']
-
-# Example: Signal-to-noise ratio
-class SNRMetric(ValidationMetric):
-    name = "snr"
-    description = "Signal-to-noise ratio (dB)"
-
-    def compute(self, cycle, sample_rate):
-        # Signal: first 20ms
-        # Noise: last 30ms
-        signal_end = int(0.02 * sample_rate)
-        noise_start = int(0.07 * sample_rate)
-
-        signal_power = np.mean(cycle[:signal_end] ** 2)
-        noise_power = np.mean(cycle[noise_start:] ** 2)
-        snr_db = 10 * np.log10(signal_power / noise_power)
-        return snr_db
-
-    def validate(self, value, thresholds):
-        return value >= thresholds['min_snr_db']
-```
-
-#### Configuration Format
-
-```json
-{
-  "calibration_validation_v3": {
-    "enabled_metrics": [
-      "negative_peak",
-      "positive_peak",
-      "aftershock",
-      "spectral_centroid",
-      "impulse_duration",
-      "snr"
-    ],
-    "thresholds": {
-      // V2 compatibility
-      "min_negative_peak": 0.1,
-      "max_negative_peak": 0.95,
-      "min_positive_peak": 0.0,
-      "max_positive_peak": 0.6,
-      "min_aftershock": 0.0,
-      "max_aftershock": 0.3,
-
-      // New custom metrics
-      "min_spectral_centroid": 800,
-      "max_spectral_centroid": 1200,
-      "min_duration_ms": 2.0,
-      "max_duration_ms": 15.0,
-      "min_snr_db": 20.0
-    },
-    "require_all_metrics": false,  // OR logic vs AND logic
-    "min_passing_metrics": 4       // At least 4 of 6 must pass
-  }
-}
-```
-
-#### GUI Integration
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Calibration Validation Configuration                    │
-├─────────────────────────────────────────────────────────┤
-│ Validation Mode: [V3 - Extensible ▼] [V2 - Simple]     │
-│                                                          │
-│ Active Metrics:                                          │
-│ [✓] Negative Peak        [min: 0.10] [max: 0.95]       │
-│ [✓] Positive Peak        [min: 0.00] [max: 0.60]       │
-│ [✓] Aftershock          [min: 0.00] [max: 0.30]       │
-│ [✓] Spectral Centroid   [min: 800 ] [max: 1200] Hz    │
-│ [✓] Impulse Duration    [min: 2.0 ] [max: 15.0] ms    │
-│ [✓] SNR                 [min: 20.0] dB                 │
-│ [ ] Custom Metric 1     [Configure...]                  │
-│                                                          │
-│ Validation Logic:                                        │
-│ ( ) Require ALL metrics to pass (AND)                   │
-│ (•) Require at least [4] metrics to pass (MAJORITY)     │
-│                                                          │
-│ [Add Custom Metric...] [Import Metric Plugin]          │
-│                                                          │
-│ [Learn from Selected Cycles] [Test Validation]         │
-└─────────────────────────────────────────────────────────┘
-```
-
-#### Custom Metric Plugin System
-
-Users can define custom metrics in Python files:
-
-```python
-# File: custom_metrics/piano_hammer_metrics.py
-
-from calibration_validator_v3 import ValidationMetric
-import numpy as np
-
-class HammerReboundMetric(ValidationMetric):
-    """Detects unwanted hammer rebounds"""
-    name = "hammer_rebound"
-    description = "Secondary impact within 5-15ms"
-
-    def compute(self, cycle, sample_rate):
-        # Find main impact
-        main_idx = np.argmin(cycle)
-
-        # Search for rebound in 5-15ms window
-        search_start = main_idx + int(0.005 * sample_rate)
-        search_end = main_idx + int(0.015 * sample_rate)
-
-        if search_end > len(cycle):
-            return 0.0
-
-        rebound_region = cycle[search_start:search_end]
-        rebound_magnitude = np.max(np.abs(rebound_region))
-
-        return rebound_magnitude
-
-    def validate(self, value, thresholds):
-        # Lower is better (less rebound)
-        return value <= thresholds['max_hammer_rebound']
-```
-
-**Loading:**
-```python
-validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerReboundMetric')
-```
-
-#### Implementation Plan
-
-**Phase 6.5.1: Core Architecture (3 days)**
-- Define `ValidationMetric` base class
-- Implement `CalibrationValidatorV3` with plugin system
-- Port V2 metrics to plugin format
-- Backward compatibility layer (V2 → V3 auto-conversion)
-
-**Phase 6.5.2: Built-in Metrics Library (2 days)**
-- Implement 10+ common metrics:
-  - Time domain: peak, RMS, crest factor, zero-crossing rate
-  - Frequency domain: spectral centroid, bandwidth, rolloff
-  - Signal quality: SNR, THD, dynamic range
-- Documentation and examples
-
-**Phase 6.5.3: GUI Integration (3 days)**
-- Metric selection UI
-- Per-metric threshold configuration
-- Validation logic selector (AND/OR/MAJORITY)
-- Live preview with test cycles
-- Metric plugin manager
-
-**Phase 6.5.4: Custom Metric System (2 days)**
-- Plugin discovery and loading
-- Metric editor (optional - advanced users can write Python)
-- Example custom metrics
-- Validation and error handling
-
-**Total Effort:** 10 days (2 weeks)
-
-#### Benefits
-
-1. **Flexibility:** Users can validate against domain-specific criteria
-2. **Extensibility:** Add new metrics without modifying core code
-3. **Backward Compatibility:** V2 configs auto-convert to V3
-4. **Reusability:** Build library of metrics for different applications
-5. **Experimentation:** Quickly test different validation strategies
-
-### Phase 7: Multi-Channel GUI Integration ✅ **COMPLETE** (2025-11-01 to 2025-11-02)
-
-**Task 1: Configuration Profile Management** ✅ **DONE** (commit 9da691f)
-- ✅ Added ConfigProfileManager to sidebar (both `piano_response.py` and `gui_launcher.py`)
-- ✅ Save/load/delete named configuration profiles
-- ✅ **NEW FILE:** `gui_config_profiles.py` (407 lines)
-- ✅ Profile storage in `configs/` directory with JSON files
-- ✅ Includes: recorder settings, multichannel config, calibration thresholds
-- ✅ In-memory recorder update on profile load (no restart required)
-- ✅ Profile metadata tracking (creation date, description)
-- ✅ Quick switch between configurations via dropdown
-- **Sidebar UI Features:**
-  ```
-  📋 Active Profile Display
-  📂 Profile Selector (dropdown)
-  💾 Save Profile button
-  📂 Load Profile button
-  🗑️ Delete Profile button
-  📁 Profile count display
-  ```
-
-**Task 2: Multi-Channel Configuration Interface** ✅ **ALREADY EXISTED**
-- ✅ Multi-Channel Configuration section in Audio Settings → Device Selection tab
-- ✅ Enable/disable toggle
-- ✅ Channel count input (1-32)
-- ✅ Device capability detection
-- ✅ Per-channel naming with text inputs
-- ✅ Reference/calibration channel selectors
-- ✅ Save to config file button
-- ✅ Configuration validation
-- ✅ Channel role indicators with icons (🔨 🎤 🔊)
-- **Location:** `gui_audio_settings_panel.py` → `_render_multichannel_configuration()`
-
-**Task 3: Collection Panel Multi-Channel Status** ✅ **DONE** (commit a47ad09)
-- ✅ Added `_render_recorder_status()` to CollectionPanel
-- ✅ Expandable "📊 Recorder Configuration" section
-- ✅ Displays recording mode (single/multi-channel indicator)
-- ✅ Shows channel configuration with names and roles
-- ✅ Per-channel role indicators (🔨 Calibration, 🎤 Reference, 🔊 Response)
-- ✅ Recording parameters summary (sample rate, pulses, cycle duration)
-- ✅ Direct link to Audio Settings configuration UI
-
-**Task 4: Multi-Channel Visualization** ❌ **NOT IMPLEMENTED** (Future Work)
-- Planned features:
-  - Load multi-channel files from scenarios
-  - Stacked waveform plots (one per channel)
-  - Channel show/hide checkboxes
-  - Synchronized zoom/pan
-  - Per-channel statistics table
-  - Cross-correlation display
-- **Estimated effort:** 6-8 hours
-- **Priority:** Low (can record and save multi-channel, visualization optional)
+### Implementation Priority
+
+**Must-Have (MVP):**
+1. Multi-channel data loading (Phase 1)
+2. Basic navigation UI (Phase 2)
+3. Single measurement, multi-channel view (Phase 3, Component B)
+4. Cycle-level visualization (Phase 4)
+5. Configuration display (Phase 6)
+
+**Should-Have (Enhanced):**
+6. Single channel view with tabs (Phase 3, Component A)
+7. Channel-wise averaging (Phase 5, partial)
+
+**Nice-to-Have (Advanced):**
+8. Grand averaging and heatmaps (Phase 5, full)
+9. Cross-correlation analysis
+10. Export to publication-quality figures
+
+---
+
+### Success Criteria
+
+**Functional Requirements:**
+- ✅ Load and display multi-channel measurements (standard & calibration modes)
+- ✅ Browse by scenario, measurement, and channel
+- ✅ View channels from same measurement side-by-side (stacked or overlaid)
+- ✅ Display cycle-level data for calibration recordings
+- ✅ Overlay and average measurements by channel
+- ✅ Show validation results and statistics
+
+**Non-Functional Requirements:**
+- ✅ Intuitive navigation (breadcrumbs, hierarchical sections)
+- ✅ Responsive UI (lazy loading, caching)
+- ✅ Consistent visual style (matches other panels)
+- ✅ Backward compatible (still works with single-channel data)
+
+---
+
+## System Status Summary
+
+**Core Features:** ✅ Complete
+- Multi-channel recording (1-32 channels)
+- Calibration quality validation (7 criteria)
+- Signal processing pipeline (SignalProcessor class extraction)
+- File management (multi-channel aware)
+- Configuration profiles (save/load/delete)
+- Collection Panel calibration mode integration
+
+**GUI Features:** ✅ Complete
+- Audio device selection
+- Multi-channel configuration UI
+- Calibration testing panel
+- Series Settings with calibration mode
+- Multi-channel response review
+- Collection Panel recording mode selector
+- Configuration profile management
+
+**Remaining Work:**
+1. **Scenarios Panel Refactoring** (**NEXT PRIORITY**)
+   - Implement multi-channel browsing and visualization
+   - Add cycle-level analysis for calibration data
+   - Enable channel grouping and averaging
+   - See detailed plan above
+   - Estimated effort: 3-4 working days
+
+**System Maturity:** Production-ready for recording and basic review. Scenarios Panel is the main feature gap for comprehensive analysis workflow.
 
 ---
 
@@ -1426,164 +745,15 @@ validator.load_custom_metric('custom_metrics/piano_hammer_metrics.py', 'HammerRe
 
 | Feature | Specification | Status |
 |---------|--------------|--------|
-| **Max Channels** | 32 (configurable, tested to 8) | ✅ Implemented |
-| **Channel Synchronization** | Sample-perfect | ✅ Verified |
-| **Sample Rates** | 44.1, 48, 96 kHz | ✅ Supported |
-| **Buffer Management** | Per-channel with mutexes | ✅ Implemented |
-| **De-interleaving** | In SDL callback (C++) | ✅ Implemented |
-| **Alignment Strategy** | Reference channel onset | ✅ Implemented |
-| **Calibration Validation** | 7-criteria comprehensive (V3) | ✅ Implemented |
-| **File Format** | WAV with `_chN` suffix | ✅ Implemented |
-| **Configuration Profiles** | Save/load/delete named configs | ✅ Implemented |
-| **GUI Configuration** | Full multi-channel setup UI | ✅ Implemented |
-| **Status Display** | Collection Panel recorder info | ✅ Implemented |
-
-### Configuration Schema
-
-**recorderConfig.json:**
-
-```json
-{
-  // Basic recorder settings
-  "sample_rate": 48000,
-  "pulse_duration": 0.019,        // seconds
-  "cycle_duration": 0.5,          // seconds
-  "num_pulses": 4,
-  "volume": 0.15,
-  "pulse_frequency": 1000.0,
-  "impulse_form": "voice_coil",
-
-  // Device selection
-  "input_device": 5,
-  "output_device": 6,
-
-  // Multi-channel configuration
-  "multichannel_config": {
-    "enabled": true,                      // Toggle multi-channel mode
-    "num_channels": 8,                    // Total input channels
-    "channel_names": [...],               // Human-readable names
-    "calibration_channel": 2,             // Calibration sensor channel (optional)
-    "reference_channel": 5,               // Alignment reference channel
-    "response_channels": [...],           // Channels to process (optional)
-    "normalize_by_calibration": true      // Enable calibration-based normalization
-  },
-
-  // Calibration quality thresholds (V3 comprehensive format - 11 parameters)
-  "calibration_quality_config": {
-    // 1. Negative Peak Range
-    "min_negative_peak": 0.1,
-    "max_negative_peak": 0.95,
-
-    // 2. Precursor
-    "max_precursor_ratio": 0.2,
-
-    // 3. Negative Peak Width
-    "min_negative_peak_width_ms": 0.3,
-    "max_negative_peak_width_ms": 3.0,
-
-    // 4. First Positive Peak
-    "max_first_positive_ratio": 0.3,
-
-    // 5. First Positive Peak Timing
-    "min_first_positive_time_ms": 0.1,
-    "max_first_positive_time_ms": 5.0,
-
-    // 6. Highest Positive Peak
-    "max_highest_positive_ratio": 0.5,
-
-    // 7. Secondary Negative Peak
-    "max_secondary_negative_ratio": 0.3,
-    "secondary_negative_window_ms": 10.0
-  },
-
-  // Note: V3 format is backward compatible with V1/V2 configs
-  // Legacy parameters (max_positive_peak, max_aftershock) auto-converted on load
-}
-```
-
-### Hardware Requirements
-
-**Native Audio Drivers Required:**
-
-Windows Generic USB Audio Class 2.0 drivers **DO NOT support multi-channel**. Professional audio interfaces require **native manufacturer drivers**.
-
-**Tested Interfaces:**
-- Behringer UMC1820 (18 in / 20 out) with native driver
-- Generic stereo interfaces (2 channels)
-
-**Driver Installation:**
-1. Check current driver: `python check_umc_driver.py`
-2. Download manufacturer driver (e.g., Behringer driver v4.59.0 or v5.57.0)
-3. Install and reboot
-4. Verify: `python test_umc_input_detailed.py`
-
-**Expected Results (Native Driver):**
-```
-Testing with 1 channels...  ✓ SUCCESS
-Testing with 2 channels...  ✓ SUCCESS
-Testing with 8 channels...  ✓ SUCCESS
-Testing with 18 channels... ✓ SUCCESS
-```
-
----
-
-## API Reference
-
-### Public Methods
-
-#### RoomResponseRecorder.take_record()
-
-```python
-def take_record(self,
-                output_file: str,
-                impulse_file: str,
-                method: int = 2,
-                mode: str = 'standard',
-                return_processed: bool = False) -> Union[np.ndarray, Dict, None]
-```
-
-**Parameters:**
-- `output_file`: Path for raw recording (e.g., `"raw_000.wav"`)
-- `impulse_file`: Path for impulse response (e.g., `"impulse_000.wav"`)
-- `method`: Recording method (2=auto, only option currently used)
-- `mode`: `'standard'` or `'calibration'`
-- `return_processed`: If True, return processed data dict (internal use)
-
-**Returns:**
-- **Standard mode:**
-  - Single-channel: `np.ndarray` (raw audio)
-  - Multi-channel: `Dict[int, np.ndarray]` (raw audio per channel)
-- **Calibration mode:** `Dict` with cycle-level data
-
-**Behavior:**
-- Standard mode: ALWAYS saves 3 files per channel (raw, impulse, room_response)
-- Calibration mode: NEVER saves files, returns analysis data
-- Respects `multichannel_config.enabled` setting
-
-#### RoomResponseRecorder.take_record_calibration()
-
-```python
-def take_record_calibration(self) -> Dict[str, Any]
-```
-
-**Convenience wrapper for:** `take_record("", "", mode='calibration')`
-
-**Returns:**
-```python
-{
-    'calibration_cycles': np.ndarray,           # [N, samples]
-    'validation_results': List[Dict],           # Per-cycle validation
-    'aligned_multichannel_cycles': Dict[int, np.ndarray],  # Aligned cycles per channel
-    'alignment_metadata': Dict,                 # Alignment shifts, indices
-    'num_valid_cycles': int,
-    'num_aligned_cycles': int,
-    'metadata': Dict                            # Recording metadata
-}
-```
-
-**Requires:**
-- `multichannel_config.enabled = true`
-- `multichannel_config.calibration_channel` set
+| **Max Channels** | 32 (configurable, tested to 8) | ✅ |
+| **Channel Synchronization** | Sample-perfect | ✅ |
+| **Sample Rates** | 44.1, 48, 96 kHz | ✅ |
+| **Recording Modes** | Standard, Calibration | ✅ |
+| **Signal Processing** | SignalProcessor (clean architecture) | ✅ |
+| **Calibration Validation** | 7-criteria comprehensive (V3) | ✅ |
+| **File Format** | WAV with `_chN` suffix, NPZ for cycles | ✅ |
+| **Configuration Profiles** | Save/load/delete named configs | ✅ |
+| **Collection Panel** | Recording mode selector | ✅ |
 
 ---
 
@@ -1593,163 +763,40 @@ def take_record_calibration(self) -> Dict[str, Any]
 
 | File | Size | Lines | Purpose |
 |------|------|-------|---------|
-| `RoomResponseRecorder.py` | ~40 KB | 1,385 | Signal processing pipeline |
-| `calibration_validator_v2.py` | 16 KB | ~300 | Calibration quality validation |
-| `multichannel_filename_utils.py` | 7.6 KB | ~200 | Filename parsing/grouping |
-| `ScenarioManager.py` | 28 KB | ~700 | Dataset management (multi-channel aware) |
-| `gui_audio_settings_panel.py` | 79 KB | ~2,000 | GUI: Calibration testing ✅ |
-| `gui_audio_visualizer.py` | 39 KB | ~900 | Waveform/spectrum visualization |
-| `gui_series_settings_panel.py` | 19 KB | ~500 | Series recording config |
-| `gui_series_worker.py` | ~15 KB | ~400 | Background recording thread |
-| `gui_collect_panel.py` | 23 KB | ~600 | Collection interface |
-
-### Deprecated Files
-
-| File | Size | Status | Replacement |
-|------|------|--------|-------------|
-| `calibration_validator.py` | 7 KB | ❌ DEPRECATED | `calibration_validator_v2.py` |
-
-### C++ SDL Audio Core
-
-| File | Purpose |
-|------|---------|
-| `sdl_audio_core/audio_engine.h` | Multi-channel recording interface |
-| `sdl_audio_core/audio_engine.cpp` | De-interleaving, buffer management |
-| `sdl_audio_core/bindings.cpp` | Python bindings (pybind11) |
+| `RoomResponseRecorder.py` | ~50 KB | 1,275 | Recording orchestrator |
+| `signal_processor.py` | ~20 KB | 625 | Signal processing (independent) |
+| `calibration_validator_v2.py` | 16 KB | ~300 | Quality validation |
+| `multichannel_filename_utils.py` | 7.6 KB | ~200 | File parsing/grouping |
+| `ScenarioManager.py` | 28 KB | ~700 | Dataset management |
+| `gui_audio_settings_panel.py` | 79 KB | ~2,000 | Settings & calibration UI |
+| `gui_collect_panel.py` | 25 KB | ~560 | Collection interface ✅ |
+| `gui_scenarios_panel.py` | 72 KB | ~1,800 | Scenarios browser ⚠️ NEEDS REFACTORING |
 
 ---
 
-## Known Issues & Limitations
+## Known Limitations
 
-### Code Quality Issues
+### Hardware Requirements
+- Native manufacturer drivers required (generic USB Audio Class 2.0 insufficient)
+- Tested: Behringer UMC1820 with native driver (18 channels working)
 
-1. **Duplicated Cycle Extraction** (Lines 1208-1221)
-   - Severity: Low
-   - Impact: Maintenance burden
-   - Fix: 15 minutes
+### Testing Status
+**Validated:**
+- ✅ Single/multi-channel recording (up to 8 channels)
+- ✅ Sample-perfect synchronization
+- ✅ Calibration validation and filtering
+- ✅ All GUI workflows (Settings, Series, Collection)
 
-2. **Two Alignment Systems**
-   - Severity: Medium
-   - Impact: Standard mode cannot use advanced validation
-   - Fix: 8 hours
-
-3. **Deprecated Code Present**
-   - Severity: Low
-   - Impact: Confusion, accidental use
-   - Fix: 1 hour
-
-### Functional Limitations
-
-1. **No Multi-Channel Configuration GUI**
-   - Severity: High
-   - Impact: Users must manually edit JSON
-   - Fix: 4-6 hours
-
-2. **No Multi-Channel Visualization**
-   - Severity: Medium
-   - Impact: Cannot inspect multi-channel recordings in GUI
-   - Fix: 6-8 hours
-
-3. **Hardcoded File Saving**
-   - Severity: Low
-   - Impact: Cannot do dry-run tests
-   - Fix: 4 hours
-
-### Hardware Limitations
-
-1. **Native Drivers Required**
-   - Impact: Generic Windows drivers do not support multi-channel
-   - Workaround: Install manufacturer drivers
-
-2. **Untested Beyond 8 Channels**
-   - Impact: Unknown behavior with 16+ channel interfaces
-   - Mitigation: Phase 5 hardware testing
+**Pending:**
+- ❌ Hardware testing with 16+ channel interfaces
+- ❌ Extended performance benchmarking
+- ❌ Cross-platform testing (macOS, Linux)
 
 ---
 
-## Success Metrics
-
-### Completed Milestones ✅
-
-- ✅ Multi-channel recording at C++ level
-- ✅ Python integration with multi-channel support
-- ✅ Calibration quality validation system (V2)
-- ✅ Multi-channel file management
-- ✅ Synchronized alignment across all channels
-- ✅ Calibration testing GUI
-- ✅ Threshold learning workflow
-- ✅ Multi-waveform visualization
-
-### Remaining Milestones 📋
-
-**Core Features:**
-- 📋 Multi-channel configuration GUI
-- 📋 Multi-channel visualization GUI
-- 📋 Pipeline refactoring (remove duplication)
-- 📋 Hardware validation (2, 4, 8 channel interfaces)
-- 📋 Performance benchmarking
-- 📋 End-to-end integration tests
-
-**Enhanced Features (New):** 🆕
-- 📋 Configuration profile management (save/load named configs)
-- 📋 Extensible calibration validation system (V3)
-- 📋 Custom validation metric plugins
-- 📋 Built-in metric library (10+ metrics)
-
----
-
-## Conclusion
-
-The multi-channel recording system is **90% complete**. The core signal processing pipeline is implemented, tested, and functional. Users can currently use multi-channel recording by:
-
-1. Manually editing `recorderConfig.json` to set `multichannel_config.enabled = true`
-2. Using the Calibration Impulse GUI to test and validate calibration quality
-3. Recording with Series Settings (files saved with `_chN` suffix automatically)
-
-**Critical Gaps:**
-1. No GUI to configure multi-channel settings (must edit JSON)
-2. No GUI to visualize multi-channel recordings
-3. Code duplication between standard and calibration modes (maintenance risk)
-
-**Remaining Work:**
-
-### Priority 1: Collection Panel Calibration Mode (Immediate)
-**Status:** ⚠️ Needs review - may already be implemented
-**Task:** Verify Collection Panel supports calibration mode recording
-- Review if `gui_collection_panel.py` uses `mode` parameter in `take_record()`
-- Test calibration mode from Collection Panel
-- Add UI indicators for calibration mode if missing
-**Estimated Effort:** 2-4 hours (review + minor updates if needed)
-
-### Priority 2: Scenarios Panel Analysis Integration (High Priority)
-**Status:** ❌ Not implemented
-**Task:** Integrate Series Recording Analysis functionality into Scenarios Panel
-**Features Needed:**
-- Load saved calibration recordings (NPZ files with aligned/normalized cycles)
-- Display Cycle Statistics table with validation results
-- Cycle selection checkboxes
-- Cycle overlay visualization with zoom controls
-- Display mode selector (Aligned/Normalized/Both)
-- Overlay statistics (peak range, range width %, std dev)
-- Channel selector for multi-channel recordings
-**Code to Reuse:**
-- `gui_series_settings_panel.py`: `_render_cycle_statistics_table()`
-- `gui_series_settings_panel.py`: `_render_calibration_cycle_overlay()`
-- `gui_series_settings_panel.py`: `_display_cycle_overlay_statistics()`
-**Estimated Effort:** 1-2 days
-
-### Priority 3: Hardware Testing (Medium Priority)
-**Status:** Pending
-**Task:** Validate with real multi-channel hardware (2, 4, 8 channels)
-**Estimated Effort:** 1 week
-
-### Priority 4: Advanced Visualization (Future)
-**Status:** ❌ Planned for future
-**Task:** Full multi-channel scenario visualization GUI
-**Estimated Effort:** 2-3 weeks
-
-**Total Remaining Effort:** ~2-3 weeks
-- Collection Panel review: 2-4 hours
-- Scenarios Panel integration: 1-2 days
-- Hardware testing: 1 week
-- Advanced visualization: 2-3 weeks (future/optional)
+**Document Revision History:**
+- v5.0 (2025-11-03): Added Collection Panel calibration mode status, detailed Scenarios Panel refactoring plan
+- v4.2 (2025-11-03): Cleaned up legacy content, updated Phase 6 status
+- v4.0 (2025-11-02): Added Series Settings calibration mode, multi-channel response review
+- v3.0 (2025-11-01): Updated to V3 validation format, added calibration normalization
+- v2.0 (2025-10-31): Initial comprehensive documentation
