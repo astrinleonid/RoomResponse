@@ -1975,11 +1975,11 @@ class ScenariosPanel:
             st.warning("Select at least one measurement")
             return
 
-        # Session state key for loaded data
-        loaded_key = f"loaded_ch{selected_channel}_{len(selected_indices)}"
+        # Session state key for loaded data (include scenario name to prevent mixing data)
+        loaded_key = f"loaded_{scenario_name}_ch{selected_channel}_{len(selected_indices)}"
 
         # Auto-load if selections changed
-        if st.button("Load and Visualize", key=f"load_viz_ch{selected_channel}") or loaded_key not in st.session_state:
+        if st.button("Load and Visualize", key=f"load_viz_{scenario_name}_ch{selected_channel}") or loaded_key not in st.session_state:
             with st.spinner("Loading audio files..."):
                 audio_signals = []
                 labels = []
@@ -2098,11 +2098,11 @@ class ScenariosPanel:
             key=f"layout_mode_meas{selected_measurement}"
         )
 
-        # Session state key for loaded data
-        loaded_key = f"loaded_meas{selected_measurement}_{len(selected_channels)}_{layout_mode}"
+        # Session state key for loaded data (include scenario name to prevent mixing data)
+        loaded_key = f"loaded_{scenario_name}_meas{selected_measurement}_{len(selected_channels)}_{layout_mode}"
 
         # Load and display
-        if st.button("Load and Visualize", key=f"load_viz_meas{selected_measurement}") or loaded_key not in st.session_state:
+        if st.button("Load and Visualize", key=f"load_viz_{scenario_name}_meas{selected_measurement}") or loaded_key not in st.session_state:
             with st.spinner("Loading audio files..."):
                 audio_signals = []
                 labels = []
