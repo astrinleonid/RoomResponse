@@ -464,41 +464,49 @@ class ScenariosPanel:
         num_channels = self.scenario_manager.detect_num_channels_in_scenario(exp_path)
         st.info(f"Debug: is_multichannel={is_multichannel} | num_channels={num_channels} | Utils available: {MULTICHANNEL_UTILS_AVAILABLE} | Files: {len(files_of_type)}")
 
-        # Add averaging tool for multi-channel scenarios
+        # Automatically generate averaged responses for multi-channel scenarios
+        averaged_files = {}
         if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE and len(files_of_type) > 1:
-            with st.expander("🧮 Average Impulse Responses by Channel", expanded=False):
-                st.markdown("Generate averaged impulse response for each channel across all measurements")
+            # Check if averaged responses already exist
+            averaged_dir = os.path.join(exp_path, "averaged_responses")
+            needs_generation = True
 
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.caption(f"This will average {len(files_of_type)} impulse response files across {num_channels} channels")
-                with col2:
-                    if st.button("Generate Averages", key=f"gen_avg_{os.path.basename(exp_path)}"):
-                        with st.spinner("Averaging impulse responses..."):
-                            try:
-                                averaged_files = self.scenario_manager.average_impulse_responses_by_channel(
-                                    exp_path,
-                                    subfolder="impulse_responses",
-                                    output_subfolder="averaged_responses"
-                                )
+            if os.path.isdir(averaged_dir):
+                # Check if all expected average files exist
+                expected_files = [f"average_ch{i}.npy" for i in range(num_channels)]
+                existing_files = [f for f in os.listdir(averaged_dir) if f.startswith("average_ch") and f.endswith(".npy")]
+                if len(existing_files) >= num_channels:
+                    needs_generation = False
+                    # Load existing averaged files
+                    for i in range(num_channels):
+                        avg_path = os.path.join(averaged_dir, f"average_ch{i}.npy")
+                        if os.path.exists(avg_path):
+                            averaged_files[i] = avg_path
 
-                                if averaged_files:
-                                    st.success(f"✓ Generated {len(averaged_files)} averaged responses")
-                                    for ch_idx, file_path in sorted(averaged_files.items()):
-                                        st.text(f"  Channel {ch_idx}: {os.path.basename(file_path)}")
-                                else:
-                                    st.warning("No averaged files were generated")
-                            except Exception as e:
-                                st.error(f"Averaging failed: {e}")
+            if needs_generation:
+                try:
+                    averaged_files = self.scenario_manager.average_impulse_responses_by_channel(
+                        exp_path,
+                        subfolder="impulse_responses",
+                        output_subfolder="averaged_responses"
+                    )
+                    if averaged_files:
+                        st.info(f"✓ Generated {len(averaged_files)} averaged responses from {len(files_of_type)} measurements")
+                except Exception as e:
+                    st.warning(f"Could not generate averaged responses: {e}")
 
         # View mode tabs: Single File, Overlay All, or Channel Exploration
         if len(files_of_type) > 1:
             if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE:
+                view_options = ["Single File", "Overlay All", "By Channel", "By Measurement"]
+                if averaged_files:
+                    view_options.append("Averaged")
+
                 view_mode = st.radio(
                     "View mode",
-                    ["Single File", "Overlay All", "By Channel", "By Measurement"],
+                    view_options,
                     horizontal=True,
-                    help="Single File: View one file at a time. Overlay All: Compare all files. By Channel: Overlay measurements per channel. By Measurement: Compare channels per measurement."
+                    help="Single File: View one file at a time. Overlay All: Compare all files. By Channel: Overlay measurements per channel. By Measurement: Compare channels per measurement. Averaged: View averaged response per channel."
                 )
             else:
                 view_mode = st.radio(
@@ -517,6 +525,8 @@ class ScenariosPanel:
             self._render_by_channel_view(exp_path, os.path.basename(exp_path))
         elif view_mode == "By Measurement":
             self._render_by_measurement_view(exp_path, os.path.basename(exp_path))
+        elif view_mode == "Averaged":
+            self._render_averaged_view(averaged_files, exp_path, os.path.basename(exp_path))
         else:
             # Single file view
             col1, col2 = st.columns([3, 1])
@@ -2194,6 +2204,96 @@ class ScenariosPanel:
                             labels=[label],
                             title=label,
                             component_id=f"compare_meas{data['measurement']}_ch{data['channels'][i]}",
+                            normalize=normalize,
+                            height=300
+                        )
+
+    def _render_averaged_view(self, averaged_files: Dict[int, str], scenario_path: str, scenario_name: str) -> None:
+        """Render view of averaged impulse responses per channel."""
+        st.markdown("#### Averaged Impulse Responses")
+        st.caption("View averaged responses across all measurements for each channel")
+
+        if not averaged_files:
+            st.warning("No averaged responses available")
+            return
+
+        # Load channel names
+        channel_names = self._load_channel_names_from_metadata(scenario_path)
+
+        # Layout mode selector
+        layout_mode = st.radio(
+            "Layout",
+            ["Overlaid (Single Plot)", "Stacked (Separate Plots)"],
+            index=1,
+            horizontal=True,
+            key=f"layout_averaged_{scenario_name}"
+        )
+
+        # Session state key for loaded data
+        loaded_key = f"loaded_averaged_{scenario_name}_{len(averaged_files)}_{layout_mode}"
+
+        # Auto-load averaged responses
+        if loaded_key not in st.session_state:
+            with st.spinner("Loading averaged responses..."):
+                audio_signals = []
+                labels = []
+                sample_rate = 48000  # Default
+
+                for ch_idx in sorted(averaged_files.keys()):
+                    file_path = averaged_files[ch_idx]
+                    audio_data, sr, fmt = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+                    if audio_data is not None:
+                        audio_signals.append(audio_data)
+                        ch_name = channel_names.get(ch_idx, f'Channel {ch_idx}')
+                        labels.append(f"Ch {ch_idx}: {ch_name}")
+                        sample_rate = sr
+
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'channel_indices': sorted(averaged_files.keys()),
+                        'layout': layout_mode
+                    }
+
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} averaged channel responses")
+
+            # Normalization option
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=True,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_averaged_{scenario_name}"
+            )
+
+            if layout_mode == "Overlaid (Single Plot)":
+                # Overlay all averaged channels
+                st.markdown(f"### All Channels Overlaid - {scenario_name}")
+
+                AudioVisualizer.render_multi_waveform_with_zoom(
+                    audio_signals=data['signals'],
+                    sample_rate=data['sample_rate'],
+                    labels=data['labels'],
+                    title=f"Averaged Responses: {scenario_name}",
+                    component_id=f"averaged_overlay_{scenario_name}",
+                    normalize=normalize
+                )
+            else:
+                # Stacked view - separate plot per channel
+                st.markdown(f"### Channels Stacked - {scenario_name}")
+
+                for i, (audio_data, label) in enumerate(zip(data['signals'], data['labels'])):
+                    with st.expander(f"📊 {label}", expanded=(i == 0)):
+                        AudioVisualizer.render_multi_waveform_with_zoom(
+                            audio_signals=[audio_data],
+                            sample_rate=data['sample_rate'],
+                            labels=[label],
+                            title=label,
+                            component_id=f"averaged_ch{data['channel_indices'][i]}_{scenario_name}",
                             normalize=normalize,
                             height=300
                         )
