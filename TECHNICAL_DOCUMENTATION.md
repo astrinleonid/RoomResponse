@@ -41,7 +41,10 @@
 
 - **Low-latency audio engine**: Custom C++ SDL2 module with Python bindings (pybind11)
 - **Configurable signal generation**: Sine/square pulse trains with precise timing control
-- **Automated data collection**: Series recording with pause/resume, quality metrics
+- **Multi-channel recording**: 1-32 channel synchronized audio capture with calibration support
+- **Modular signal processing**: Independent SignalProcessor class for reusable DSP operations
+- **Dual recording modes**: Standard (averaged response) and Calibration (per-cycle validation)
+- **Automated data collection**: Series recording with pause/resume, quality metrics, mode selection
 - **Feature extraction**: MFCC and spectrum analysis via librosa
 - **ML classification**: Binary and multi-class classification with cross-validation
 - **Streamlit GUI**: Modular panels for collection, processing, classification, visualization
@@ -57,6 +60,33 @@
   WAV files          features.csv           trained model          interactive
   metadata.json      spectrum.csv           metrics.json              charts
 ```
+
+---
+
+### 1.4 Recent Updates (November 2025)
+
+**SignalProcessor Extraction (2025-11-03)**
+- Extracted all signal processing logic from RoomResponseRecorder into standalone `SignalProcessor` class
+- Reduced RoomResponseRecorder from 1,586 to 1,275 lines (-311 lines)
+- Created new `signal_processor.py` module (~625 lines) with independent DSP operations
+- All signal processing methods now delegate via composition pattern
+- Benefits: Independent testability, reusability in CLI/API tools, clean separation of concerns
+- See [Section 3.2](#32-signalprocessor-pure-signal-processing) for details
+
+**Collection Panel Calibration Mode Integration (2025-11-03)**
+- Added recording mode selector (Standard/Calibration) to Collection Panel GUI
+- Implemented validation warnings for multi-channel and calibration channel requirements
+- Mode parameter propagates through entire collection chain:
+  - `gui_collect_panel.py` → `DatasetCollector.py` → `gui_series_worker.py` → `RoomResponseRecorder.take_record()`
+- Users can now select calibration mode directly in GUI without programmatic API calls
+- See [Section 10.10](#1010-collection-panel---recording-mode-selector-new---2025-11-03) for details
+
+**Multi-Channel Architecture (2025-11-02)**
+- Full multi-channel support (1-32 channels) with sample-perfect synchronization
+- Calibration channel concept for physical impact monitoring
+- V3 calibration validation format with 7 comprehensive quality criteria
+- Cycle-level NPZ file storage for calibration mode recordings
+- See [Section 8.7](#87-recording-modes) for recording modes documentation
 
 ---
 
@@ -93,9 +123,16 @@
 │                      AUDIO ENGINE LAYER                         │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │         RoomResponseRecorder (Python)                   │   │
-│  │  - Signal generation    - Audio processing              │   │
-│  │  - Device management    - Onset detection               │   │
-│  │  - Configuration        - Quality metrics               │   │
+│  │  - Signal generation    - Recording orchestration       │   │
+│  │  - Device management    - Multi-channel coordination    │   │
+│  │  - Configuration        - Mode selection (std/cal)      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              ▼                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │         SignalProcessor (Pure Signal Processing)        │   │
+│  │  - Cycle extraction     - Spectral analysis             │   │
+│  │  - Onset detection      - Cycle alignment               │   │
+│  │  - Impulse response     - Calibration normalization     │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -121,18 +158,19 @@
 | **Builder Pattern** | Signal generation | Configurable pulse train construction |
 | **Observer Pattern** | SeriesWorker queues | Event-driven background processing |
 | **Facade Pattern** | RoomResponseRecorder | Simplified audio engine interface |
+| **Delegation Pattern** | RoomResponseRecorder → SignalProcessor | Clean separation of recording vs processing |
 | **Template Method** | DatasetCollector | Extensible collection workflow |
 
 ---
 
 ## 3. Core Components Deep Dive
 
-### 3.1 RoomResponseRecorder (Python Audio Interface)
+### 3.1 RoomResponseRecorder (Recording Orchestrator)
 
-**File**: `RoomResponseRecorder.py`
+**File**: `RoomResponseRecorder.py` (~1,275 lines)
 
 #### Purpose
-High-level Python interface for room impulse response measurement. Abstracts SDL audio core complexity and provides signal generation, recording, and processing.
+High-level Python interface for room impulse response measurement. Orchestrates recording workflow and delegates signal processing to the SignalProcessor class for clean separation of concerns.
 
 #### Key Responsibilities
 
@@ -140,6 +178,7 @@ High-level Python interface for room impulse response measurement. Abstracts SDL
    - Load parameters from JSON files (`recorderConfig.json`)
    - Validate signal generation parameters
    - Manage audio device selection
+   - Support multi-channel configuration (1-32 channels)
 
 2. **Signal Generation**
    - Generate pulse trains (sine, square, or voice_coil waveforms)
@@ -151,32 +190,49 @@ High-level Python interface for room impulse response measurement. Abstracts SDL
    - Coordinate simultaneous playback and recording
    - Handle SDL audio core lifecycle
    - Manage recording buffers
+   - Support multi-channel synchronized recording
 
-4. **Signal Processing**
-   - Extract room response via cycle averaging
-   - Detect sound onset using RMS analysis
-   - Extract impulse response through circular shift alignment
+4. **Recording Orchestration** (Delegates signal processing to SignalProcessor)
+   - Coordinate recording workflow (standard vs calibration modes)
+   - Call SignalProcessor for all signal processing operations
+   - Manage file I/O (WAV, NPZ formats)
+   - Apply multi-channel synchronization
 
 #### Core Methods
 
 ```python
 class RoomResponseRecorder:
+    # Public API
     def __init__(self, config_file_path: str = None)
-    def take_record(output_file, impulse_file, method=2) -> np.ndarray
+    def take_record(output_file, impulse_file, mode='standard') -> Dict | np.ndarray
     def test_mic(duration=10.0, chunk_duration=0.1)
     def list_devices() -> Dict
     def set_audio_devices(input=None, output=None)
     def get_sdl_core_info() -> dict
 
-    # Private internals
+    # Signal generation (internal)
     def _generate_complete_signal() -> list
     def _generate_single_pulse(exact_samples) -> np.ndarray
+
+    # Recording coordination (internal)
     def _record_method_2() -> np.ndarray
-    def _process_recorded_signal(recorded_audio) -> Dict[str, np.ndarray]
-    def _extract_impulse_response(room_response) -> np.ndarray
-    def _find_sound_onset(audio, window_size=10) -> int
+
+    # Signal processing (delegates to SignalProcessor)
+    def _extract_cycles(audio) -> np.ndarray  # → signal_processor.extract_cycles()
+    def _average_cycles(cycles, start_cycle) -> np.ndarray  # → signal_processor.average_cycles()
+    def _compute_spectral_analysis(responses, ...) -> Dict  # → signal_processor.compute_spectral_analysis()
+    def _find_sound_onset(audio, ...) -> int  # → signal_processor.find_sound_onset()
+    def _extract_impulse_response(room_response, ...) -> np.ndarray  # → signal_processor.extract_impulse_response()
+    def align_cycles_by_onset(cycles, ...) -> Dict  # → signal_processor.align_cycles_by_onset()
+    def apply_alignment_to_channel(raw, metadata) -> np.ndarray  # → signal_processor.apply_alignment_to_channel()
+    def _normalize_by_calibration(cycles, ...) -> Tuple  # → signal_processor.normalize_by_calibration()
+
+    # File I/O (internal)
     def _save_wav(audio_data, filename)
+    def _save_npz(data_dict, filename)
 ```
+
+**Note:** All signal processing methods in RoomResponseRecorder now delegate to the corresponding methods in the SignalProcessor class (see Section 3.2).
 
 #### Signal Generation Algorithm
 
@@ -204,24 +260,31 @@ pulse[:fade_samples] *= fade_in
 pulse[-fade_samples:] *= fade_out
 ```
 
-#### Room Response Extraction
+#### Recording Workflow (Delegates to SignalProcessor)
 
 ```python
-# 1. Reshape recording into cycles (num_pulses × cycle_samples)
-reshaped = recorded_audio.reshape(num_pulses, cycle_samples)
+# RoomResponseRecorder orchestrates the workflow
+# All signal processing delegated to SignalProcessor instance
 
-# 2. Skip first cycle(s) for system settling
+# 1. Extract cycles (via SignalProcessor)
+cycles = self.signal_processor.extract_cycles(recorded_audio)
+# Result: (num_pulses, cycle_samples) array
+
+# 2. Average cycles (via SignalProcessor)
 start_cycle = max(1, num_pulses // 4)  # Skip first 25%
+room_response = self.signal_processor.average_cycles(cycles, start_cycle)
+# Result: (cycle_samples,) averaged response
 
-# 3. Average cycles to extract room response
-room_response = mean(reshaped[start_cycle:], axis=0)
+# 3. Find onset (via SignalProcessor)
+onset_index = self.signal_processor.find_sound_onset(room_response)
 
-# 4. Find onset via RMS threshold
-onset_index = find_sound_onset(room_response)
+# 4. Extract impulse response (via SignalProcessor)
+impulse_response = self.signal_processor.extract_impulse_response(
+    room_response, onset_sample=onset_index
+)
+# Result: Impulse response with onset at sample 0
 
-# 5. Rotate to put onset at beginning (impulse response)
-impulse_response = concatenate([room_response[onset_index:],
-                                room_response[:onset_index]])
+# See Section 3.2 for SignalProcessor implementation details
 ```
 
 #### Configuration Parameters
@@ -243,7 +306,136 @@ impulse_response = concatenate([room_response[onset_index:],
 
 ---
 
-### 3.2 SDL Audio Core (C++ Module)
+### 3.2 SignalProcessor (Pure Signal Processing)
+
+**File**: `signal_processor.py` (~625 lines)
+
+#### Purpose
+Independent signal processing class that handles all DSP operations without dependency on recording infrastructure. Extracted from RoomResponseRecorder for clean separation of concerns and independent testability.
+
+#### Key Responsibilities
+
+1. **Universal Signal Processing** (used by all modes)
+   - Cycle extraction from continuous audio
+   - Cycle averaging with configurable warmup skip
+   - Spectral analysis (FFT with windowing)
+
+2. **Standard Mode Processing** (simple onset alignment)
+   - Sound onset detection via energy threshold
+   - Impulse response extraction via circular shift
+
+3. **Calibration Mode Processing** (advanced per-cycle alignment)
+   - Per-cycle onset alignment with cross-correlation filtering
+   - Apply alignment metadata to other channels
+   - Calibration-based normalization
+
+#### Core Methods
+
+```python
+class SignalProcessor:
+    def __init__(self, config: SignalProcessingConfig)
+
+    # Universal methods (all modes)
+    def extract_cycles(self, audio: np.ndarray) -> np.ndarray
+        """Reshape audio into (num_pulses, cycle_samples) array"""
+
+    def average_cycles(self, cycles: np.ndarray, start_cycle: int = 0) -> np.ndarray
+        """Average cycles, optionally skipping initial warmup cycles"""
+
+    def compute_spectral_analysis(self, responses: Dict,
+                                   window_start: float = 0.0,
+                                   window_end: float = 1.0) -> Dict[str, Any]
+        """Compute windowed FFT for all channels"""
+
+    # Standard mode methods
+    def find_sound_onset(self, audio: np.ndarray, ...) -> int
+        """Find onset using energy-based detection"""
+
+    def extract_impulse_response(self, room_response: np.ndarray,
+                                  onset_sample: Optional[int] = None) -> np.ndarray
+        """Extract impulse response with onset at sample 0"""
+
+    def find_onset_in_room_response(self, room_response: np.ndarray) -> int
+        """Find onset in averaged room response (standard mode)"""
+
+    # Calibration mode methods
+    def align_cycles_by_onset(self, initial_cycles: np.ndarray,
+                              validation_results: List[Dict],
+                              reference_idx: int = 0,
+                              correlation_threshold: float = 0.95) -> Dict
+        """Advanced per-cycle alignment with correlation filtering"""
+
+    def apply_alignment_to_channel(self, channel_raw: np.ndarray,
+                                    alignment_metadata: Dict) -> np.ndarray
+        """Apply calibration channel alignment to other channels"""
+
+    def normalize_by_calibration(self, aligned_multichannel_cycles: Dict,
+                                  validation_results: List[Dict],
+                                  calibration_channel: int = 0,
+                                  valid_cycle_indices: List[int] = None,
+                                  normalization_window: Tuple[float, float] = (0.0, 0.05)) -> Tuple
+        """Normalize all channels by calibration impulse magnitude"""
+```
+
+#### SignalProcessingConfig
+
+```python
+@dataclass
+class SignalProcessingConfig:
+    """Lightweight config for signal processing operations"""
+    num_pulses: int
+    cycle_samples: int
+    sample_rate: int
+    multichannel_config: Dict[str, Any] = None
+
+    @classmethod
+    def from_recorder(cls, recorder):
+        """Create config from RoomResponseRecorder instance"""
+        return cls(
+            num_pulses=recorder.num_pulses,
+            cycle_samples=recorder.cycle_samples,
+            sample_rate=recorder.sample_rate,
+            multichannel_config=recorder.multichannel_config
+        )
+```
+
+#### Architecture Benefits
+
+1. **Clean Separation**: Signal processing completely independent of I/O, devices, configuration files
+2. **Independent Testing**: Can test with synthetic data, no audio hardware required
+3. **Reusability**: Can be used by CLI tools, web APIs, batch processors, Jupyter notebooks
+4. **Single Responsibility**: Only does signal processing, nothing else
+5. **No Side Effects**: Pure functions, no file I/O or global state
+
+#### Usage Example
+
+```python
+from signal_processor import SignalProcessor, SignalProcessingConfig
+
+# Create config
+config = SignalProcessingConfig(
+    num_pulses=8,
+    cycle_samples=4800,
+    sample_rate=48000,
+    multichannel_config={}
+)
+
+# Create processor
+processor = SignalProcessor(config)
+
+# Process audio (from any source)
+recorded_audio = ...  # numpy array from recording, file, etc.
+cycles = processor.extract_cycles(recorded_audio)
+averaged = processor.average_cycles(cycles, start_cycle=2)
+spectral = processor.compute_spectral_analysis({0: averaged})
+
+print(f"Extracted {len(cycles)} cycles")
+print(f"Peak frequency: {spectral['frequencies'][np.argmax(spectral['magnitude_db'][0])]} Hz")
+```
+
+---
+
+### 3.3 SDL Audio Core (C++ Module)
 
 **Directory**: `sdl_audio_core/`
 **Technology**: C++ with pybind11 bindings
@@ -1337,7 +1529,8 @@ python setup.py build_ext --inplace
 ```
 RoomResponse/
 ├── CORE AUDIO ENGINE
-│   ├── RoomResponseRecorder.py          # Python audio interface
+│   ├── RoomResponseRecorder.py          # Recording orchestrator (~1,275 lines)
+│   ├── signal_processor.py              # Pure signal processing (~625 lines) [NEW]
 │   ├── MicTesting.py                    # Audio recording workers
 │   └── sdl_audio_core/                  # C++ module
 │       ├── src/                         # C++ source
@@ -1345,9 +1538,9 @@ RoomResponse/
 │       └── *.pyd / *.so                 # Compiled binary
 │
 ├── DATA COLLECTION
-│   ├── DatasetCollector.py              # Single scenario collector
-│   ├── gui_collect_panel.py             # Collection GUI panel
-│   ├── gui_series_worker.py             # Background series worker
+│   ├── DatasetCollector.py              # Single scenario collector (mode support)
+│   ├── gui_collect_panel.py             # Collection GUI panel (mode selector)
+│   ├── gui_series_worker.py             # Background series worker (mode param)
 │   ├── gui_single_pulse_recorder.py     # Single measurement UI
 │   └── collect_dataset.py               # CLI wrapper
 │
@@ -1357,6 +1550,7 @@ RoomResponse/
 │   └── scenario_explorer.py             # Inspection utilities
 │
 ├── SIGNAL PROCESSING
+│   ├── signal_processor.py              # [CORE] Pure DSP (cycle extraction, onset detection, alignment)
 │   ├── signal_alignment.py              # Cross-correlation alignment
 │   └── FirFilterFileIO.py               # FIR filter serialization
 │
@@ -1434,11 +1628,12 @@ RoomResponse/
             │  │RoomResponse  │          │
             │  │  Recorder    │          │
             │  └──────────────┘          │
-            │         │                  │
-            │         ▼                  │
-            │  ┌──────────────┐          │
-            │  │sdl_audio_core│          │
-            │  └──────────────┘          │
+            │    │            │           │
+            │    ▼            ▼           │
+            │ ┌───────┐  ┌──────────┐    │
+            │ │Signal │  │sdl_audio │    │
+            │ │Process│  │  _core   │    │
+            │ └───────┘  └──────────┘    │
             │                            │
             └────────────┬───────────────┘
                          ▼
@@ -1632,6 +1827,53 @@ print(f"Probabilities: {prediction['proba']}")
 
 ## 8. Signal Processing Pipeline
 
+### 8.0 Architecture Overview
+
+**As of 2025-11-03**, signal processing has been extracted into a dedicated `SignalProcessor` class for clean separation of concerns:
+
+```
+RoomResponseRecorder (Recording Orchestrator)
+├─ Signal generation (pulse trains)
+├─ SDL audio core coordination
+├─ File I/O (WAV, NPZ)
+└─ Delegates all signal processing to ──> SignalProcessor (Pure DSP)
+                                          ├─ Cycle extraction
+                                          ├─ Cycle averaging
+                                          ├─ Onset detection
+                                          ├─ Impulse extraction
+                                          ├─ Spectral analysis
+                                          ├─ Cycle alignment (calibration mode)
+                                          └─ Calibration normalization
+```
+
+**Benefits:**
+- **Clean separation**: Recording I/O separate from signal processing algorithms
+- **Independent testing**: SignalProcessor tested without hardware/files
+- **Reusability**: Can use SignalProcessor in CLI tools, APIs, batch processors
+- **Maintainability**: Signal processing changes don't affect recording logic
+
+**Implementation Pattern:**
+```python
+# In RoomResponseRecorder.__init__()
+from signal_processor import SignalProcessor, SignalProcessingConfig
+self.signal_processor = SignalProcessor(
+    SignalProcessingConfig.from_recorder(self)
+)
+
+# All signal processing methods delegate
+def _extract_cycles(self, audio):
+    return self.signal_processor.extract_cycles(audio)
+
+def _average_cycles(self, cycles, start_cycle):
+    return self.signal_processor.average_cycles(cycles, start_cycle)
+
+# ... etc for all signal processing methods
+```
+
+See [Section 3.2](#32-signalprocessor-pure-signal-processing) for detailed SignalProcessor documentation.
+
+---
+
 ### 8.1 Onset Detection Algorithm
 
 **Purpose**: Find the exact sample where the impulse response begins, enabling proper alignment.
@@ -1818,7 +2060,12 @@ coefficients, metadata = load_fir_filter("room_correction.fir")
 
 ## 8.7 Recording Modes
 
-RoomResponseRecorder supports two distinct recording modes accessed through a unified API.
+RoomResponseRecorder supports two distinct recording modes accessed through a unified API. All signal processing operations are delegated to the [SignalProcessor class](#32-signalprocessor-pure-signal-processing) (see Section 3.2).
+
+**Mode Selection:**
+- **Programmatic API**: `recorder.take_record(..., mode='standard')` or `mode='calibration'`
+- **GUI (Collection Panel)**: Radio button selector with validation warnings
+- **CLI**: `DatasetCollector(..., recording_mode='standard')` parameter
 
 ### 8.7.1 Standard Mode (Default)
 
@@ -1826,10 +2073,10 @@ RoomResponseRecorder supports two distinct recording modes accessed through a un
 
 **Process:**
 1. Record audio (single or multi-channel)
-2. Extract cycles using simple reshape
-3. Average cycles (skip first few for system stabilization)
-4. Find onset in averaged signal
-5. Rotate signal to align onset to beginning
+2. Extract cycles → `signal_processor.extract_cycles()`
+3. Average cycles (skip first few for system stabilization) → `signal_processor.average_cycles()`
+4. Find onset in averaged signal → `signal_processor.find_sound_onset()`
+5. Extract impulse response with onset at sample 0 → `signal_processor.extract_impulse_response()`
 6. Save raw recording and impulse response files
 
 **Usage:**
@@ -1858,7 +2105,7 @@ audio = recorder.take_record("raw.wav", "impulse.wav")
 
 **Process:**
 1. Record audio (multi-channel required)
-2. Extract cycles from calibration channel
+2. Extract cycles from calibration channel → `signal_processor.extract_cycles()`
 3. Validate each cycle using CalibrationValidatorV2 (V3 comprehensive format)
    - **Criterion 1:** Negative peak amplitude range
    - **Criterion 2:** Precursor detection (peaks before negative peak)
@@ -1867,9 +2114,10 @@ audio = recorder.take_record("raw.wav", "impulse.wav")
    - **Criterion 5:** First positive peak timing
    - **Criterion 6:** Highest positive peak magnitude
    - **Criterion 7:** Secondary negative peak (hammer bounces)
-4. Align valid cycles by onset detection
-5. Apply same alignment to all channels
-6. Return cycle-level data (no averaging, no file saving)
+4. Align valid cycles by onset detection → `signal_processor.align_cycles_by_onset()`
+5. Apply same alignment to all channels → `signal_processor.apply_alignment_to_channel()`
+6. (Optional) Normalize by calibration → `signal_processor.normalize_by_calibration()`
+7. Return cycle-level data (no averaging, no file saving unless explicitly requested)
 
 **Usage:**
 ```python
@@ -3210,6 +3458,126 @@ Recording extracts 15 cycles
     ↓
 All 15 cycles appear in table
 ```
+
+---
+
+### 10.10 Collection Panel - Recording Mode Selector (NEW - 2025-11-03)
+
+**Purpose**: Enable users to select recording mode (Standard vs Calibration) directly in the Collection Panel when collecting datasets.
+
+**Component**: `CollectionPanel._render_common_configuration()` ([gui_collect_panel.py](gui_collect_panel.py))
+
+**Feature Added**: Recording mode radio button selector with validation warnings (integrated as of commit 4b77f80)
+
+#### 10.10.1 UI Layout
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Common Configuration                                    │
+├─────────────────────────────────────────────────────────┤
+│ Computer Name: [MyComputer________________]            │
+│ Room Name:     [Living Room_______________]            │
+│                                                         │
+│ Recording Mode                                          │
+│ Select recording mode:                                  │
+│ ○ Standard                                             │
+│ ● Calibration                                          │
+│                                                         │
+│ ✓ Calibration mode ready (Calibration channel: Ch 2)  │
+│                                                         │
+│ Number of Measurements: [30]                           │
+│ Measurement Interval:   [2.0] seconds                  │
+│ ...                                                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 10.10.2 Validation Logic
+
+**When Calibration Mode Selected:**
+
+1. **Multi-channel not enabled** → Show error:
+   ```
+   ⚠️ Calibration mode requires multi-channel recording to be enabled.
+   ```
+
+2. **Calibration channel not configured** → Show error:
+   ```
+   ⚠️ Calibration mode requires a calibration channel to be configured.
+   ```
+
+3. **Both requirements met** → Show success:
+   ```
+   ✓ Calibration mode ready (Calibration channel: Ch 2)
+   ```
+
+**When Standard Mode Selected:**
+- No validation warnings shown
+- Works with single-channel or multi-channel configurations
+
+#### 10.10.3 Data Flow
+
+```
+Collection Panel UI
+    ↓
+common_config['recording_mode'] = 'standard' | 'calibration'
+    ↓
+SingleScenarioCollector(recording_mode=...)
+    ↓
+DatasetCollector(recording_mode=...)
+    ↓
+recorder.take_record(..., mode=recording_mode)
+    ↓
+SignalProcessor processes with mode-specific logic
+```
+
+**Files Updated** (commit 4b77f80):
+1. [gui_collect_panel.py](gui_collect_panel.py) - Added recording mode selector in `_render_common_configuration()`
+2. [DatasetCollector.py](DatasetCollector.py) - Added `recording_mode` parameter to `__init__()` and `take_record()` calls
+3. [gui_series_worker.py](gui_series_worker.py) - Added `recording_mode` parameter throughout
+
+#### 10.10.4 Mode Parameter Propagation
+
+```python
+# Collection Panel (GUI)
+common_config = {
+    ...
+    "recording_mode": "calibration"  # User selection from radio button
+}
+
+# Single Scenario Collector
+collector = SingleScenarioCollector(
+    ...
+    recording_mode=common_config["recording_mode"]
+)
+
+# Dataset Collector
+self.recorder.take_record(
+    str(raw_path),
+    str(impulse_path),
+    mode=self.recording_mode  # 'standard' or 'calibration'
+)
+
+# Signal Processing (mode-specific logic in SignalProcessor)
+if mode == 'calibration':
+    # Per-cycle validation, alignment, normalization
+    result = {
+        'calibration_cycles': ...,
+        'validation_results': ...,
+        'aligned_multichannel_cycles': ...,
+        ...
+    }
+elif mode == 'standard':
+    # Simple averaging, onset detection
+    result = averaged_audio_data
+```
+
+#### 10.10.5 Benefits
+
+1. **User Convenience**: No need to manually call `take_record_calibration()` or remember mode parameter
+2. **Clear Validation**: Immediate feedback if calibration mode requirements not met
+3. **Consistent UX**: Matches Series Settings Panel mode selector pattern
+4. **Error Prevention**: Can't accidentally use calibration mode without proper configuration
+5. **Dataset Quality**: Calibration mode ensures higher quality multi-channel datasets
 
 ---
 
