@@ -460,9 +460,9 @@ class ScenariosPanel:
         # Check if multi-channel
         is_multichannel = self.scenario_manager.is_multichannel_scenario(exp_path)
 
-        # Debug info
-        if is_multichannel:
-            st.info(f"✓ Multi-channel scenario detected | Utils available: {MULTICHANNEL_UTILS_AVAILABLE}")
+        # Enhanced debug info
+        num_channels = self.scenario_manager.detect_num_channels_in_scenario(exp_path)
+        st.info(f"Debug: is_multichannel={is_multichannel} | num_channels={num_channels} | Utils available: {MULTICHANNEL_UTILS_AVAILABLE} | Files: {len(files_of_type)}")
 
         # View mode tabs: Single File, Overlay All, or Channel Exploration
         if len(files_of_type) > 1:
