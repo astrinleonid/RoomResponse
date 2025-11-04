@@ -131,10 +131,6 @@ class ScenariosPanel:
         self._render_scenario_explorer()
         self._render_fir_export_dialog()
 
-        # Channel exploration and visualization
-        st.markdown("---")
-        self._render_channel_exploration()
-
     def _init_session_state(self) -> None:
         """Initialize session state defaults."""
         st.session_state.setdefault(SK_SCN_SELECTIONS, set())
@@ -461,20 +457,35 @@ class ScenariosPanel:
 
         files_of_type = audio_files[audio_type]
 
-        # View mode tabs: Single File or Overlay
+        # Check if multi-channel
+        is_multichannel = self.scenario_manager.is_multichannel_scenario(exp_path)
+
+        # View mode tabs: Single File, Overlay All, or Channel Exploration
         if len(files_of_type) > 1:
-            view_mode = st.radio(
-                "View mode",
-                ["Single File", "Overlay All"],
-                horizontal=True,
-                help="Single File: View one file at a time. Overlay All: Compare all files overlaid."
-            )
+            if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE:
+                view_mode = st.radio(
+                    "View mode",
+                    ["Single File", "Overlay All", "By Channel", "By Measurement"],
+                    horizontal=True,
+                    help="Single File: View one file at a time. Overlay All: Compare all files. By Channel: Overlay measurements per channel. By Measurement: Compare channels per measurement."
+                )
+            else:
+                view_mode = st.radio(
+                    "View mode",
+                    ["Single File", "Overlay All"],
+                    horizontal=True,
+                    help="Single File: View one file at a time. Overlay All: Compare all files overlaid."
+                )
         else:
             view_mode = "Single File"
 
         # Render based on view mode
         if view_mode == "Overlay All":
             self._render_overlay_view(files_of_type, audio_type, exp_path)
+        elif view_mode == "By Channel":
+            self._render_by_channel_view(exp_path, os.path.basename(exp_path))
+        elif view_mode == "By Measurement":
+            self._render_by_measurement_view(exp_path, os.path.basename(exp_path))
         else:
             # Single file view
             col1, col2 = st.columns([3, 1])
@@ -1874,72 +1885,6 @@ class ScenariosPanel:
     # ========================================================================
     # Channel Exploration and Visualization
     # ========================================================================
-
-    def _render_channel_exploration(self) -> None:
-        """Render channel exploration and visualization section."""
-        st.header("📊 Channel Exploration")
-
-        if not VISUALIZER_AVAILABLE:
-            st.warning("AudioVisualizer not available. Install gui_audio_visualizer.py")
-            return
-
-        if not MULTICHANNEL_UTILS_AVAILABLE:
-            st.warning("Multi-channel utilities not available. Install multichannel_filename_utils.py")
-            return
-
-        root = st.session_state.get("dataset_root", os.getcwd())
-
-        # Get list of scenarios
-        scenarios = self._get_scenarios_list(root)
-
-        if not scenarios:
-            st.info("No scenarios found in the current dataset. Collect some data first!")
-            return
-
-        # Scenario selector
-        st.markdown("### Select Scenario")
-        selected_scenario = st.selectbox(
-            "Scenario:",
-            scenarios,
-            key="channel_explore_scenario"
-        )
-
-        if not selected_scenario:
-            return
-
-        scenario_path = os.path.join(root, selected_scenario)
-
-        # Check if multi-channel
-        is_multichannel = self.scenario_manager.is_multichannel_scenario(scenario_path)
-
-        if not is_multichannel:
-            st.info(f"Scenario '{selected_scenario}' is single-channel. Multi-channel exploration is only available for multi-channel recordings.")
-            return
-
-        # Visualization mode tabs
-        tab1, tab2 = st.tabs(["📈 By Channel (Overlay Measurements)", "🔀 By Measurement (Compare Channels)"])
-
-        with tab1:
-            self._render_by_channel_view(scenario_path, selected_scenario)
-
-        with tab2:
-            self._render_by_measurement_view(scenario_path, selected_scenario)
-
-    def _get_scenarios_list(self, root: str) -> list:
-        """Get list of scenario folders in the dataset root."""
-        scenarios = []
-        try:
-            if os.path.isdir(root):
-                for item in os.listdir(root):
-                    item_path = os.path.join(root, item)
-                    if os.path.isdir(item_path):
-                        # Check if it looks like a scenario folder
-                        impulse_folder = os.path.join(item_path, "impulse_responses")
-                        if os.path.isdir(impulse_folder):
-                            scenarios.append(item)
-        except (OSError, PermissionError):
-            pass
-        return sorted(scenarios)
 
     def _render_by_channel_view(self, scenario_path: str, scenario_name: str) -> None:
         """Render channel-wise view: select one channel, overlay multiple measurements."""

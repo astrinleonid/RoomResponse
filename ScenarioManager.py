@@ -93,36 +93,36 @@ class ScenarioManager:
     @staticmethod
     def list_wavs_multichannel(scenario_path: str, subfolder: str = "impulse_responses") -> Dict[int, List[str]]:
         """
-        List WAV files grouped by measurement index.
+        List audio files grouped by measurement index (supports WAV and NPY).
 
         Args:
             scenario_path: Path to scenario folder
-            subfolder: Subfolder containing WAV files (default: "impulse_responses")
+            subfolder: Subfolder containing audio files (default: "impulse_responses")
 
         Returns:
             Dict mapping measurement index to list of channel files
 
         Example:
             {
-                0: ['impulse_000_20251025_ch0.wav', 'impulse_000_20251025_ch1.wav'],
-                1: ['impulse_001_20251025_ch0.wav', 'impulse_001_20251025_ch1.wav']
+                0: ['impulse_000_20251025_ch0.npy', 'impulse_000_20251025_ch1.npy'],
+                1: ['impulse_001_20251025_ch0.npy', 'impulse_001_20251025_ch1.npy']
             }
         """
-        wav_folder = os.path.join(scenario_path, subfolder)
-        if not os.path.isdir(wav_folder):
+        audio_folder = os.path.join(scenario_path, subfolder)
+        if not os.path.isdir(audio_folder):
             return {}
 
-        # Get all WAV files in the folder
-        wav_files = []
+        # Get all audio files in the folder (WAV and NPY)
+        audio_files = []
         try:
-            for filename in os.listdir(wav_folder):
-                if filename.lower().endswith('.wav'):
-                    wav_files.append(os.path.join(wav_folder, filename))
+            for filename in os.listdir(audio_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    audio_files.append(os.path.join(audio_folder, filename))
         except (OSError, PermissionError):
             return {}
 
         # Group by measurement index
-        return group_files_by_measurement(wav_files)
+        return group_files_by_measurement(audio_files)
 
     @staticmethod
     def detect_num_channels_in_scenario(scenario_path: str, subfolder: str = "impulse_responses") -> int:
@@ -131,26 +131,26 @@ class ScenarioManager:
 
         Args:
             scenario_path: Path to scenario folder
-            subfolder: Subfolder containing WAV files
+            subfolder: Subfolder containing audio files (WAV or NPY)
 
         Returns:
             Number of channels (1 for single-channel, >1 for multi-channel)
         """
-        wav_folder = os.path.join(scenario_path, subfolder)
-        if not os.path.isdir(wav_folder):
+        audio_folder = os.path.join(scenario_path, subfolder)
+        if not os.path.isdir(audio_folder):
             return 1  # Default to single-channel
 
-        # Get all WAV files
-        wav_files = []
+        # Get all audio files (WAV and NPY)
+        audio_files = []
         try:
-            for filename in os.listdir(wav_folder):
-                if filename.lower().endswith('.wav'):
-                    wav_files.append(os.path.join(wav_folder, filename))
+            for filename in os.listdir(audio_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    audio_files.append(os.path.join(audio_folder, filename))
         except (OSError, PermissionError):
             return 1
 
         # Detect channels
-        return detect_num_channels(wav_files)
+        return detect_num_channels(audio_files)
 
     @staticmethod
     def get_measurement_files_from_scenario(scenario_path: str, measurement_index: int,
@@ -162,29 +162,29 @@ class ScenarioManager:
         Args:
             scenario_path: Path to scenario folder
             measurement_index: Measurement index to retrieve
-            subfolder: Subfolder containing WAV files
+            subfolder: Subfolder containing audio files (WAV or NPY)
             file_type: Optional filter by file type (e.g., "impulse", "room", "raw")
 
         Returns:
             Dict mapping channel index to file path
-            For single-channel: {0: "file.wav"}
-            For multi-channel: {0: "file_ch0.wav", 1: "file_ch1.wav", ...}
+            For single-channel: {0: "file.wav/.npy"}
+            For multi-channel: {0: "file_ch0.wav/.npy", 1: "file_ch1.wav/.npy", ...}
         """
-        wav_folder = os.path.join(scenario_path, subfolder)
-        if not os.path.isdir(wav_folder):
+        audio_folder = os.path.join(scenario_path, subfolder)
+        if not os.path.isdir(audio_folder):
             return {}
 
-        # Get all WAV files
-        wav_files = []
+        # Get all audio files (WAV and NPY)
+        audio_files = []
         try:
-            for filename in os.listdir(wav_folder):
-                if filename.lower().endswith('.wav'):
-                    wav_files.append(os.path.join(wav_folder, filename))
+            for filename in os.listdir(audio_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    audio_files.append(os.path.join(audio_folder, filename))
         except (OSError, PermissionError):
             return {}
 
         # Get measurement files
-        return get_measurement_files(wav_files, measurement_index, file_type)
+        return get_measurement_files(audio_files, measurement_index, file_type)
 
     @staticmethod
     def is_multichannel_scenario(scenario_path: str, subfolder: str = "impulse_responses") -> bool:
@@ -193,25 +193,25 @@ class ScenarioManager:
 
         Args:
             scenario_path: Path to scenario folder
-            subfolder: Subfolder containing WAV files
+            subfolder: Subfolder containing audio files (WAV or NPY)
 
         Returns:
             True if any files use multi-channel naming convention
         """
-        wav_folder = os.path.join(scenario_path, subfolder)
-        if not os.path.isdir(wav_folder):
+        audio_folder = os.path.join(scenario_path, subfolder)
+        if not os.path.isdir(audio_folder):
             return False
 
-        # Get all WAV files
-        wav_files = []
+        # Get all audio files (WAV and NPY)
+        audio_files = []
         try:
-            for filename in os.listdir(wav_folder):
-                if filename.lower().endswith('.wav'):
-                    wav_files.append(os.path.join(wav_folder, filename))
+            for filename in os.listdir(audio_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    audio_files.append(os.path.join(audio_folder, filename))
         except (OSError, PermissionError):
             return False
 
-        return is_multichannel_dataset(wav_files)
+        return is_multichannel_dataset(audio_files)
     
     @staticmethod
     def count_feature_samples(scenario_path: str, wav_subfolder: str = "impulse_responses", 
