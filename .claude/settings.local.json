@@ -10,7 +10,8 @@
       "Bash(git commit:*)",
       "Bash(git pull:*)",
       "Bash(git merge:*)",
-      "Bash(\"d:\\repos\\RoomResponse\\.venv\\Scripts\\python.exe\" -m py_compile \"d:\\repos\\RoomResponse\\gui_series_settings_panel.py\")"
+      "Bash(\"d:\\repos\\RoomResponse\\.venv\\Scripts\\python.exe\" -m py_compile \"d:\\repos\\RoomResponse\\gui_series_settings_panel.py\")",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []
