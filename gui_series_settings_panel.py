@@ -1401,7 +1401,7 @@ class SeriesSettingsPanel:
             )
 
         # Add averaged impulse response statistics
-        if kept_after_alignment and selected_ch in aligned_multichannel:
+        if valid_cycle_indices and selected_ch in aligned_multichannel:
             st.markdown("**📈 Averaged Impulse Response Statistics**")
 
             # Get averaged response from analysis
