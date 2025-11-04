@@ -109,6 +109,11 @@ class SeriesSettingsPanel:
             'series_show_individual_cycles': True,
             'series_show_averaged_result': True,
 
+            # Truncation parameters from truncate_config section
+            'series_truncate_enabled': bool(config.get('truncate_config', {}).get('enabled', False)),
+            'series_ir_working_length': float(config.get('truncate_config', {}).get('ir_working_length_ms', 500.0)),
+            'series_ir_fade_length': float(config.get('truncate_config', {}).get('ir_fade_length_ms', 50.0)),
+
             # Recording data cache
             'series_recorded_audio': None,
             'series_sample_rate': int(config.get('sample_rate', getattr(self.recorder, 'sample_rate', 48000) if self.recorder else 48000)),
@@ -167,6 +172,14 @@ class SeriesSettingsPanel:
 
             config['series_config']['record_extra_time_ms'] = float(st.session_state['series_record_extra_time'])
             config['series_config']['averaging_start_cycle'] = int(st.session_state['series_averaging_start_cycle'])
+
+            # Update truncate_config section
+            if 'truncate_config' not in config:
+                config['truncate_config'] = {}
+
+            config['truncate_config']['enabled'] = bool(st.session_state['series_truncate_enabled'])
+            config['truncate_config']['ir_working_length_ms'] = float(st.session_state['series_ir_working_length'])
+            config['truncate_config']['ir_fade_length_ms'] = float(st.session_state['series_ir_fade_length'])
 
             # Save using config manager
             return config_manager.save_config(config, updated_by="Series Settings Panel")
@@ -483,6 +496,55 @@ class SeriesSettingsPanel:
                 step=int(1)
             )
 
+        # Impulse Response Truncation Section
+        st.markdown("---")
+        st.markdown("**Impulse Response Truncation**")
+
+        truncate_enabled = st.checkbox(
+            "Enable IR Truncation",
+            value=st.session_state.get('series_truncate_enabled', False),
+            help="Truncate averaged impulse responses to reduce file size and focus on working length"
+        )
+
+        if truncate_enabled:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                working_length = st.number_input(
+                    "IR Working Length (ms)",
+                    min_value=10.0,
+                    max_value=5000.0,
+                    value=st.session_state.get('series_ir_working_length', 500.0),
+                    step=10.0,
+                    format="%.1f",
+                    help="Duration of impulse response to keep (before fade-out)"
+                )
+
+            with col2:
+                fade_length = st.number_input(
+                    "IR Fade Length (ms)",
+                    min_value=1.0,
+                    max_value=200.0,
+                    value=st.session_state.get('series_ir_fade_length', 50.0),
+                    step=5.0,
+                    format="%.1f",
+                    help="Duration of fade-out window to prevent abrupt cutoff"
+                )
+
+            # Validation
+            if fade_length >= working_length:
+                st.error("⚠️ Fade length must be shorter than working length")
+
+            # Preview calculation
+            sample_rate = st.session_state.get('series_sample_rate', 48000)
+            working_samples = int(working_length * sample_rate / 1000)
+            fade_samples = int(fade_length * sample_rate / 1000)
+            st.caption(f"💡 Truncated length: {working_samples:,} samples, Fade window: {fade_samples:,} samples")
+        else:
+            # Use defaults when disabled
+            working_length = st.session_state.get('series_ir_working_length', 500.0)
+            fade_length = st.session_state.get('series_ir_fade_length', 50.0)
+
         # Store in session (correct types)
         st.session_state['series_num_pulses'] = int(num_pulses)
         st.session_state['series_pulse_duration'] = float(pulse_duration_ms)
@@ -493,6 +555,9 @@ class SeriesSettingsPanel:
         st.session_state['series_pulse_form'] = str(pulse_form)
         st.session_state['series_record_extra_time'] = float(extra_ms)
         st.session_state['series_averaging_start_cycle'] = int(avg_start)
+        st.session_state['series_truncate_enabled'] = bool(truncate_enabled)
+        st.session_state['series_ir_working_length'] = float(working_length)
+        st.session_state['series_ir_fade_length'] = float(fade_length)
 
         # APPLY PERMANENTLY to the shared recorder (no restore)
         self._apply_series_settings_to_recorder(self.recorder)
@@ -943,6 +1008,21 @@ class SeriesSettingsPanel:
         if ts:
             st.caption(f"Recorded at: {time.strftime('%H:%M:%S', time.localtime(ts))}")
 
+        # Show raw recorded signal chart FIRST - before any validation or analysis
+        # This ensures users always see the actual captured data
+        # Get the TRUE raw audio (not processed cycles) from processed_data
+        processed_data = st.session_state.get('series_processed_data')
+        if processed_data:
+            raw_audio_data = processed_data.get('raw', {})
+            if raw_audio_data:
+                self._render_raw_signal_chart(raw_audio_data, sr)
+            else:
+                # Fallback to what's in series_recorded_audio if raw not available
+                self._render_raw_signal_chart(audio, sr)
+        else:
+            # Fallback to what's in series_recorded_audio
+            self._render_raw_signal_chart(audio, sr)
+
         if analysis:
             self._display_analysis_metrics(analysis)
 
@@ -951,8 +1031,70 @@ class SeriesSettingsPanel:
 
         self._render_visualization_controls()
 
-        # Collapse Full Recording section by default
-        with st.expander("**Full Recording**", expanded=False):
+        # Render cycle analysis sections
+        self._render_cycle_analysis_sections()
+
+    def _render_raw_signal_chart(self, audio, sample_rate: int) -> None:
+        """
+        Render chart of the complete raw recorded signal (before cycle extraction).
+
+        Args:
+            audio: Raw audio data (dict for multi-channel or array for single-channel)
+            sample_rate: Sample rate in Hz
+        """
+        st.markdown("---")
+        st.markdown("**Raw Recorded Signal — Complete Recording**")
+        st.caption("This is the full unprocessed audio as recorded, before cycle extraction or validation")
+
+        if VISUALIZER_AVAILABLE:
+            # Handle multi-channel data - extract single channel for visualization
+            if isinstance(audio, dict):
+                # Multi-channel: get reference channel or first available
+                ref_ch = self.recorder.multichannel_config.get('reference_channel', 0)
+                available_channels = list(audio.keys())
+
+                # Validate that we have channels with data
+                if not available_channels:
+                    st.warning("No audio channels available to display")
+                    return
+
+                # Allow user to select which channel to visualize
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    selected_ch = st.selectbox(
+                        "Channel to Display",
+                        available_channels,
+                        index=available_channels.index(ref_ch) if ref_ch in available_channels else 0,
+                        key="series_raw_signal_channel"
+                    )
+                with col2:
+                    st.caption(f"{len(available_channels)} channels")
+
+                viz_audio = audio[selected_ch]
+                viz_title = f"Raw Recorded Signal - Channel {selected_ch}"
+            else:
+                # Single-channel
+                viz_audio = audio
+                viz_title = "Raw Recorded Signal"
+
+            # Check if audio data is valid (non-empty)
+            if viz_audio is None or len(viz_audio) == 0:
+                st.warning("No audio data available to display")
+                return
+
+            AudioVisualizer("series_raw_signal").render(
+                audio_data=viz_audio,
+                sample_rate=sample_rate,
+                title=viz_title,
+                show_controls=True,
+                show_analysis=True,
+                height=400
+            )
+        else:
+            st.warning("AudioVisualizer not available - cannot display raw signal chart")
+
+        # Collapse Full Recording section (detailed info) by default
+        with st.expander("**Full Recording Details**", expanded=False):
             if VISUALIZER_AVAILABLE:
                 # Handle multi-channel data - extract single channel for visualization
                 if isinstance(audio, dict):
@@ -964,7 +1106,7 @@ class SeriesSettingsPanel:
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         selected_ch = st.selectbox(
-                            "Visualize Channel",
+                            "Visualize Channel (Detail View)",
                             available_channels,
                             index=available_channels.index(ref_ch) if ref_ch in available_channels else 0,
                             key="series_viz_channel"
@@ -978,26 +1120,37 @@ class SeriesSettingsPanel:
                     # Re-compute analysis for selected channel (if different from stored analysis)
                     # REFACTORED: Use processed_data dict with channel parameter
                     stored_analysis_channel = st.session_state.get('series_analysis_channel', ref_ch)
+                    current_analysis = st.session_state.get('series_analysis_data', {})
                     if selected_ch != stored_analysis_channel:
                         # Get stored processed_data dict (unified for all modes)
                         processed_data = st.session_state.get('series_processed_data')
                         if processed_data:
                             # Recompute analysis for the selected channel using unified method
-                            analysis = self._analyze_series_recording(processed_data, self.recorder, channel=selected_ch)
+                            current_analysis = self._analyze_series_recording(processed_data, self.recorder, channel=selected_ch)
                         # Don't overwrite session state - keep original reference channel analysis
                 else:
                     # Single-channel
                     viz_audio = audio
                     viz_title = "Complete Series Recording"
+                    current_analysis = st.session_state.get('series_analysis_data', {})
 
                 AudioVisualizer("series_full_recording").render(
                     audio_data=viz_audio,
-                    sample_rate=sr,
+                    sample_rate=sample_rate,
                     title=viz_title,
                     show_controls=True,
                     show_analysis=True,
                     height=400
                 )
+
+    def _render_cycle_analysis_sections(self) -> None:
+        """Render cycle analysis, consistency overlay, and averaged analysis sections."""
+        audio = st.session_state.get('series_recorded_audio')
+        sr = int(st.session_state.get('series_sample_rate', getattr(self.recorder, 'sample_rate', 48000)))
+        analysis = st.session_state.get('series_analysis_data', {})
+
+        if audio is None or analysis is None:
+            return
 
         if analysis.get('individual_cycles'):
             self._render_cycle_analysis(analysis, sr)
@@ -1314,20 +1467,21 @@ class SeriesSettingsPanel:
 
             # Render averaged cycle visualization for selected channel
             st.markdown("---")
-            st.markdown("**📈 Averaged Cycle — Final Result**")
-            st.caption(f"Averaged response for Channel {selected_ch}")
+            st.markdown("**📈 Averaged Cycle — Final Result (as saved to file)**")
+            st.caption(f"Impulse response for Channel {selected_ch}")
 
-            # Compute averaged cycle from aligned/normalized multichannel data
-            cycles_to_average = normalized_multichannel if normalize_enabled else aligned_multichannel
-            if selected_ch in cycles_to_average:
-                averaged_cycle_for_channel = np.mean(cycles_to_average[selected_ch], axis=0)
+            # Use the EXACT data that was saved to impulse file (includes truncation if enabled)
+            processed_data = st.session_state.get('series_processed_data', {})
+            impulse_dict = processed_data.get('impulse', {})
+            impulse_for_channel = impulse_dict.get(selected_ch)
 
+            if impulse_for_channel is not None and len(impulse_for_channel) > 0:
                 # Render using AudioVisualizer (VISUALIZER_AVAILABLE defined at module level)
                 if VISUALIZER_AVAILABLE:
                     AudioVisualizer("series_averaged_cycle_selected_channel").render(
-                        audio_data=averaged_cycle_for_channel,
+                        audio_data=impulse_for_channel,
                         sample_rate=metadata.get('sample_rate', 48000),
-                        title=f"Averaged Cycle — Channel {selected_ch}",
+                        title=f"Impulse Response — Channel {selected_ch} (Saved to File)",
                         show_controls=True,
                         show_analysis=True,
                         height=400

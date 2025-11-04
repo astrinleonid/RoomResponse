@@ -536,3 +536,59 @@ class SignalProcessor:
             normalized_multichannel_cycles[ch_idx] = np.array(normalized_cycles)
 
         return normalized_multichannel_cycles, normalization_factors
+
+    # ========================================================================
+    # TRUNCATION METHODS
+    # ========================================================================
+
+    def truncate_with_fadeout(
+        self,
+        signal: np.ndarray,
+        working_length_ms: float,
+        fade_length_ms: float
+    ) -> np.ndarray:
+        """
+        Truncate signal to working length with fade-out envelope.
+
+        Reduces the length of impulse responses while avoiding abrupt cutoffs
+        by applying a smooth fade-out window at the end.
+
+        Args:
+            signal: Input signal (1D array)
+            working_length_ms: Duration to keep in milliseconds
+            fade_length_ms: Fade-out window duration in milliseconds
+
+        Returns:
+            Truncated signal with fade-out applied
+
+        Raises:
+            ValueError: If working_length_ms <= fade_length_ms or if parameters are invalid
+        """
+        # Convert durations to samples
+        working_samples = int(working_length_ms * self.config.sample_rate / 1000.0)
+        fade_samples = int(fade_length_ms * self.config.sample_rate / 1000.0)
+
+        # Validate parameters
+        if fade_samples <= 0:
+            raise ValueError(f"Fade length must be positive, got {fade_length_ms} ms")
+
+        if working_samples <= fade_samples:
+            raise ValueError(
+                f"Working length ({working_length_ms} ms = {working_samples} samples) "
+                f"must be greater than fade length ({fade_length_ms} ms = {fade_samples} samples)"
+            )
+
+        # If signal already shorter than target, no truncation needed
+        if working_samples >= len(signal):
+            return signal
+
+        # Truncate to working length
+        truncated = signal[:working_samples].copy()
+
+        # Apply fade-out envelope using Hann window (second half for smooth fade)
+        # Hann window provides smoother fade than linear
+        fade_start = working_samples - fade_samples
+        fade_window = np.hanning(fade_samples * 2)[fade_samples:]  # Second half of Hann
+        truncated[fade_start:] *= fade_window
+
+        return truncated

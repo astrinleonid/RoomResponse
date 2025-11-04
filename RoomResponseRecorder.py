@@ -80,6 +80,13 @@ class RoomResponseRecorder:
             'min_valid_cycles': 3
         }
 
+        # Truncation configuration defaults
+        self.truncate_config = {
+            'enabled': False,
+            'ir_working_length_ms': 500.0,
+            'ir_fade_length_ms': 50.0
+        }
+
         # Load configuration from file if provided
         file_config = {}  # Initialize outside try block so it's available later
         if config_file_path:
@@ -125,6 +132,10 @@ class RoomResponseRecorder:
                     else:
                         # V2 format - use as-is
                         self.calibration_quality_config.update(loaded_cal_config)
+
+                # Load truncation config
+                if 'truncate_config' in file_config:
+                    self.truncate_config.update(file_config['truncate_config'])
 
             except FileNotFoundError:
                 print(f"Warning: Config file '{config_file_path}' not found. Using default configuration.")
@@ -725,6 +736,17 @@ class RoomResponseRecorder:
         room_response = self.signal_processor.average_cycles(cycles, start_cycle)
         print(f"Averaged cycles {start_cycle} to {self.num_pulses - 1}")
 
+        # Apply truncation if enabled
+        original_length_samples = len(room_response)
+        if self.truncate_config.get('enabled', False):
+            room_response = self.signal_processor.truncate_with_fadeout(
+                room_response,
+                working_length_ms=self.truncate_config['ir_working_length_ms'],
+                fade_length_ms=self.truncate_config['ir_fade_length_ms']
+            )
+            print(f"Applied truncation: {original_length_samples} → {len(room_response)} samples "
+                  f"({len(room_response) / self.sample_rate * 1000:.1f} ms)")
+
         # Extract impulse response
         impulse_response = self.signal_processor.extract_impulse_response(room_response)
 
@@ -798,6 +820,14 @@ class RoomResponseRecorder:
             # Extract and average cycles for this channel using SignalProcessor
             cycles = self.signal_processor.extract_cycles(audio)
             room_response = self.signal_processor.average_cycles(cycles, start_cycle)
+
+            # Apply truncation if enabled
+            if self.truncate_config.get('enabled', False):
+                room_response = self.signal_processor.truncate_with_fadeout(
+                    room_response,
+                    working_length_ms=self.truncate_config['ir_working_length_ms'],
+                    fade_length_ms=self.truncate_config['ir_fade_length_ms']
+                )
 
             # Apply THE SAME shift to this channel (critical for synchronization)
             impulse_response = np.roll(room_response, shift_amount)
@@ -1088,7 +1118,18 @@ class RoomResponseRecorder:
 
             # Use unified averaging helper method
             # start_cycle=0 because cycles are already validated and filtered
-            averaged_responses[ch_idx] = self.signal_processor.average_cycles(cycles, start_cycle=0)
+            averaged = self.signal_processor.average_cycles(cycles, start_cycle=0)
+
+            # Apply truncation if enabled (AFTER alignment and normalization)
+            # Only apply if we have valid array data (not scalar nan from empty cycles)
+            if self.truncate_config.get('enabled', False) and isinstance(averaged, np.ndarray) and averaged.ndim == 1:
+                averaged = self.signal_processor.truncate_with_fadeout(
+                    averaged,
+                    working_length_ms=self.truncate_config['ir_working_length_ms'],
+                    fade_length_ms=self.truncate_config['ir_fade_length_ms']
+                )
+
+            averaged_responses[ch_idx] = averaged
 
         # STEP 6: Extract impulse responses (onset already at target position from alignment)
         impulse_responses = {}
