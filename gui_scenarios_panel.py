@@ -1975,8 +1975,11 @@ class ScenariosPanel:
             st.warning("Select at least one measurement")
             return
 
-        # Load and display
-        if st.button("Load and Visualize", key=f"load_viz_ch{selected_channel}"):
+        # Session state key for loaded data
+        loaded_key = f"loaded_ch{selected_channel}_{len(selected_indices)}"
+
+        # Auto-load if selections changed
+        if st.button("Load and Visualize", key=f"load_viz_ch{selected_channel}") or loaded_key not in st.session_state:
             with st.spinner("Loading audio files..."):
                 audio_signals = []
                 labels = []
@@ -1993,31 +1996,43 @@ class ScenariosPanel:
                             labels.append(f"Meas {meas_idx:03d}")
                             sample_rate = sr
 
-                if not audio_signals:
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'channel': selected_channel,
+                        'scenario_name': scenario_name,
+                        'channel_name': channel_names.get(selected_channel, f'Channel {selected_channel}')
+                    }
+                else:
                     st.error("Failed to load any audio files")
                     return
 
-                st.success(f"Loaded {len(audio_signals)} measurements")
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} measurements")
 
-                # Visualization options
-                normalize = st.checkbox(
-                    "Normalize signals",
-                    value=True,
-                    help="Normalize each signal to max amplitude of 1",
-                    key=f"normalize_ch{selected_channel}"
-                )
+            # Visualization options
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=True,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_ch{selected_channel}"
+            )
 
-                # Render overlay
-                st.markdown(f"### Channel {selected_channel}: {channel_names.get(selected_channel, f'Channel {selected_channel}')}")
+            # Render overlay
+            st.markdown(f"### Channel {data['channel']}: {data['channel_name']}")
 
-                AudioVisualizer.render_multi_waveform_with_zoom(
-                    audio_signals=audio_signals,
-                    sample_rate=sample_rate,
-                    labels=labels,
-                    title=f"Overlay: Ch{selected_channel} - {scenario_name}",
-                    component_id=f"overlay_ch{selected_channel}",
-                    normalize=normalize
-                )
+            AudioVisualizer.render_multi_waveform_with_zoom(
+                audio_signals=data['signals'],
+                sample_rate=data['sample_rate'],
+                labels=data['labels'],
+                title=f"Overlay: Ch{data['channel']} - {data['scenario_name']}",
+                component_id=f"overlay_ch{data['channel']}",
+                normalize=normalize
+            )
 
     def _render_by_measurement_view(self, scenario_path: str, scenario_name: str) -> None:
         """Render measurement-wise view: select one measurement, compare multiple channels side-by-side."""
@@ -2083,8 +2098,11 @@ class ScenariosPanel:
             key=f"layout_mode_meas{selected_measurement}"
         )
 
+        # Session state key for loaded data
+        loaded_key = f"loaded_meas{selected_measurement}_{len(selected_channels)}_{layout_mode}"
+
         # Load and display
-        if st.button("Load and Visualize", key=f"load_viz_meas{selected_measurement}"):
+        if st.button("Load and Visualize", key=f"load_viz_meas{selected_measurement}") or loaded_key not in st.session_state:
             with st.spinner("Loading audio files..."):
                 audio_signals = []
                 labels = []
@@ -2099,47 +2117,59 @@ class ScenariosPanel:
                         labels.append(channel_labels_dict[ch_idx])
                         sample_rate = sr
 
-                if not audio_signals:
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'measurement': selected_measurement,
+                        'channels': selected_channels,
+                        'layout': layout_mode
+                    }
+                else:
                     st.error("Failed to load any audio files")
                     return
 
-                st.success(f"Loaded {len(audio_signals)} channels")
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} channels")
 
-                # Visualization options
-                normalize = st.checkbox(
-                    "Normalize signals",
-                    value=False,
-                    help="Normalize each signal to max amplitude of 1",
-                    key=f"normalize_meas{selected_measurement}"
+            # Visualization options
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=False,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_meas{selected_measurement}"
+            )
+
+            # Render comparison
+            st.markdown(f"### Measurement {data['measurement']:03d} - Channel Comparison")
+
+            if data['layout'] == "Overlaid (Single Plot)":
+                # Single overlaid plot
+                AudioVisualizer.render_multi_waveform_with_zoom(
+                    audio_signals=data['signals'],
+                    sample_rate=data['sample_rate'],
+                    labels=data['labels'],
+                    title=f"Meas {data['measurement']:03d} - Channels Overlaid",
+                    component_id=f"compare_meas{data['measurement']}_overlay",
+                    normalize=normalize
                 )
-
-                # Render comparison
-                st.markdown(f"### Measurement {selected_measurement:03d} - Channel Comparison")
-
-                if layout_mode == "Overlaid (Single Plot)":
-                    # Single overlaid plot
-                    AudioVisualizer.render_multi_waveform_with_zoom(
-                        audio_signals=audio_signals,
-                        sample_rate=sample_rate,
-                        labels=labels,
-                        title=f"Meas {selected_measurement:03d} - Channels Overlaid",
-                        component_id=f"compare_meas{selected_measurement}_overlay",
-                        normalize=normalize
-                    )
-                else:
-                    # Stacked plots (one per channel)
-                    st.markdown("**Stacked Channel View:**")
-                    for i, (audio_data, label) in enumerate(zip(audio_signals, labels)):
-                        with st.expander(f"📊 {label}", expanded=(i == 0)):
-                            AudioVisualizer.render_multi_waveform_with_zoom(
-                                audio_signals=[audio_data],
-                                sample_rate=sample_rate,
-                                labels=[label],
-                                title=label,
-                                component_id=f"compare_meas{selected_measurement}_ch{selected_channels[i]}",
-                                normalize=normalize,
-                                height=300
-                            )
+            else:
+                # Stacked plots (one per channel)
+                st.markdown("**Stacked Channel View:**")
+                for i, (audio_data, label) in enumerate(zip(data['signals'], data['labels'])):
+                    with st.expander(f"📊 {label}", expanded=(i == 0)):
+                        AudioVisualizer.render_multi_waveform_with_zoom(
+                            audio_signals=[audio_data],
+                            sample_rate=data['sample_rate'],
+                            labels=[label],
+                            title=label,
+                            component_id=f"compare_meas{data['measurement']}_ch{data['channels'][i]}",
+                            normalize=normalize,
+                            height=300
+                        )
 
     def _load_channel_names_from_metadata(self, scenario_path: str) -> dict:
         """Load channel names from scenario metadata."""
