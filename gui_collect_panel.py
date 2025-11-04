@@ -203,8 +203,8 @@ class CollectionPanel:
         return uniq
 
     def _load_defaults_from_config(self, cfg_path: str) -> dict:
-        """Load computer and room name defaults from recorder config file."""
-        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room"}
+        """Load computer, room name, and num_measurements defaults from recorder config file."""
+        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room", "num_measurements": 0}
         try:
             with open(cfg_path, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
@@ -214,6 +214,21 @@ class CollectionPanel:
             return defaults
         except Exception:
             return defaults
+
+    def _save_config_values(self, cfg_path: str, computer: str, room: str, num_measurements: int) -> None:
+        """Save computer, room, and num_measurements back to config file."""
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            config['computer'] = computer
+            config['room'] = room
+            config['num_measurements'] = num_measurements
+
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            st.warning(f"Could not save config: {e}")
 
     def _load_configuration(self, root: str) -> Dict[str, Any]:
         cfg_path = os.path.join(root, "recorderConfig.json")
@@ -261,7 +276,7 @@ class CollectionPanel:
         recording_mode = st.radio(
             "Select recording mode:",
             options=["Standard", "Calibration"],
-            index=0,
+            index=1,  # Default to Calibration mode
             help="Standard: Simple averaged response. Calibration: Advanced per-cycle alignment with quality filtering.",
             horizontal=True
         )
@@ -281,9 +296,31 @@ class CollectionPanel:
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            computer_name = st.text_input("Computer name", value=config_data["defaults"].get("computer", "Unknown_Computer"))
-            room_name = st.text_input("Room name", value=config_data["defaults"].get("room", "Unknown_Room"))
-            num_measurements = st.number_input("Number of measurements", 1, 1000, 30, 1)
+            # Use callbacks to save config on change
+            computer_name = st.text_input(
+                "Computer name",
+                value=config_data["defaults"].get("computer", "Unknown_Computer"),
+                key="computer_name_input"
+            )
+            room_name = st.text_input(
+                "Room name",
+                value=config_data["defaults"].get("room", "Unknown_Room"),
+                key="room_name_input"
+            )
+            num_measurements = st.number_input(
+                "Number of measurements",
+                min_value=0,
+                max_value=1000,
+                value=config_data["defaults"].get("num_measurements", 0),
+                step=1,
+                key="num_measurements_input"
+            )
+
+            # Save to config if any values changed
+            if (computer_name != config_data["defaults"].get("computer") or
+                room_name != config_data["defaults"].get("room") or
+                num_measurements != config_data["defaults"].get("num_measurements")):
+                self._save_config_values(config_data["config_file"], computer_name, room_name, num_measurements)
         with c2:
             measurement_interval = st.number_input("Measurement interval (seconds)", 0.1, 60.0, 2.0, 0.1)
             interactive_devices = st.checkbox(
