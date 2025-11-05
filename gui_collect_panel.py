@@ -682,18 +682,31 @@ class CollectionPanel:
 
         # Auto-refresh while thread is alive (1 Hz)
         try:
-            if thread.is_alive():
+            is_alive = thread.is_alive()
+            print(f"DEBUG: Thread alive check: {is_alive}")
+            st.caption(f"DEBUG: Thread is_alive = {is_alive}")
+
+            if is_alive:
                 last_refresh = st.session_state.get("_single_last_refresh_ts", 0.0)
                 now = time.time()
-                if now - last_refresh > 1.0:
+                elapsed = now - last_refresh
+                print(f"DEBUG: Auto-refresh check - elapsed={elapsed:.2f}s, threshold=1.0s")
+                st.caption(f"DEBUG: Time since last refresh: {elapsed:.2f}s")
+
+                if elapsed > 1.0:
                     st.session_state["_single_last_refresh_ts"] = now
-                    print(f"DEBUG: Auto-refresh triggered at {now}")
+                    print(f"DEBUG: *** TRIGGERING RERUN at {now} ***")
                     st.rerun()
+                else:
+                    print(f"DEBUG: Not yet time to refresh (need {1.0 - elapsed:.2f}s more)")
             else:
                 print(f"DEBUG: Thread not alive, skipping auto-refresh")
+                st.caption("DEBUG: Thread not alive")
         except Exception as e:
             st.caption(f"(auto-refresh skipped: {e})")
             print(f"DEBUG: Auto-refresh exception: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _render_post_collection_actions(self, config_file: str) -> None:
         st.markdown("### Post-Collection")
