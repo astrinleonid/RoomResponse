@@ -383,6 +383,8 @@ class CollectionPanel:
 
         # Check if collection is running
         is_running = st.session_state.get("single_thread") is not None and st.session_state.get("single_thread").is_alive()
+        print(f"DEBUG: is_running check: thread={st.session_state.get('single_thread')}, is_alive={st.session_state.get('single_thread').is_alive() if st.session_state.get('single_thread') else 'N/A'}, is_running={is_running}")
+        st.caption(f"DEBUG: is_running = {is_running}")
 
         # Start button (disabled if already running)
         if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True, disabled=is_running):
