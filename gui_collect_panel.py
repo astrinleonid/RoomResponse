@@ -394,6 +394,8 @@ class CollectionPanel:
                                     scenario_number = scenario_number,
                                     description = description
             )
+            # Force a rerun to show the controls
+            st.rerun()
 
         # Control buttons (only visible when collection is running)
         if is_running:
