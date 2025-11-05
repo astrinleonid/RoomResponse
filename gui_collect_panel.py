@@ -586,12 +586,13 @@ class CollectionPanel:
         last_event = st.session_state.get("single_last_event")
 
         # Drain all events from queue
-        try:
-            while True:
-                ev = evt_q.get_nowait()
-                last_event = ev
-        except queue.Empty:
-            pass
+        if evt_q:
+            try:
+                while True:
+                    ev = evt_q.get_nowait()
+                    last_event = ev
+            except queue.Empty:
+                pass
 
         # Store last event
         st.session_state["single_last_event"] = last_event
