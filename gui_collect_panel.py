@@ -583,6 +583,10 @@ class CollectionPanel:
         st.markdown("---")
         st.markdown("### Collection Status")
 
+        # Show last update time to verify refreshes are happening
+        import datetime
+        st.caption(f"Last update: {datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+
         evt_q: queue.Queue = st.session_state.get("single_evt_q")
 
         # Track separate last events by type
@@ -617,8 +621,12 @@ class CollectionPanel:
         if last_progress:
             print(f"DEBUG UI: Progress event - payload keys={list(last_progress.payload.keys())}")
             print(f"DEBUG UI: Progress payload: {last_progress.payload}")
+            st.caption(f"DEBUG: Got progress event with keys: {list(last_progress.payload.keys())}")
         if last_status:
             print(f"DEBUG UI: Status event - message={last_status.payload.get('message')}")
+
+        # DEBUG: Show what events we have
+        st.caption(f"DEBUG: Events - Progress: {last_progress is not None}, Status: {last_status is not None}, Error: {last_error is not None}, Done: {last_done is not None}")
 
         # Display progress information (always show if available)
         if last_progress:
