@@ -807,8 +807,12 @@ class SingleScenarioCollector:
                             'cumulative_valid_cycles': total_valid_cycles,
                             'cumulative_total_cycles': total_cycles
                         })
+                        print(f"  DEBUG: Emitting progress with calibration stats: {progress_data}")
+                    else:
+                        print(f"  DEBUG: recording_mode={self.recording_mode}, q.get('mode')={q.get('mode')}")
 
                     self._emit_progress(**progress_data)
+                    print(f"  DEBUG: Progress emitted successfully")
 
                     # Persist after each measurement so we can resume safely
                     self._save_metadata(append=True)

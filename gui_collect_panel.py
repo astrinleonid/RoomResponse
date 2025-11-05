@@ -653,9 +653,13 @@ class CollectionPanel:
                 now = time.time()
                 if now - last_refresh > 1.0:
                     st.session_state["_single_last_refresh_ts"] = now
+                    print(f"DEBUG: Auto-refresh triggered at {now}")
                     st.rerun()
-        except Exception:
-            st.caption("(auto-refresh skipped)")
+            else:
+                print(f"DEBUG: Thread not alive, skipping auto-refresh")
+        except Exception as e:
+            st.caption(f"(auto-refresh skipped: {e})")
+            print(f"DEBUG: Auto-refresh exception: {e}")
 
     def _render_post_collection_actions(self, config_file: str) -> None:
         st.markdown("### Post-Collection")
