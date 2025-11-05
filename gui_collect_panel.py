@@ -584,69 +584,93 @@ class CollectionPanel:
         st.markdown("### Collection Status")
 
         evt_q: queue.Queue = st.session_state.get("single_evt_q")
-        last_event = st.session_state.get("single_last_event")
 
-        # Drain all events from queue
+        # Track separate last events by type
+        last_progress = st.session_state.get("single_last_progress")
+        last_status = st.session_state.get("single_last_status")
+        last_error = st.session_state.get("single_last_error")
+        last_done = st.session_state.get("single_last_done")
+
+        # Drain all events from queue and categorize them
         if evt_q:
             try:
                 while True:
                     ev = evt_q.get_nowait()
-                    last_event = ev
+                    if ev.kind == "progress":
+                        last_progress = ev
+                    elif ev.kind == "status":
+                        last_status = ev
+                    elif ev.kind == "error":
+                        last_error = ev
+                    elif ev.kind == "done":
+                        last_done = ev
             except queue.Empty:
                 pass
 
-        # Store last event
-        st.session_state["single_last_event"] = last_event
+        # Store categorized events
+        st.session_state["single_last_progress"] = last_progress
+        st.session_state["single_last_status"] = last_status
+        st.session_state["single_last_error"] = last_error
+        st.session_state["single_last_done"] = last_done
 
-        if last_event:
-            # Display event type and message
-            if last_event.kind == "status":
-                msg = last_event.payload.get("message", "")
-                st.info(f"📊 Status: {msg}")
+        # DEBUG: Print event details
+        if last_progress:
+            print(f"DEBUG UI: Progress event - payload keys={list(last_progress.payload.keys())}")
+            print(f"DEBUG UI: Progress payload: {last_progress.payload}")
+        if last_status:
+            print(f"DEBUG UI: Status event - message={last_status.payload.get('message')}")
 
-            elif last_event.kind == "progress":
-                # Display progress information
-                scenario = last_event.payload.get('scenario', 'Unknown')
-                local_idx = last_event.payload.get('local_index', 0)
-                total = last_event.payload.get('total_measurements', 0)
-                successful = last_event.payload.get('successful_measurements', 0)
-                failed = last_event.payload.get('failed_measurements', 0)
+        # Display progress information (always show if available)
+        if last_progress:
+            # Display progress information
+            scenario = last_progress.payload.get('scenario', 'Unknown')
+            local_idx = last_progress.payload.get('local_index', 0)
+            total = last_progress.payload.get('total_measurements', 0)
+            successful = last_progress.payload.get('successful_measurements', 0)
+            failed = last_progress.payload.get('failed_measurements', 0)
 
-                st.write(f"**Scenario:** {scenario}")
-                st.write(f"**Progress:** {local_idx}/{total} measurements")
-                st.write(f"**Successful:** {successful} | **Failed:** {failed}")
+            st.write(f"**Scenario:** {scenario}")
+            st.write(f"**Progress:** {local_idx}/{total} measurements")
+            st.write(f"**Successful:** {successful} | **Failed:** {failed}")
 
-                # Show calibration info if available
-                if 'valid_cycles' in last_event.payload:
-                    valid = last_event.payload.get('valid_cycles', 0)
-                    total_cycles = last_event.payload.get('total_cycles', 0)
-                    aligned = last_event.payload.get('aligned_cycles', 0)
+            # Show calibration info if available
+            if 'valid_cycles' in last_progress.payload:
+                valid = last_progress.payload.get('valid_cycles', 0)
+                total_cycles = last_progress.payload.get('total_cycles', 0)
+                aligned = last_progress.payload.get('aligned_cycles', 0)
 
-                    # Show per-measurement stats
-                    st.write(f"**Last Measurement:** {valid}/{total_cycles} valid cycles, {aligned} aligned")
+                # Show per-measurement stats
+                st.write(f"**Last Measurement:** {valid}/{total_cycles} valid cycles, {aligned} aligned")
 
-                    # Show cumulative totals if available
-                    if 'cumulative_valid_cycles' in last_event.payload:
-                        cum_valid = last_event.payload.get('cumulative_valid_cycles', 0)
-                        cum_total = last_event.payload.get('cumulative_total_cycles', 0)
-                        st.write(f"**Total (All Measurements):** {cum_valid}/{cum_total} valid cycles")
+                # Show cumulative totals if available
+                if 'cumulative_valid_cycles' in last_progress.payload:
+                    cum_valid = last_progress.payload.get('cumulative_valid_cycles', 0)
+                    cum_total = last_progress.payload.get('cumulative_total_cycles', 0)
+                    st.write(f"**Total (All Measurements):** {cum_valid}/{cum_total} valid cycles")
 
-            elif last_event.kind == "error":
-                msg = last_event.payload.get("message", "Unknown error")
-                fatal = last_event.payload.get("fatal", False)
-                if fatal:
-                    st.error(f"❌ Fatal Error: {msg}")
-                else:
-                    st.warning(f"⚠️ Error: {msg}")
+        # Display status message (if available)
+        if last_status:
+            msg = last_status.payload.get("message", "")
+            st.info(f"📊 Status: {msg}")
 
-            elif last_event.kind == "done":
-                ok = last_event.payload.get("ok", False)
-                if ok:
-                    scenario = last_event.payload.get("scenario", "Unknown")
-                    st.success(f"🎉 Collection complete: {scenario}")
-                else:
-                    reason = last_event.payload.get("reason", "Unknown reason")
-                    st.warning(f"⚠️ Collection ended: {reason}")
+        # Display error (if available)
+        if last_error:
+            msg = last_error.payload.get("message", "Unknown error")
+            fatal = last_error.payload.get("fatal", False)
+            if fatal:
+                st.error(f"❌ Fatal Error: {msg}")
+            else:
+                st.warning(f"⚠️ Error: {msg}")
+
+        # Display done message (if available)
+        if last_done:
+            ok = last_done.payload.get("ok", False)
+            if ok:
+                scenario = last_done.payload.get("scenario", "Unknown")
+                st.success(f"🎉 Collection complete: {scenario}")
+            else:
+                reason = last_done.payload.get("reason", "Unknown reason")
+                st.warning(f"⚠️ Collection ended: {reason}")
 
         # Auto-refresh while thread is alive (1 Hz)
         try:
