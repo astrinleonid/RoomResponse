@@ -728,21 +728,6 @@ class SingleScenarioCollector:
                         total_valid_cycles += num_valid
                         total_cycles += num_total
 
-                        # Emit progress with both per-measurement and cumulative stats
-                        self._emit_progress(
-                            scenario=self.scenario.scenario_name,
-                            local_index=local_idx + 1,
-                            total_measurements=self.scenario.num_measurements,
-                            absolute_index=absolute_idx,
-                            successful_measurements=successful_measurements,
-                            failed_measurements=failed_measurements,
-                            valid_cycles=num_valid,
-                            total_cycles=num_total,
-                            aligned_cycles=num_aligned,
-                            cumulative_valid_cycles=total_valid_cycles,
-                            cumulative_total_cycles=total_cycles
-                        )
-
                         # Check for zero valid cycles - auto-stop if detected
                         if num_valid == 0:
                             error_msg = f"⚠️ Zero valid cycles detected in measurement {local_idx + 1}. Stopping collection."
@@ -802,6 +787,28 @@ class SingleScenarioCollector:
                     scenario_measurements.append(mm)
                     self.measurements.append(mm)
                     successful_measurements += 1
+
+                    # Emit final progress update after successful completion (with updated counts)
+                    progress_data = {
+                        'scenario': self.scenario.scenario_name,
+                        'local_index': local_idx + 1,
+                        'total_measurements': self.scenario.num_measurements,
+                        'absolute_index': absolute_idx,
+                        'successful_measurements': successful_measurements,
+                        'failed_measurements': failed_measurements
+                    }
+
+                    # Add calibration stats if in calibration mode
+                    if self.recording_mode == 'calibration' and 'mode' in q and q['mode'] == 'calibration':
+                        progress_data.update({
+                            'valid_cycles': q.get('valid_cycles', 0),
+                            'total_cycles': q.get('total_cycles', 0),
+                            'aligned_cycles': q.get('aligned_cycles', 0),
+                            'cumulative_valid_cycles': total_valid_cycles,
+                            'cumulative_total_cycles': total_cycles
+                        })
+
+                    self._emit_progress(**progress_data)
 
                     # Persist after each measurement so we can resume safely
                     self._save_metadata(append=True)
