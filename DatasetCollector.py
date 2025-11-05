@@ -615,6 +615,10 @@ class SingleScenarioCollector:
         successful_measurements = 0
         failed_measurements = 0
 
+        # Track cumulative calibration stats across all measurements
+        total_valid_cycles = 0
+        total_cycles = 0
+
         # Optional warm-up(s) at start (when not resuming mid-run)
         if self.scenario.warm_up_measurements > 0 and start_index == 0:
             print(f"\nPerforming {self.scenario.warm_up_measurements} warm-up measurements...")
@@ -720,7 +724,11 @@ class SingleScenarioCollector:
 
                         print(f"  ✓ Calibration: {num_valid}/{num_total} valid cycles, {num_aligned} aligned")
 
-                        # Emit progress with valid cycles info
+                        # Update cumulative totals
+                        total_valid_cycles += num_valid
+                        total_cycles += num_total
+
+                        # Emit progress with both per-measurement and cumulative stats
                         self._emit_progress(
                             scenario=self.scenario.scenario_name,
                             local_index=local_idx + 1,
@@ -730,7 +738,9 @@ class SingleScenarioCollector:
                             failed_measurements=failed_measurements,
                             valid_cycles=num_valid,
                             total_cycles=num_total,
-                            aligned_cycles=num_aligned
+                            aligned_cycles=num_aligned,
+                            cumulative_valid_cycles=total_valid_cycles,
+                            cumulative_total_cycles=total_cycles
                         )
 
                         # Check for zero valid cycles - auto-stop if detected

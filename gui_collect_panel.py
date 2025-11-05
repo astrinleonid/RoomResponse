@@ -619,7 +619,15 @@ class CollectionPanel:
                     valid = last_event.payload.get('valid_cycles', 0)
                     total_cycles = last_event.payload.get('total_cycles', 0)
                     aligned = last_event.payload.get('aligned_cycles', 0)
-                    st.write(f"**Calibration:** {valid}/{total_cycles} valid cycles, {aligned} aligned")
+
+                    # Show per-measurement stats
+                    st.write(f"**Last Measurement:** {valid}/{total_cycles} valid cycles, {aligned} aligned")
+
+                    # Show cumulative totals if available
+                    if 'cumulative_valid_cycles' in last_event.payload:
+                        cum_valid = last_event.payload.get('cumulative_valid_cycles', 0)
+                        cum_total = last_event.payload.get('cumulative_total_cycles', 0)
+                        st.write(f"**Total (All Measurements):** {cum_valid}/{cum_total} valid cycles")
 
             elif last_event.kind == "error":
                 msg = last_event.payload.get("message", "Unknown error")
