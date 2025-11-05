@@ -1145,9 +1145,16 @@ class RoomResponseRecorder:
 
             print(f"    Channel {ch_idx}: cycles shape = {cycles.shape}, dtype = {cycles.dtype}")
 
-            # Use unified averaging helper method
-            # start_cycle=0 because cycles are already validated and filtered
-            averaged = self.signal_processor.average_cycles(cycles, start_cycle=0)
+            # Handle empty cycles case (no valid cycles after alignment)
+            if cycles.shape[0] == 0:
+                # Create silent array with expected cycle length
+                cycle_length = int(self.config.cycle_duration * self.config.sample_rate)
+                averaged = np.zeros(cycle_length, dtype=np.float64)
+                print(f"    Channel {ch_idx}: No valid cycles, creating silent response ({cycle_length} samples)")
+            else:
+                # Use unified averaging helper method
+                # start_cycle=0 because cycles are already validated and filtered
+                averaged = self.signal_processor.average_cycles(cycles, start_cycle=0)
 
             # Apply truncation if enabled (AFTER alignment and normalization)
             # Only apply if we have valid array data (not scalar nan from empty cycles)
