@@ -379,7 +379,12 @@ class CollectionPanel:
             scenario_path = os.path.join(common_cfg["output_dir"], scenario_name)
             st.info(f"📁 Scenario will be saved as: `{scenario_name}`"); st.caption(f"📂 Full path: `{scenario_path}`")
         st.markdown("### Execute Collection")
-        if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True):
+
+        # Check if collection is running
+        is_running = st.session_state.get("single_thread") is not None and st.session_state.get("single_thread").is_alive()
+
+        # Start button (disabled if already running)
+        if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True, disabled=is_running):
 
             print("/n/n++++++++++++ Debug output of the recorder parameters 4 ++++++++++++++")
             self.recorder.print_signal_analysis()
@@ -389,6 +394,30 @@ class CollectionPanel:
                                     scenario_number = scenario_number,
                                     description = description
             )
+
+        # Control buttons (only visible when collection is running)
+        if is_running:
+            st.markdown("---")
+            st.markdown("### Collection Controls")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if st.button("⏸️ Pause", use_container_width=True):
+                    if st.session_state.get("single_cmd_q"):
+                        st.session_state["single_cmd_q"].put(WorkerCommand("pause"))
+
+            with col2:
+                if st.button("▶️ Resume", use_container_width=True):
+                    if st.session_state.get("single_cmd_q"):
+                        st.session_state["single_cmd_q"].put(WorkerCommand("resume"))
+
+            with col3:
+                if st.button("⏹️ Stop", type="secondary", use_container_width=True):
+                    if st.session_state.get("single_cmd_q"):
+                        st.session_state["single_cmd_q"].put(WorkerCommand("stop"))
+
+            # Render status display
+            self._render_single_scenario_status()
     def _render_series_mode(self, common_cfg: Dict[str, Any]) -> None:
         st.markdown("### Series Configuration")
         c1, c2 = st.columns([1, 1])
@@ -542,6 +571,82 @@ class CollectionPanel:
         except Exception:
             st.caption("(auto-refresh skipped)")
 
+    def _render_single_scenario_status(self) -> None:
+        """Render status display for single scenario collection."""
+        thread = st.session_state.get("single_thread")
+        if thread is None:
+            return
+
+        st.markdown("---")
+        st.markdown("### Collection Status")
+
+        evt_q: queue.Queue = st.session_state.get("single_evt_q")
+        last_event = st.session_state.get("single_last_event")
+
+        # Drain all events from queue
+        try:
+            while True:
+                ev = evt_q.get_nowait()
+                last_event = ev
+        except queue.Empty:
+            pass
+
+        # Store last event
+        st.session_state["single_last_event"] = last_event
+
+        if last_event:
+            # Display event type and message
+            if last_event.kind == "status":
+                msg = last_event.payload.get("message", "")
+                st.info(f"📊 Status: {msg}")
+
+            elif last_event.kind == "progress":
+                # Display progress information
+                scenario = last_event.payload.get('scenario', 'Unknown')
+                local_idx = last_event.payload.get('local_index', 0)
+                total = last_event.payload.get('total_measurements', 0)
+                successful = last_event.payload.get('successful_measurements', 0)
+                failed = last_event.payload.get('failed_measurements', 0)
+
+                st.write(f"**Scenario:** {scenario}")
+                st.write(f"**Progress:** {local_idx}/{total} measurements")
+                st.write(f"**Successful:** {successful} | **Failed:** {failed}")
+
+                # Show calibration info if available
+                if 'valid_cycles' in last_event.payload:
+                    valid = last_event.payload.get('valid_cycles', 0)
+                    total_cycles = last_event.payload.get('total_cycles', 0)
+                    aligned = last_event.payload.get('aligned_cycles', 0)
+                    st.write(f"**Calibration:** {valid}/{total_cycles} valid cycles, {aligned} aligned")
+
+            elif last_event.kind == "error":
+                msg = last_event.payload.get("message", "Unknown error")
+                fatal = last_event.payload.get("fatal", False)
+                if fatal:
+                    st.error(f"❌ Fatal Error: {msg}")
+                else:
+                    st.warning(f"⚠️ Error: {msg}")
+
+            elif last_event.kind == "done":
+                ok = last_event.payload.get("ok", False)
+                if ok:
+                    scenario = last_event.payload.get("scenario", "Unknown")
+                    st.success(f"🎉 Collection complete: {scenario}")
+                else:
+                    reason = last_event.payload.get("reason", "Unknown reason")
+                    st.warning(f"⚠️ Collection ended: {reason}")
+
+        # Auto-refresh while thread is alive (1 Hz)
+        try:
+            if thread.is_alive():
+                last_refresh = st.session_state.get("_single_last_refresh_ts", 0.0)
+                now = time.time()
+                if now - last_refresh > 1.0:
+                    st.session_state["_single_last_refresh_ts"] = now
+                    st.rerun()
+        except Exception:
+            st.caption("(auto-refresh skipped)")
+
     def _render_post_collection_actions(self, config_file: str) -> None:
         st.markdown("### Post-Collection")
         c1, c2 = st.columns([1, 1])
@@ -558,6 +663,7 @@ class SingleScenarioExecutor:
     def __init__(self, scenario_manager, recorder: Optional["RoomResponseRecorder"]=None):
         self.scenario_manager = scenario_manager
         self.recorder = recorder
+
     def execute(self, common_config: Dict[str, Any], scenario_number: str, description: str) -> None:
         if not self._validate_inputs(common_config, scenario_number):
             return
@@ -572,20 +678,45 @@ class SingleScenarioExecutor:
                 "num_measurements": int(common_config["num_measurements"]),
                 "measurement_interval": float(common_config["measurement_interval"]),
             }
+
+            # Create event and command queues
+            import queue
+            evt_q = queue.Queue()
+            cmd_q = queue.Queue()
+
+            # Store queues in session state
+            st.session_state["single_evt_q"] = evt_q
+            st.session_state["single_cmd_q"] = cmd_q
+
             collector = SingleScenarioCollector(
                 base_output_dir=common_config["output_dir"],
                 recorder_config=common_config["config_file"],
                 scenario_config=params,
                 merge_mode="append", allow_config_mismatch=False, resume=True,
                 recorder=self.recorder,
-                recording_mode=common_config["recording_mode"]
+                recording_mode=common_config["recording_mode"],
+                event_q=evt_q,
+                cmd_q=cmd_q
             )
-            st.info("🎵 Collection started (blocking). Monitor the console for progress.")
-            collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
-            st.success(f"🎉 Successfully collected scenario: {scenario_name}")
-            st.info(f"📂 Data saved to: {collector.scenario_dir}")
+
+            # Run in background thread
+            import threading
+            def _run_collection():
+                try:
+                    collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
+                    evt_q.put_nowait(WorkerEvent("done", {"ok": True, "scenario": scenario_name}))
+                except Exception as e:
+                    evt_q.put_nowait(WorkerEvent("error", {"message": f"Collection failed: {e}", "fatal": True}))
+                    evt_q.put_nowait(WorkerEvent("done", {"ok": False, "reason": str(e)}))
+
+            thread = threading.Thread(target=_run_collection, daemon=True)
+            st.session_state["single_thread"] = thread
+            thread.start()
+
+            st.info("🎵 Collection started. Use the controls below to monitor progress.")
+
         except Exception as e:
-            st.error(f"❌ Collection failed: {e}")
+            st.error(f"❌ Failed to start collection: {e}")
             st.info("Check the terminal/console for detailed error information.")
     def _validate_inputs(self, common_config: Dict[str, Any], scenario_number: str) -> bool:
         if not common_config["computer_name"].strip() or not common_config["room_name"].strip() or not scenario_number.strip():

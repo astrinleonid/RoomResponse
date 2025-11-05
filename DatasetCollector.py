@@ -2,6 +2,7 @@
 import os
 import json
 import time
+import queue
 import numpy as np
 import sys
 from datetime import datetime
@@ -88,7 +89,9 @@ class SingleScenarioCollector:
         pause_file_name: str = "PAUSE",           # drop this file into the scenario root to pause
         stop_file_name: str = "STOP",             # drop this file into the scenario root to stop
         recorder: Optional[RoomResponseRecorder] = None,
-        recording_mode: str = "standard"          # 'standard' (default) or 'calibration'
+        recording_mode: str = "standard",         # 'standard' (default) or 'calibration'
+        event_q: Optional[queue.Queue] = None,    # Optional event queue for progress reporting
+        cmd_q: Optional[queue.Queue] = None       # Optional command queue for pause/stop control
     ):
         self.base_output_dir = Path(base_output_dir)
         self.merge_mode = merge_mode.lower()
@@ -97,6 +100,11 @@ class SingleScenarioCollector:
         self.pause_file_name = pause_file_name
         self.stop_file_name = stop_file_name
         self.recording_mode = recording_mode.lower()  # Store recording mode
+
+        # Event and command queues for GUI integration
+        self.event_q = event_q
+        self.cmd_q = cmd_q
+        self._paused = False
 
         if scenario_config:
             self.setup_scenario_from_dict(**scenario_config)
@@ -130,6 +138,52 @@ class SingleScenarioCollector:
         # Cached existing metadata
         self._existing_metadata: Dict[str, Any] | None = None
         self._existing_measurements_count: int = 0
+
+    # -------------------- event helpers --------------------
+
+    def _emit_event(self, kind: str, **payload):
+        """Emit an event to the event queue if available."""
+        if self.event_q:
+            try:
+                from gui_series_worker import WorkerEvent
+                self.event_q.put_nowait(WorkerEvent(kind, payload))
+            except Exception:
+                pass
+
+    def _emit_progress(self, **payload):
+        """Emit a progress event."""
+        self._emit_event("progress", **payload)
+
+    def _emit_status(self, msg: str, **extra):
+        """Emit a status event."""
+        self._emit_event("status", message=msg, **extra)
+
+    def _emit_error(self, msg: str, fatal: bool = False, **extra):
+        """Emit an error event."""
+        self._emit_event("error", message=msg, fatal=fatal, **extra)
+
+    def _drain_commands(self):
+        """Process any pending commands from the command queue."""
+        if not self.cmd_q:
+            return
+
+        try:
+            while True:
+                from gui_series_worker import WorkerCommand
+                cmd = self.cmd_q.get_nowait()
+                if cmd.kind == "pause":
+                    self._paused = True
+                    self._emit_status("Paused by user")
+                elif cmd.kind == "resume":
+                    self._paused = False
+                    self._emit_status("Resumed by user")
+                elif cmd.kind == "stop":
+                    self._emit_status("Stopping...")
+                    return "stop"
+        except queue.Empty:
+            pass
+
+        return None
 
     # -------------------- scenario setup --------------------
 
@@ -464,7 +518,25 @@ class SingleScenarioCollector:
     # -------------------- pause/stop helpers --------------------
 
     def _check_pause_stop(self):
-        """Pause if PAUSE file exists. Stop if STOP file exists. Also support Windows 'p'/'q' keys."""
+        """Pause if PAUSE file exists. Stop if STOP file exists. Also support Windows 'p'/'q' keys and GUI commands."""
+        # Check GUI command queue first
+        cmd_result = self._drain_commands()
+        if cmd_result == "stop":
+            print("\n🛑 Stop requested via GUI.")
+            return "stop"
+
+        # Handle GUI pause state
+        while self._paused:
+            time.sleep(0.1)
+            cmd_result = self._drain_commands()
+            if cmd_result == "stop":
+                print("\n🛑 Stop requested during pause.")
+                return "stop"
+            # Check if resumed
+            if not self._paused:
+                print("▶️  Resumed via GUI.")
+                break
+
         if self.scenario_dir:
             pause_path = self.scenario_dir / self.pause_file_name
             stop_path = self.scenario_dir / self.stop_file_name
@@ -477,9 +549,16 @@ class SingleScenarioCollector:
             # PAUSE sentinel file
             if pause_path.exists():
                 print("\n⏸️  PAUSE file detected. Pausing... (remove the file to resume)")
+                self._emit_status("Paused by PAUSE file")
                 while pause_path.exists():
                     time.sleep(0.5)
+                    # Still check GUI commands during file-based pause
+                    cmd_result = self._drain_commands()
+                    if cmd_result == "stop":
+                        print("\n🛑 Stop requested during file pause.")
+                        return "stop"
                 print("▶️  Resuming.")
+                self._emit_status("Resumed (PAUSE file removed)")
 
         # Windows non-blocking keypress
         if _HAS_MSVCRT:
@@ -487,13 +566,20 @@ class SingleScenarioCollector:
                 ch = msvcrt.getwch().lower()
                 if ch == 'p':
                     print("\n⏸️  Paused. Press 'p' again to resume, 'q' to stop.")
+                    self._emit_status("Paused by keyboard")
                     # wait for p or q
                     while True:
                         time.sleep(0.1)
+                        # Check GUI commands during keyboard pause
+                        cmd_result = self._drain_commands()
+                        if cmd_result == "stop":
+                            print("\n🛑 Stop requested during keyboard pause.")
+                            return "stop"
                         if msvcrt.kbhit():
                             ch2 = msvcrt.getwch().lower()
                             if ch2 == 'p':
                                 print("▶️  Resuming.")
+                                self._emit_status("Resumed by keyboard")
                                 break
                             if ch2 == 'q':
                                 print("🛑 Stopping on user request (q).")
@@ -570,6 +656,8 @@ class SingleScenarioCollector:
 
         # Main loop
         print("\nStarting main measurements...")
+        self._emit_status(f"Starting {self.scenario.num_measurements} measurements")
+
         for local_idx in range(self.scenario.num_measurements):
             # Pause/stop checks
             action = self._check_pause_stop()
@@ -578,6 +666,16 @@ class SingleScenarioCollector:
 
             absolute_idx = start_index + local_idx
             print(f"\nMeasurement {local_idx + 1}/{self.scenario.num_measurements} (absolute index: {absolute_idx})")
+
+            # Emit progress before measurement
+            self._emit_progress(
+                scenario=self.scenario.scenario_name,
+                local_index=local_idx + 1,
+                total_measurements=self.scenario.num_measurements,
+                absolute_index=absolute_idx,
+                successful_measurements=successful_measurements,
+                failed_measurements=failed_measurements
+            )
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             base = f"{self.scenario.scenario_name}_{absolute_idx:03d}_{timestamp}"
@@ -621,6 +719,26 @@ class SingleScenarioCollector:
                         num_aligned = metadata.get('num_aligned_cycles', 0)
 
                         print(f"  ✓ Calibration: {num_valid}/{num_total} valid cycles, {num_aligned} aligned")
+
+                        # Emit progress with valid cycles info
+                        self._emit_progress(
+                            scenario=self.scenario.scenario_name,
+                            local_index=local_idx + 1,
+                            total_measurements=self.scenario.num_measurements,
+                            absolute_index=absolute_idx,
+                            successful_measurements=successful_measurements,
+                            failed_measurements=failed_measurements,
+                            valid_cycles=num_valid,
+                            total_cycles=num_total,
+                            aligned_cycles=num_aligned
+                        )
+
+                        # Check for zero valid cycles - auto-stop if detected
+                        if num_valid == 0:
+                            error_msg = f"⚠️ Zero valid cycles detected in measurement {local_idx + 1}. Stopping collection."
+                            print(f"\n{error_msg}")
+                            self._emit_error(error_msg, fatal=True)
+                            break
 
                         # Store calibration-specific quality metrics
                         q = {
