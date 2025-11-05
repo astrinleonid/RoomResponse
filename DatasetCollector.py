@@ -841,12 +841,12 @@ class SingleScenarioCollector:
                     cmd = self._drain_commands()
                     if cmd == "stop":
                         print("\n⏹️  Stop requested during wait period")
-                        self._emit_status(message="Collection stopped by user")
+                        self._emit_status("Collection stopped by user")
                         return
 
                     # Emit status update during wait
                     remaining = wait_duration - elapsed
-                    self._emit_status(message=f"Waiting {remaining:.1f}s until next measurement...")
+                    self._emit_status(f"Waiting {remaining:.1f}s until next measurement...")
 
                     # Sleep for a short interval
                     sleep_time = min(sleep_interval, wait_duration - elapsed)

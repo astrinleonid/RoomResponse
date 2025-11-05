@@ -22,10 +22,11 @@ except ImportError:
     SingleScenarioCollector = None  # type: ignore
 
 try:
-    from gui_series_worker import SeriesWorker, WorkerCommand
+    from gui_series_worker import SeriesWorker, WorkerCommand, WorkerEvent
 except Exception:
     SeriesWorker = None  # type: ignore
     WorkerCommand = None  # type: ignore
+    WorkerEvent = None  # type: ignore
 
 # near the imports (optional; type-only import so it won't create a hard dep)
 from typing import Optional
