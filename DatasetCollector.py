@@ -830,8 +830,28 @@ class SingleScenarioCollector:
                 failed_measurements += 1
 
             if local_idx < self.scenario.num_measurements - 1:
-                print(f"  Waiting {self.scenario.measurement_interval:.1f}s...")
-                time.sleep(self.scenario.measurement_interval)
+                wait_duration = self.scenario.measurement_interval
+                print(f"  Waiting {wait_duration:.1f}s...")
+
+                # Sleep in small intervals to allow UI refresh and check for pause/stop
+                elapsed = 0.0
+                sleep_interval = 0.5  # Update UI every 0.5 seconds
+                while elapsed < wait_duration:
+                    # Check for pause/stop commands
+                    cmd = self._drain_commands()
+                    if cmd == "stop":
+                        print("\n⏹️  Stop requested during wait period")
+                        self._emit_status(message="Collection stopped by user")
+                        return
+
+                    # Emit status update during wait
+                    remaining = wait_duration - elapsed
+                    self._emit_status(message=f"Waiting {remaining:.1f}s until next measurement...")
+
+                    # Sleep for a short interval
+                    sleep_time = min(sleep_interval, wait_duration - elapsed)
+                    time.sleep(sleep_time)
+                    elapsed += sleep_time
 
         print(f"\nScenario '{self.scenario.scenario_name}' run complete:")
         print(f"  Successful: {successful_measurements}")
