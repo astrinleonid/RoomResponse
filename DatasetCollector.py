@@ -789,7 +789,7 @@ class SingleScenarioCollector:
                     successful_measurements += 1
 
                     # Accumulate calibration cycle statistics if in calibration mode
-                    if self.recording_mode == 'calibration' and 'mode' in q and q['mode'] == 'calibration':
+                    if self.recording_mode == 'calibration' and 'valid_cycles' in q:
                         total_valid_cycles += q.get('valid_cycles', 0)
                         total_cycles += q.get('total_cycles', 0)
 
@@ -803,8 +803,8 @@ class SingleScenarioCollector:
                         'failed_measurements': failed_measurements
                     }
 
-                    # Add calibration stats if in calibration mode
-                    if self.recording_mode == 'calibration' and 'mode' in q and q['mode'] == 'calibration':
+                    # Add calibration stats if in calibration mode and quality metrics available
+                    if self.recording_mode == 'calibration' and 'valid_cycles' in q:
                         progress_data.update({
                             'valid_cycles': q.get('valid_cycles', 0),
                             'total_cycles': q.get('total_cycles', 0),
@@ -814,7 +814,7 @@ class SingleScenarioCollector:
                         })
                         print(f"  DEBUG: Emitting progress with calibration stats: {progress_data}")
                     else:
-                        print(f"  DEBUG: recording_mode={self.recording_mode}, q.get('mode')={q.get('mode')}")
+                        print(f"  DEBUG: recording_mode={self.recording_mode}, 'valid_cycles' in q={('valid_cycles' in q)}, q keys={list(q.keys()) if q else 'empty'}")
 
                     self._emit_progress(**progress_data)
                     print(f"  DEBUG: Progress emitted successfully")
