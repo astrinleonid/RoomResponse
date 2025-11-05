@@ -1148,7 +1148,7 @@ class RoomResponseRecorder:
             # Handle empty cycles case (no valid cycles after alignment)
             if cycles.shape[0] == 0:
                 # Create silent array with expected cycle length
-                cycle_length = int(self.config.cycle_duration * self.config.sample_rate)
+                cycle_length = int(self.cycle_duration * self.sample_rate)
                 averaged = np.zeros(cycle_length, dtype=np.float64)
                 print(f"    Channel {ch_idx}: No valid cycles, creating silent response ({cycle_length} samples)")
             else:
