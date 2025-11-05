@@ -788,6 +788,11 @@ class SingleScenarioCollector:
                     self.measurements.append(mm)
                     successful_measurements += 1
 
+                    # Accumulate calibration cycle statistics if in calibration mode
+                    if self.recording_mode == 'calibration' and 'mode' in q and q['mode'] == 'calibration':
+                        total_valid_cycles += q.get('valid_cycles', 0)
+                        total_cycles += q.get('total_cycles', 0)
+
                     # Emit final progress update after successful completion (with updated counts)
                     progress_data = {
                         'scenario': self.scenario.scenario_name,
