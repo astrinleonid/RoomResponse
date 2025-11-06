@@ -13,7 +13,7 @@ Provides:
 import os
 import numpy as np
 import streamlit as st
-from typing import Optional
+from typing import Optional, Dict
 
 # Optional: Audio visualizer
 try:
@@ -42,6 +42,23 @@ except ImportError:
     load_fir_filters = None
     get_fir_file_info = None
     FIR_FILTER_IO_AVAILABLE = False
+
+# Optional: Multi-channel filename utilities
+try:
+    from multichannel_filename_utils import group_files_by_channel, parse_multichannel_filename
+    MULTICHANNEL_UTILS_AVAILABLE = True
+except ImportError:
+    group_files_by_channel = None
+    parse_multichannel_filename = None
+    MULTICHANNEL_UTILS_AVAILABLE = False
+
+# Optional: Recorder for channel names
+try:
+    from RoomResponseRecorder import RoomResponseRecorder
+    RECORDER_AVAILABLE = True
+except ImportError:
+    RoomResponseRecorder = None
+    RECORDER_AVAILABLE = False
 
 # Session keys
 SK_SCN_SELECTIONS = "scenarios_selected_set"
@@ -346,17 +363,17 @@ class ScenariosPanel:
         room_dir = os.path.join(scenario_path, "room_responses")
 
         if os.path.exists(raw_dir):
-            raw_count = len([f for f in os.listdir(raw_dir) if f.endswith('.wav')])
+            raw_count = len([f for f in os.listdir(raw_dir) if f.endswith(('.wav', '.npy'))])
             if raw_count > 0:
                 info_parts.append(f"Raw: {raw_count}")
 
         if os.path.exists(impulse_dir):
-            impulse_count = len([f for f in os.listdir(impulse_dir) if f.endswith('.wav')])
+            impulse_count = len([f for f in os.listdir(impulse_dir) if f.endswith(('.wav', '.npy'))])
             if impulse_count > 0:
                 info_parts.append(f"Impulse: {impulse_count}")
 
         if os.path.exists(room_dir):
-            room_count = len([f for f in os.listdir(room_dir) if f.endswith('.wav')])
+            room_count = len([f for f in os.listdir(room_dir) if f.endswith(('.wav', '.npy'))])
             if room_count > 0:
                 info_parts.append(f"Room: {room_count}")
 
@@ -440,20 +457,76 @@ class ScenariosPanel:
 
         files_of_type = audio_files[audio_type]
 
-        # View mode tabs: Single File or Overlay
+        # Check if multi-channel
+        is_multichannel = self.scenario_manager.is_multichannel_scenario(exp_path)
+
+        # Enhanced debug info
+        num_channels = self.scenario_manager.detect_num_channels_in_scenario(exp_path)
+        st.info(f"Debug: is_multichannel={is_multichannel} | num_channels={num_channels} | Utils available: {MULTICHANNEL_UTILS_AVAILABLE} | Files: {len(files_of_type)}")
+
+        # Automatically generate averaged responses for multi-channel scenarios
+        averaged_files = {}
+        if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE and len(files_of_type) > 1:
+            # Check if averaged responses already exist
+            averaged_dir = os.path.join(exp_path, "averaged_responses")
+            needs_generation = True
+
+            if os.path.isdir(averaged_dir):
+                # Check if all expected average files exist
+                expected_files = [f"average_ch{i}.npy" for i in range(num_channels)]
+                existing_files = [f for f in os.listdir(averaged_dir) if f.startswith("average_ch") and f.endswith(".npy")]
+                if len(existing_files) >= num_channels:
+                    needs_generation = False
+                    # Load existing averaged files
+                    for i in range(num_channels):
+                        avg_path = os.path.join(averaged_dir, f"average_ch{i}.npy")
+                        if os.path.exists(avg_path):
+                            averaged_files[i] = avg_path
+
+            if needs_generation:
+                try:
+                    averaged_files = self.scenario_manager.average_impulse_responses_by_channel(
+                        exp_path,
+                        subfolder="impulse_responses",
+                        output_subfolder="averaged_responses"
+                    )
+                    if averaged_files:
+                        st.info(f"✓ Generated {len(averaged_files)} averaged responses from {len(files_of_type)} measurements")
+                except Exception as e:
+                    st.warning(f"Could not generate averaged responses: {e}")
+
+        # View mode tabs: Single File, Overlay All, or Channel Exploration
         if len(files_of_type) > 1:
-            view_mode = st.radio(
-                "View mode",
-                ["Single File", "Overlay All"],
-                horizontal=True,
-                help="Single File: View one file at a time. Overlay All: Compare all files overlaid."
-            )
+            if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE:
+                view_options = ["Single File", "Overlay All", "By Channel", "By Measurement"]
+                if averaged_files:
+                    view_options.append("Averaged")
+
+                view_mode = st.radio(
+                    "View mode",
+                    view_options,
+                    horizontal=True,
+                    help="Single File: View one file at a time. Overlay All: Compare all files. By Channel: Overlay measurements per channel. By Measurement: Compare channels per measurement. Averaged: View averaged response per channel."
+                )
+            else:
+                view_mode = st.radio(
+                    "View mode",
+                    ["Single File", "Overlay All"],
+                    horizontal=True,
+                    help="Single File: View one file at a time. Overlay All: Compare all files overlaid."
+                )
         else:
             view_mode = "Single File"
 
         # Render based on view mode
         if view_mode == "Overlay All":
             self._render_overlay_view(files_of_type, audio_type, exp_path)
+        elif view_mode == "By Channel":
+            self._render_by_channel_view(exp_path, os.path.basename(exp_path))
+        elif view_mode == "By Measurement":
+            self._render_by_measurement_view(exp_path, os.path.basename(exp_path))
+        elif view_mode == "Averaged":
+            self._render_averaged_view(averaged_files, exp_path, os.path.basename(exp_path))
         else:
             # Single file view
             col1, col2 = st.columns([3, 1])
@@ -484,7 +557,7 @@ class ScenariosPanel:
                 self._render_audio_file(selected_file)
 
     def _get_audio_files_by_type(self, scenario_path: str) -> dict:
-        """Get audio files grouped by type."""
+        """Get audio files grouped by type (supports both WAV and NumPy formats)."""
         files_by_type = {
             "impulse_responses": [],
             "impulse_responses_aligned": [],
@@ -496,12 +569,22 @@ class ScenariosPanel:
             type_dir = os.path.join(scenario_path, file_type)
             if os.path.exists(type_dir):
                 try:
-                    wav_files = [
+                    # Find both WAV and NumPy files
+                    audio_files = [
                         os.path.join(type_dir, f)
                         for f in os.listdir(type_dir)
-                        if f.lower().endswith('.wav')
+                        if f.lower().endswith(('.wav', '.npy'))
                     ]
-                    files_by_type[file_type] = sorted(wav_files)
+
+                    # Remove duplicates: if both .wav and .npy exist for same base name,
+                    # keep only one entry (the loader will prefer .npy automatically)
+                    unique_files = {}
+                    for filepath in audio_files:
+                        base_name = filepath.rsplit('.', 1)[0]  # Remove extension
+                        if base_name not in unique_files:
+                            unique_files[base_name] = filepath
+
+                    files_by_type[file_type] = sorted(unique_files.values())
                 except (OSError, PermissionError):
                     pass
 
@@ -554,17 +637,22 @@ class ScenariosPanel:
             )
             self._render_folder_structure(scenario_path)
 
-        # Load audio files
+        # Load audio files (supports both WAV and NumPy formats)
         with st.spinner(f"Loading {max_files} audio files..."):
             audio_signals = []
             labels = []
             sample_rate = None
+            format_counts = {"npy": 0, "wav": 0, "error": 0}
 
             for i, file_path in enumerate(file_paths[:max_files]):
                 try:
-                    audio_data, sr = AudioVisualizer.load_wav_file(file_path)
+                    # Try loading with new method that supports both WAV and NumPy
+                    audio_data, sr, format_type = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+
                     if audio_data is not None and len(audio_data) > 0:
                         audio_signals.append(audio_data)
+                        format_counts[format_type] += 1
+
                         # Extract file index from filename (e.g., "impulse_..._42_..." -> "42")
                         basename = os.path.basename(file_path)
                         # Try to find index number in filename
@@ -579,7 +667,10 @@ class ScenariosPanel:
                             sample_rate = sr
                         elif sample_rate != sr:
                             st.warning(f"Sample rate mismatch: {basename} has {sr} Hz (expected {sample_rate} Hz)")
+                    else:
+                        format_counts["error"] += 1
                 except Exception as e:
+                    format_counts["error"] += 1
                     st.warning(f"Failed to load {os.path.basename(file_path)}: {e}")
 
         # Show loading results
@@ -587,7 +678,17 @@ class ScenariosPanel:
             st.error("Failed to load any audio files")
             return
 
-        st.info(f"✓ Loaded {len(audio_signals)} of {len(file_paths)} files")
+        # Show format breakdown
+        format_info = []
+        if format_counts["npy"] > 0:
+            format_info.append(f"{format_counts['npy']} NumPy (full resolution)")
+        if format_counts["wav"] > 0:
+            format_info.append(f"{format_counts['wav']} WAV")
+        if format_counts["error"] > 0:
+            format_info.append(f"{format_counts['error']} errors")
+
+        format_summary = ", ".join(format_info) if format_info else "unknown format"
+        st.info(f"✓ Loaded {len(audio_signals)} of {len(file_paths)} files ({format_summary})")
 
         # Render overlay plot using AudioVisualizer
         try:
@@ -939,19 +1040,23 @@ class ScenariosPanel:
         # Use AudioVisualizer if available
         if VISUALIZER_AVAILABLE:
             try:
-                # Load audio data using AudioVisualizer utility
-                audio_data, sample_rate = AudioVisualizer.load_wav_file(file_path)
+                # Load audio data using AudioVisualizer utility (supports both WAV and NumPy)
+                audio_data, sample_rate, format_type = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
 
                 if audio_data is not None:
                     # Create unique ID for this visualizer
                     viz_id = f"explorer_{hash(file_path)}"
                     visualizer = AudioVisualizer(viz_id)
 
+                    # Add format indicator to title
+                    format_label = "NumPy (full resolution)" if format_type == "npy" else "WAV"
+                    title = f"Waveform: {os.path.basename(file_path)} [{format_label}]"
+
                     # Render with full features
                     visualizer.render(
                         audio_data=audio_data,
                         sample_rate=sample_rate,
-                        title=f"Waveform: {os.path.basename(file_path)}",
+                        title=title,
                         show_controls=True,
                         show_analysis=True,
                         height=350
@@ -1817,3 +1922,401 @@ class ScenariosPanel:
             if st.button("Cancel", use_container_width=True, key="fir_export_cancel"):
                 st.session_state[SK_SCN_FIR_EXPORT] = None
                 st.rerun()
+
+    # ========================================================================
+    # Channel Exploration and Visualization
+    # ========================================================================
+
+    def _render_by_channel_view(self, scenario_path: str, scenario_name: str) -> None:
+        """Render channel-wise view: select one channel, overlay multiple measurements."""
+        st.markdown("#### View measurements from the same channel")
+        st.caption("Select a channel and visualize multiple measurements overlaid")
+
+        # Get available channels
+        impulse_folder = os.path.join(scenario_path, "impulse_responses")
+        if not os.path.isdir(impulse_folder):
+            st.error("Impulse responses folder not found")
+            return
+
+        # Get all WAV files
+        wav_files = []
+        try:
+            for filename in os.listdir(impulse_folder):
+                if filename.lower().endswith(('.wav', '.npy')):
+                    wav_files.append(os.path.join(impulse_folder, filename))
+        except (OSError, PermissionError):
+            st.error("Cannot read impulse responses folder")
+            return
+
+        if not wav_files:
+            st.info("No audio files found")
+            return
+
+        # Group by channel
+        channel_groups = group_files_by_channel(wav_files)
+
+        if not channel_groups:
+            st.info("No multi-channel files found")
+            return
+
+        # Get channel info from recorder config (if available)
+        channel_names = self._load_channel_names_from_metadata(scenario_path)
+
+        # Channel selector
+        available_channels = sorted(channel_groups.keys())
+        channel_labels = [f"Ch {ch}: {channel_names.get(ch, f'Channel {ch}')}" for ch in available_channels]
+
+        selected_channel_idx = st.selectbox(
+            "Select Channel:",
+            range(len(available_channels)),
+            format_func=lambda i: channel_labels[i],
+            key="explore_selected_channel"
+        )
+
+        selected_channel = available_channels[selected_channel_idx]
+        channel_files = channel_groups[selected_channel]
+
+        st.info(f"Found {len(channel_files)} measurements for channel {selected_channel}")
+
+        # Measurement selection
+        st.markdown("**Select Measurements to Overlay:**")
+
+        # Parse measurement indices
+        measurement_info = []
+        for file_path in channel_files:
+            parsed = parse_multichannel_filename(file_path)
+            if parsed:
+                measurement_info.append({
+                    'index': parsed.index,
+                    'file': file_path,
+                    'timestamp': parsed.timestamp
+                })
+
+        measurement_info.sort(key=lambda x: x['index'])
+
+        if not measurement_info:
+            st.error("No valid measurements found")
+            return
+
+        # Multi-select for measurements
+        all_indices = [m['index'] for m in measurement_info]
+        selected_indices = st.multiselect(
+            "Choose measurements to overlay:",
+            all_indices,
+            default=all_indices[:min(5, len(all_indices))],  # Default to first 5
+            format_func=lambda idx: f"Measurement {idx:03d}",
+            key=f"explore_measurements_ch{selected_channel}"
+        )
+
+        if not selected_indices:
+            st.warning("Select at least one measurement")
+            return
+
+        # Session state key for loaded data (include scenario name to prevent mixing data)
+        loaded_key = f"loaded_{scenario_name}_ch{selected_channel}_{len(selected_indices)}"
+
+        # Auto-load if selections changed
+        if st.button("Load and Visualize", key=f"load_viz_{scenario_name}_ch{selected_channel}") or loaded_key not in st.session_state:
+            with st.spinner("Loading audio files..."):
+                audio_signals = []
+                labels = []
+                sample_rate = 48000  # Default
+
+                for meas_idx in selected_indices:
+                    # Find the file for this measurement
+                    meas_file = next((m['file'] for m in measurement_info if m['index'] == meas_idx), None)
+                    if meas_file:
+                        # Load audio file (supports both .wav and .npy)
+                        audio_data, sr, fmt = AudioVisualizer.load_audio_file(meas_file, default_sample_rate=48000)
+                        if audio_data is not None:
+                            audio_signals.append(audio_data)
+                            labels.append(f"Meas {meas_idx:03d}")
+                            sample_rate = sr
+
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'channel': selected_channel,
+                        'scenario_name': scenario_name,
+                        'channel_name': channel_names.get(selected_channel, f'Channel {selected_channel}')
+                    }
+                else:
+                    st.error("Failed to load any audio files")
+                    return
+
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} measurements")
+
+            # Visualization options
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=True,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_ch{selected_channel}"
+            )
+
+            # Render overlay
+            st.markdown(f"### Channel {data['channel']}: {data['channel_name']}")
+
+            AudioVisualizer.render_multi_waveform_with_zoom(
+                audio_signals=data['signals'],
+                sample_rate=data['sample_rate'],
+                labels=data['labels'],
+                title=f"Overlay: Ch{data['channel']} - {data['scenario_name']}",
+                component_id=f"overlay_ch{data['channel']}",
+                normalize=normalize
+            )
+
+    def _render_by_measurement_view(self, scenario_path: str, scenario_name: str) -> None:
+        """Render measurement-wise view: select one measurement, compare multiple channels side-by-side."""
+        st.markdown("#### Compare channels within a single measurement")
+        st.caption("Select a measurement and visualize multiple channels side-by-side")
+
+        # Get measurements
+        measurements_dict = self.scenario_manager.list_wavs_multichannel(scenario_path)
+
+        if not measurements_dict:
+            st.info("No measurements found")
+            return
+
+        # Measurement selector
+        available_measurements = sorted(measurements_dict.keys())
+        selected_measurement = st.selectbox(
+            "Select Measurement:",
+            available_measurements,
+            format_func=lambda idx: f"Measurement {idx:03d}",
+            key="explore_selected_measurement"
+        )
+
+        measurement_files = measurements_dict[selected_measurement]
+
+        # Parse channel information
+        channel_file_map = {}
+        for file_path in measurement_files:
+            parsed = parse_multichannel_filename(file_path)
+            if parsed and parsed.is_multichannel:
+                channel_file_map[parsed.channel] = file_path
+
+        if not channel_file_map:
+            st.info("No channel files found for this measurement")
+            return
+
+        # Get channel info from metadata
+        channel_names = self._load_channel_names_from_metadata(scenario_path)
+
+        st.info(f"Found {len(channel_file_map)} channels in measurement {selected_measurement:03d}")
+
+        # Channel multi-select
+        all_channels = sorted(channel_file_map.keys())
+        channel_labels_dict = {ch: f"Ch {ch}: {channel_names.get(ch, f'Channel {ch}')}" for ch in all_channels}
+
+        selected_channels = st.multiselect(
+            "Choose channels to compare:",
+            all_channels,
+            default=all_channels[:min(4, len(all_channels))],  # Default to first 4
+            format_func=lambda ch: channel_labels_dict[ch],
+            key=f"explore_channels_meas{selected_measurement}"
+        )
+
+        if not selected_channels:
+            st.warning("Select at least one channel")
+            return
+
+        # Layout mode
+        layout_mode = st.radio(
+            "Display Layout:",
+            ["Overlaid (Single Plot)", "Stacked (Separate Plots)"],
+            index=0,
+            horizontal=True,
+            key=f"layout_mode_meas{selected_measurement}"
+        )
+
+        # Session state key for loaded data (include scenario name to prevent mixing data)
+        loaded_key = f"loaded_{scenario_name}_meas{selected_measurement}_{len(selected_channels)}_{layout_mode}"
+
+        # Load and display
+        if st.button("Load and Visualize", key=f"load_viz_{scenario_name}_meas{selected_measurement}") or loaded_key not in st.session_state:
+            with st.spinner("Loading audio files..."):
+                audio_signals = []
+                labels = []
+                sample_rate = 48000  # Default
+
+                for ch_idx in selected_channels:
+                    file_path = channel_file_map[ch_idx]
+                    # Load audio file
+                    audio_data, sr, fmt = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+                    if audio_data is not None:
+                        audio_signals.append(audio_data)
+                        labels.append(channel_labels_dict[ch_idx])
+                        sample_rate = sr
+
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'measurement': selected_measurement,
+                        'channels': selected_channels,
+                        'layout': layout_mode
+                    }
+                else:
+                    st.error("Failed to load any audio files")
+                    return
+
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} channels")
+
+            # Visualization options
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=False,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_meas{selected_measurement}"
+            )
+
+            # Render comparison
+            st.markdown(f"### Measurement {data['measurement']:03d} - Channel Comparison")
+
+            if data['layout'] == "Overlaid (Single Plot)":
+                # Single overlaid plot
+                AudioVisualizer.render_multi_waveform_with_zoom(
+                    audio_signals=data['signals'],
+                    sample_rate=data['sample_rate'],
+                    labels=data['labels'],
+                    title=f"Meas {data['measurement']:03d} - Channels Overlaid",
+                    component_id=f"compare_meas{data['measurement']}_overlay",
+                    normalize=normalize
+                )
+            else:
+                # Stacked plots (one per channel)
+                st.markdown("**Stacked Channel View:**")
+                for i, (audio_data, label) in enumerate(zip(data['signals'], data['labels'])):
+                    with st.expander(f"📊 {label}", expanded=(i == 0)):
+                        AudioVisualizer.render_multi_waveform_with_zoom(
+                            audio_signals=[audio_data],
+                            sample_rate=data['sample_rate'],
+                            labels=[label],
+                            title=label,
+                            component_id=f"compare_meas{data['measurement']}_ch{data['channels'][i]}",
+                            normalize=normalize,
+                            height=300
+                        )
+
+    def _render_averaged_view(self, averaged_files: Dict[int, str], scenario_path: str, scenario_name: str) -> None:
+        """Render view of averaged impulse responses per channel."""
+        st.markdown("#### Averaged Impulse Responses")
+        st.caption("View averaged responses across all measurements for each channel")
+
+        if not averaged_files:
+            st.warning("No averaged responses available")
+            return
+
+        # Load channel names
+        channel_names = self._load_channel_names_from_metadata(scenario_path)
+
+        # Layout mode selector
+        layout_mode = st.radio(
+            "Layout",
+            ["Overlaid (Single Plot)", "Stacked (Separate Plots)"],
+            index=1,
+            horizontal=True,
+            key=f"layout_averaged_{scenario_name}"
+        )
+
+        # Session state key for loaded data
+        loaded_key = f"loaded_averaged_{scenario_name}_{len(averaged_files)}_{layout_mode}"
+
+        # Auto-load averaged responses
+        if loaded_key not in st.session_state:
+            with st.spinner("Loading averaged responses..."):
+                audio_signals = []
+                labels = []
+                sample_rate = 48000  # Default
+
+                for ch_idx in sorted(averaged_files.keys()):
+                    file_path = averaged_files[ch_idx]
+                    audio_data, sr, fmt = AudioVisualizer.load_audio_file(file_path, default_sample_rate=48000)
+                    if audio_data is not None:
+                        audio_signals.append(audio_data)
+                        ch_name = channel_names.get(ch_idx, f'Channel {ch_idx}')
+                        labels.append(f"Ch {ch_idx}: {ch_name}")
+                        sample_rate = sr
+
+                if audio_signals:
+                    st.session_state[loaded_key] = {
+                        'signals': audio_signals,
+                        'labels': labels,
+                        'sample_rate': sample_rate,
+                        'channel_indices': sorted(averaged_files.keys()),
+                        'layout': layout_mode
+                    }
+
+        # Display if data is loaded
+        if loaded_key in st.session_state:
+            data = st.session_state[loaded_key]
+            st.success(f"Loaded {len(data['signals'])} averaged channel responses")
+
+            # Normalization option
+            normalize = st.checkbox(
+                "Normalize signals",
+                value=True,
+                help="Normalize each signal to max amplitude of 1",
+                key=f"normalize_averaged_{scenario_name}"
+            )
+
+            if layout_mode == "Overlaid (Single Plot)":
+                # Overlay all averaged channels
+                st.markdown(f"### All Channels Overlaid - {scenario_name}")
+
+                AudioVisualizer.render_multi_waveform_with_zoom(
+                    audio_signals=data['signals'],
+                    sample_rate=data['sample_rate'],
+                    labels=data['labels'],
+                    title=f"Averaged Responses: {scenario_name}",
+                    component_id=f"averaged_overlay_{scenario_name}",
+                    normalize=normalize
+                )
+            else:
+                # Stacked view - separate plot per channel
+                st.markdown(f"### Channels Stacked - {scenario_name}")
+
+                for i, (audio_data, label) in enumerate(zip(data['signals'], data['labels'])):
+                    with st.expander(f"📊 {label}", expanded=(i == 0)):
+                        AudioVisualizer.render_multi_waveform_with_zoom(
+                            audio_signals=[audio_data],
+                            sample_rate=data['sample_rate'],
+                            labels=[label],
+                            title=label,
+                            component_id=f"averaged_ch{data['channel_indices'][i]}_{scenario_name}",
+                            normalize=normalize,
+                            height=300
+                        )
+
+    def _load_channel_names_from_metadata(self, scenario_path: str) -> dict:
+        """Load channel names from scenario metadata."""
+        channel_names = {}
+        metadata_path = os.path.join(scenario_path, "metadata", "session_metadata.json")
+
+        if os.path.exists(metadata_path):
+            try:
+                import json
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+
+                # Try to get channel names from recorder config in metadata
+                recorder_config = metadata.get('recorder_config', {})
+                mc_config = recorder_config.get('multichannel_config', {})
+
+                if 'channel_names' in mc_config:
+                    for i, name in enumerate(mc_config['channel_names']):
+                        channel_names[i] = name
+            except Exception:
+                pass
+
+        return channel_names

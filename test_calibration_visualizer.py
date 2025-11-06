@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     from RoomResponseRecorder import RoomResponseRecorder
-    from calibration_validator import CalibrationValidator
+    from calibration_validator_v2 import CalibrationValidatorV2, QualityThresholds
 except ImportError as e:
     print(f"ERROR: Failed to import required modules: {e}")
     sys.exit(1)
@@ -116,20 +116,23 @@ def test_calibration_data_extraction():
     # Step 2: Validate each cycle
     print("\nStep 2: Validating calibration cycles...")
 
+    # V2 format: simple min/max ranges for negative peak, positive peak, aftershock
     calibration_quality_config = {
-        'cal_min_amplitude': 0.1,
-        'cal_max_amplitude': 0.95,
-        'cal_min_duration_ms': 2.0,
-        'cal_max_duration_ms': 20.0,
-        'cal_duration_threshold': 0.3,
-        'cal_double_hit_window_ms': [10, 50],
-        'cal_double_hit_threshold': 0.3,
-        'cal_tail_start_ms': 30.0,
-        'cal_tail_max_rms_ratio': 0.15,
-        'min_valid_cycles': 3
+        'min_negative_peak': 0.1,
+        'max_negative_peak': 0.95,
+        'max_precursor_ratio': 0.2,
+        'min_negative_peak_width_ms': 0.3,
+        'max_negative_peak_width_ms': 3.0,
+        'max_first_positive_ratio': 0.3,
+        'min_first_positive_time_ms': 0.1,
+        'max_first_positive_time_ms': 5.0,
+        'max_highest_positive_ratio': 0.5,
+        'max_secondary_negative_ratio': 0.3,
+        'secondary_negative_window_ms': 10.0
     }
 
-    validator = CalibrationValidator(calibration_quality_config, sample_rate)
+    thresholds = QualityThresholds.from_config(calibration_quality_config)
+    validator = CalibrationValidatorV2(thresholds, sample_rate)
 
     validation_results = []
     valid_count = 0

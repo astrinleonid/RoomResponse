@@ -48,6 +48,11 @@ try:
 except ImportError:
     PredictionPanel = None
 
+try:
+    from gui_config_profiles import ConfigProfileManager
+except ImportError:
+    ConfigProfileManager = None
+
 # ---------------------------- Session Keys ----------------------------
 SK_DATASET_ROOT = "dataset_root"                  # full absolute path
 SK_DEFAULT_DATASET_ROOT = "room_response_dataset"
@@ -79,6 +84,7 @@ class RoomResponseGUI:
         self.classification_panel = None
         self.visualization_panel = None
         self.prediction_panel = None
+        self.config_profile_manager = None
         self._initialize_components()
 
     # ---------------------------- Setup ----------------------------
@@ -95,11 +101,15 @@ class RoomResponseGUI:
             self.visualization_panel = VisualizationPanel(self.scenario_manager)
         if PredictionPanel and self.scenario_manager:
             self.prediction_panel = PredictionPanel(self.scenario_manager)
+        if ConfigProfileManager is not None:
+            self.config_profile_manager = ConfigProfileManager()
 
     def run(self):
         st.set_page_config(page_title="Room Response GUI", layout="wide")
         self._ensure_initial_state()
         self._ensure_dataset_root_ui()
+        if self.config_profile_manager is not None:
+            self.config_profile_manager.render_sidebar_ui()
         panel = self._render_sidebar_navigation()
         self._render_panel(panel)
 
@@ -145,7 +155,6 @@ class RoomResponseGUI:
         st.sidebar.text_input(
             "Dataset folder (name or path)",
             key=SK_DATASET_NAME,
-            value=st.session_state[SK_DATASET_NAME],
             help=f"{folder_hint}. A bare name will be treated as a subfolder of the working directory.",
         )
 

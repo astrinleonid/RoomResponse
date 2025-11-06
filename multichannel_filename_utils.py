@@ -50,22 +50,42 @@ def parse_multichannel_filename(filename: str) -> Optional[MultiChannelFilename]
     # Get just the filename if full path provided
     filename_only = Path(filename).name
 
-    # Multi-channel pattern: {type}_{index}_{timestamp}_ch{N}.wav
-    mc_pattern = r'^(\w+)_(\d+)_(\d{8}_\d{6})_ch(\d+)\.wav$'
+    # Multi-channel pattern: matches _ch{N} before extension
+    # Flexible pattern to handle various naming schemes
+    mc_pattern = r'_ch(\d+)\.(wav|npy)$'
     mc_match = re.search(mc_pattern, filename_only, re.IGNORECASE)
 
     if mc_match:
+        # Extract channel number
+        channel = int(mc_match.group(1))
+
+        # Try to extract index from filename (looking for _NNN_ pattern)
+        index_pattern = r'_(\d{3})_'
+        index_match = re.search(index_pattern, filename_only)
+        index = int(index_match.group(1)) if index_match else 0
+
+        # Try to extract timestamp
+        timestamp_pattern = r'_(\d{8}_\d{6})'
+        timestamp_match = re.search(timestamp_pattern, filename_only)
+        timestamp = timestamp_match.group(1) if timestamp_match else ""
+
+        # Extract file type (first word before underscore)
+        type_pattern = r'^(\w+)_'
+        type_match = re.search(type_pattern, filename_only)
+        file_type = type_match.group(1) if type_match else "unknown"
+
         return MultiChannelFilename(
-            file_type=mc_match.group(1),
-            index=int(mc_match.group(2)),
-            timestamp=mc_match.group(3),
-            channel=int(mc_match.group(4)),
+            file_type=file_type,
+            index=index,
+            timestamp=timestamp,
+            channel=channel,
             is_multichannel=True,
             full_path=filename
         )
 
-    # Single-channel pattern: {type}_{index}_{timestamp}.wav
-    sc_pattern = r'^(\w+)_(\d+)_(\d{8}_\d{6})\.wav$'
+    # Single-channel pattern: no _ch{N} suffix
+    # Try old format first: {type}_{index}_{timestamp}.wav/.npy
+    sc_pattern = r'^(\w+)_(\d+)_(\d{8}_\d{6})\.(wav|npy)$'
     sc_match = re.search(sc_pattern, filename_only, re.IGNORECASE)
 
     if sc_match:

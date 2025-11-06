@@ -27,7 +27,7 @@ except Exception:
     SeriesWorker = None  # type: ignore
     WorkerCommand = None  # type: ignore
 
-# near the imports (optional; type-only import so it won’t create a hard dep)
+# near the imports (optional; type-only import so it won't create a hard dep)
 from typing import Optional
 try:
     from RoomResponseRecorder import RoomResponseRecorder  # type: ignore
@@ -53,8 +53,90 @@ class CollectionPanel:
         else:
             print("Warning: CollectionPanel initialized without recorder")
 
+    def _render_recorder_status(self) -> None:
+        """Display recorder configuration status, including multi-channel setup."""
+        if self.recorder is None:
+            return
+
+        mc_config = getattr(self.recorder, 'multichannel_config', {})
+        mc_enabled = mc_config.get('enabled', False)
+
+        # Create expandable status section
+        with st.expander("📊 Recorder Configuration", expanded=False):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Recording Mode**")
+                if mc_enabled:
+                    num_channels = mc_config.get('num_channels', 1)
+                    st.success(f"✓ Multi-Channel ({num_channels} channels)")
+
+                    # Show channel configuration
+                    cal_ch = mc_config.get('calibration_channel')
+                    ref_ch = mc_config.get('reference_channel', 0)
+
+                    if cal_ch is not None:
+                        st.write(f"🔨 Calibration: Ch {cal_ch}")
+                    else:
+                        st.write("🔨 Calibration: None")
+
+                    st.write(f"🎤 Reference: Ch {ref_ch}")
+
+                else:
+                    st.info("Single-Channel Mode")
+
+            with col2:
+                st.markdown("**Recording Parameters**")
+                st.write(f"Sample Rate: {getattr(self.recorder, 'sample_rate', 'N/A')} Hz")
+                st.write(f"Pulses: {getattr(self.recorder, 'num_pulses', 'N/A')}")
+                st.write(f"Cycle Duration: {getattr(self.recorder, 'cycle_duration', 'N/A')} s")
+
+            # Show detailed channel info if multi-channel enabled
+            if mc_enabled:
+                st.markdown("---")
+                st.markdown("**Channel Configuration**")
+
+                channel_names = mc_config.get('channel_names', [])
+                response_channels = mc_config.get('response_channels', [])
+
+                # Create a table of channels
+                channel_info = []
+                for ch in range(num_channels):
+                    name = channel_names[ch] if ch < len(channel_names) else f"Channel {ch}"
+
+                    # Determine role
+                    roles = []
+                    if ch == cal_ch:
+                        roles.append("Calibration")
+                    if ch == ref_ch:
+                        roles.append("Reference")
+                    if ch in response_channels:
+                        roles.append("Response")
+
+                    role_str = ", ".join(roles) if roles else "—"
+
+                    # Icon based on primary role
+                    if ch == cal_ch:
+                        icon = "🔨"
+                    elif ch == ref_ch:
+                        icon = "🎤"
+                    else:
+                        icon = "🔊"
+
+                    channel_info.append(f"{icon} Ch {ch}: **{name}** ({role_str})")
+
+                for info in channel_info:
+                    st.write(info)
+
+                # Link to configuration
+                st.caption("💡 Configure channels in Audio Settings → Device Selection & Testing → Multi-Channel Configuration")
+
     def render(self) -> None:
         st.header("Collect - Data Collection")
+
+        # Display recorder status including multi-channel configuration
+        self._render_recorder_status()
+
         if not self._check_dependencies():
             return
 
@@ -121,8 +203,8 @@ class CollectionPanel:
         return uniq
 
     def _load_defaults_from_config(self, cfg_path: str) -> dict:
-        """Load computer and room name defaults from recorder config file."""
-        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room"}
+        """Load computer, room name, and num_measurements defaults from recorder config file."""
+        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room", "num_measurements": 0}
         try:
             with open(cfg_path, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
@@ -132,6 +214,21 @@ class CollectionPanel:
             return defaults
         except Exception:
             return defaults
+
+    def _save_config_values(self, cfg_path: str, computer: str, room: str, num_measurements: int) -> None:
+        """Save computer, room, and num_measurements back to config file."""
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            config['computer'] = computer
+            config['room'] = room
+            config['num_measurements'] = num_measurements
+
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            st.warning(f"Could not save config: {e}")
 
     def _load_configuration(self, root: str) -> Dict[str, Any]:
         cfg_path = os.path.join(root, "recorderConfig.json")
@@ -169,11 +266,61 @@ class CollectionPanel:
 
     def _render_common_configuration(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
         st.markdown("### Common Configuration")
+
+        # Recording mode selection
+        st.markdown("**Recording Mode**")
+        mc_config = self.recorder.multichannel_config if self.recorder else {}
+        mc_enabled = mc_config.get('enabled', False)
+        cal_channel = mc_config.get('calibration_channel')
+
+        recording_mode = st.radio(
+            "Select recording mode:",
+            options=["Standard", "Calibration"],
+            index=1,  # Default to Calibration mode
+            help="Standard: Simple averaged response. Calibration: Advanced per-cycle alignment with quality filtering.",
+            horizontal=True
+        )
+
+        # Show warning if calibration selected without proper setup
+        if recording_mode == "Calibration":
+            if not mc_enabled:
+                st.error("⚠️ Calibration mode requires multi-channel recording to be enabled.")
+                st.info("Go to Audio Settings → Device Selection & Testing → Enable multi-channel recording")
+            elif cal_channel is None:
+                st.error("⚠️ Calibration mode requires a calibration channel to be configured.")
+                st.info("Go to Audio Settings → Device Selection & Testing → Multi-Channel Configuration → Set calibration channel")
+            else:
+                st.success(f"✓ Calibration mode ready (Calibration channel: Ch {cal_channel})")
+
+        st.markdown("---")
+
         c1, c2 = st.columns([1, 1])
         with c1:
-            computer_name = st.text_input("Computer name", value=config_data["defaults"].get("computer", "Unknown_Computer"))
-            room_name = st.text_input("Room name", value=config_data["defaults"].get("room", "Unknown_Room"))
-            num_measurements = st.number_input("Number of measurements", 1, 1000, 30, 1)
+            # Use callbacks to save config on change
+            computer_name = st.text_input(
+                "Computer name",
+                value=config_data["defaults"].get("computer", "Unknown_Computer"),
+                key="computer_name_input"
+            )
+            room_name = st.text_input(
+                "Room name",
+                value=config_data["defaults"].get("room", "Unknown_Room"),
+                key="room_name_input"
+            )
+            num_measurements = st.number_input(
+                "Number of measurements",
+                min_value=0,
+                max_value=1000,
+                value=config_data["defaults"].get("num_measurements", 0),
+                step=1,
+                key="num_measurements_input"
+            )
+
+            # Save to config if any values changed
+            if (computer_name != config_data["defaults"].get("computer") or
+                room_name != config_data["defaults"].get("room") or
+                num_measurements != config_data["defaults"].get("num_measurements")):
+                self._save_config_values(config_data["config_file"], computer_name, room_name, num_measurements)
         with c2:
             measurement_interval = st.number_input("Measurement interval (seconds)", 0.1, 60.0, 2.0, 0.1)
             interactive_devices = st.checkbox(
@@ -206,6 +353,9 @@ class CollectionPanel:
                 st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = st.session_state.get(SK_DATASET_ROOT, os.getcwd()); st.rerun()
         st.session_state[SK_COLLECTION_OUTPUT_OVERRIDE] = resolved
 
+        # Convert recording mode to lowercase for API compatibility
+        mode_param = recording_mode.lower()  # "Standard" -> "standard", "Calibration" -> "calibration"
+
         return {
             "computer_name": computer_name,
             "room_name": room_name,
@@ -214,6 +364,7 @@ class CollectionPanel:
             "interactive_devices": bool(interactive_devices),
             "config_file": config_file,
             "output_dir": resolved,
+            "recording_mode": mode_param,
         }
 
     def _render_single_scenario_mode(self, common_cfg: Dict[str, Any]) -> None:
@@ -314,6 +465,7 @@ class CollectionPanel:
                     beep_dur_ms=int(beep_dur),
                     record_timeout_s=float(max_record_time),
                     interval_mode=interval_mode,
+                    recording_mode=common_cfg["recording_mode"],
                 )
                 st.session_state[SK_SERIES_EVT_Q] = evt_q
                 st.session_state[SK_SERIES_CMD_Q] = cmd_q
@@ -425,7 +577,8 @@ class SingleScenarioExecutor:
                 recorder_config=common_config["config_file"],
                 scenario_config=params,
                 merge_mode="append", allow_config_mismatch=False, resume=True,
-                recorder=self.recorder
+                recorder=self.recorder,
+                recording_mode=common_config["recording_mode"]
             )
             st.info("🎵 Collection started (blocking). Monitor the console for progress.")
             collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)

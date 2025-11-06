@@ -44,6 +44,11 @@ try:
 except ImportError:
     ScenariosPanel = None
 
+try:
+    from gui_config_profiles import ConfigProfileManager
+except ImportError:
+    ConfigProfileManager = None
+
 # ---------------------------- Session Keys ----------------------------
 SK_DATASET_ROOT = "dataset_root"
 SK_DEFAULT_DATASET_ROOT = "piano"
@@ -66,6 +71,7 @@ class AudioCollectionGUI:
         self.audio_panel = None
         self.audio_settings_panel = None
         self.recorder = None
+        self.config_profile_manager = None
         self._initialize_components()
 
     def _initialize_components(self):
@@ -88,6 +94,8 @@ class AudioCollectionGUI:
             self.audio_panel = AudioAnalysisPanel(self.scenario_manager)
         if AudioSettingsPanel:
             self.audio_settings_panel = AudioSettingsPanel(self.scenario_manager, recorder=self.recorder)
+        if ConfigProfileManager is not None:
+            self.config_profile_manager = ConfigProfileManager(recorder=self.recorder)
 
     def run(self):
         """Main application entry point."""
@@ -98,6 +106,8 @@ class AudioCollectionGUI:
         )
         self._ensure_initial_state()
         self._ensure_dataset_root_ui()
+        if self.config_profile_manager is not None:
+            self.config_profile_manager.render_sidebar_ui()
         panel = self._render_sidebar_navigation()
         self._render_panel(panel)
 
@@ -136,7 +146,6 @@ class AudioCollectionGUI:
         st.sidebar.text_input(
             "Folder",
             key=SK_DATASET_NAME,
-            value=st.session_state[SK_DATASET_NAME],
             help="Folder name or full path"
         )
 
