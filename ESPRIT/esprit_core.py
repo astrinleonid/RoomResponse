@@ -128,19 +128,26 @@ def esprit_poles(hankel_matrix: np.ndarray, model_order: int, dt: float,
         else:
             raise
 
-    # Extract signal subspace (first M singular vectors)
-    E = U[:, :model_order]
+    # Automatic subspace order selection based on energy (99% threshold)
+    # This prevents overfitting to noise when model_order is too high
+    energy = xp.cumsum(s**2) / xp.sum(s**2)
+    M_auto = int(xp.searchsorted(energy, 0.99))
+    M_use = min(model_order, max(4, M_auto))  # At least 4, at most model_order
+
+    # Extract signal subspace (first M_use singular vectors)
+    E = U[:, :M_use]
 
     # Split into E1 (rows 0 to L-2) and E2 (rows 1 to L-1)
     E1 = E[:-1, :]
     E2 = E[1:, :]
 
     # Solve for Phi: E2 = E1 * Phi
-    # Use pseudoinverse: Phi = pinv(E1) @ E2
-    Phi = xp.linalg.pinv(E1) @ E2
+    # Use least-squares instead of pseudoinverse for numerical stability
+    # lstsq is more stable than pinv and avoids noise amplification
+    X, *_ = xp.linalg.lstsq(E1, E2, rcond=None)
 
     # Eigenvalues of Phi give the discrete-time poles
-    lam = xp.linalg.eigvals(Phi)
+    lam = xp.linalg.eigvals(X)
 
     # Convert to continuous-time poles: s = ln(λ) / dt
     poles = xp.log(lam) / dt
@@ -248,6 +255,76 @@ def normalize_mode_shapes(mode_shapes: np.ndarray, ref_sensor: int = 0) -> np.nd
     return normalized
 
 
+def cluster_poles(poles_list: list, frequencies_list: list, damping_list: list,
+                  freq_tol_hz: float = 5.0, damping_tol: float = 0.02) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Cluster poles from multiple (M, L) combinations to find stable modes.
+
+    Poles that appear consistently across different model orders and window lengths
+    are likely physical modes, while spurious poles will not cluster.
+
+    Args:
+        poles_list: List of pole arrays from different (M, L) combinations
+        frequencies_list: List of frequency arrays
+        damping_list: List of damping ratio arrays
+        freq_tol_hz: Frequency tolerance for clustering (Hz)
+        damping_tol: Damping ratio tolerance for clustering
+
+    Returns:
+        clustered_poles: Poles that appear in ≥2 combinations
+        clustered_frequencies: Corresponding frequencies
+        clustered_damping: Corresponding damping ratios
+    """
+    if len(poles_list) == 0:
+        return np.array([]), np.array([]), np.array([])
+
+    # Flatten all poles
+    all_poles = []
+    all_freqs = []
+    all_damps = []
+    for poles, freqs, damps in zip(poles_list, frequencies_list, damping_list):
+        all_poles.extend(poles)
+        all_freqs.extend(freqs)
+        all_damps.extend(damps)
+
+    if len(all_poles) == 0:
+        return np.array([]), np.array([]), np.array([])
+
+    all_poles = np.array(all_poles)
+    all_freqs = np.array(all_freqs)
+    all_damps = np.array(all_damps)
+
+    # Cluster by frequency and damping
+    n_poles = len(all_poles)
+    clustered = np.zeros(n_poles, dtype=bool)
+    cluster_poles_out = []
+    cluster_freqs_out = []
+    cluster_damps_out = []
+
+    for i in range(n_poles):
+        if clustered[i]:
+            continue
+
+        # Find nearby poles
+        freq_match = np.abs(all_freqs - all_freqs[i]) < freq_tol_hz
+        damp_match = np.abs(all_damps - all_damps[i]) < damping_tol
+        cluster_mask = freq_match & damp_match
+
+        n_cluster = np.sum(cluster_mask)
+
+        # Keep clusters with ≥2 members (stable across combinations)
+        if n_cluster >= 2:
+            # Take centroid of cluster
+            cluster_poles_out.append(np.mean(all_poles[cluster_mask]))
+            cluster_freqs_out.append(np.mean(all_freqs[cluster_mask]))
+            cluster_damps_out.append(np.mean(all_damps[cluster_mask]))
+            clustered[cluster_mask] = True
+
+    return (np.array(cluster_poles_out),
+            np.array(cluster_freqs_out),
+            np.array(cluster_damps_out))
+
+
 def filter_poles(poles: np.ndarray, frequencies: np.ndarray, damping_ratios: np.ndarray,
                  max_damping: float = 0.2, min_freq: float = 0.0, max_freq: float = np.inf) -> np.ndarray:
     """
@@ -282,7 +359,8 @@ def esprit_modal_identification(signals: np.ndarray, fs: float,
                                  use_gpu: bool = False,
                                  max_damping: float = 0.2,
                                  freq_range: Tuple[float, float] = (0, np.inf),
-                                 ref_sensor: int = 0) -> ModalParameters:
+                                 ref_sensor: int = 0,
+                                 use_stabilization: bool = False) -> ModalParameters:
     """
     Complete ESPRIT modal identification from multi-channel decay signals.
 
@@ -295,6 +373,7 @@ def esprit_modal_identification(signals: np.ndarray, fs: float,
         max_damping: Maximum acceptable damping ratio for filtering
         freq_range: (min_freq, max_freq) in Hz for pole filtering
         ref_sensor: Reference sensor for mode shape normalization
+        use_stabilization: Enable automatic (M, L) grid stabilization (default: False)
 
     Returns:
         ModalParameters object containing poles, frequencies, damping, and shapes
@@ -306,30 +385,78 @@ def esprit_modal_identification(signals: np.ndarray, fs: float,
     if window_length is None:
         window_length = T // 2
 
-    # Build Hankel matrix (using single channel for pole extraction)
-    H = build_hankel_matrix(signals[:, 0], window_length)
+    # Stabilization grid: try multiple (M, L) combinations
+    if use_stabilization:
+        # Define grid (small for efficiency)
+        L_candidates = [L for L in [1024, 1536, 2000, window_length] if L < T]
+        M_candidates = [20, 30, 40, model_order]
 
-    # Extract poles using ESPRIT
-    poles_all, singular_values = esprit_poles(H, model_order, dt, use_gpu=use_gpu)
+        poles_list = []
+        freqs_list = []
+        damps_list = []
 
-    # Convert to frequencies and damping
-    frequencies, damping_ratios = poles_to_modal_params(poles_all, fs)
+        for L in L_candidates:
+            for M in M_candidates:
+                try:
+                    H = build_hankel_matrix(signals[:, 0], L)
+                    poles_trial, _ = esprit_poles(H, M, dt, use_gpu=use_gpu)
+                    freqs_trial, damps_trial = poles_to_modal_params(poles_trial, fs)
 
-    # Filter poles
-    mask = filter_poles(poles_all, frequencies, damping_ratios,
-                       max_damping=max_damping,
-                       min_freq=freq_range[0],
-                       max_freq=freq_range[1])
+                    # Filter invalid poles
+                    mask = filter_poles(poles_trial, freqs_trial, damps_trial,
+                                       max_damping=max_damping,
+                                       min_freq=freq_range[0],
+                                       max_freq=freq_range[1])
 
-    poles = poles_all[mask]
-    frequencies = frequencies[mask]
-    damping_ratios = damping_ratios[mask]
+                    if np.any(mask):
+                        poles_list.append(poles_trial[mask])
+                        freqs_list.append(freqs_trial[mask])
+                        damps_list.append(damps_trial[mask])
+                except:
+                    pass  # Skip failed combinations
+
+        # Cluster poles that appear in ≥2 combinations
+        poles, frequencies, damping_ratios = cluster_poles(
+            poles_list, freqs_list, damps_list,
+            freq_tol_hz=5.0, damping_tol=0.02
+        )
+
+        # Use last singular values (from largest L, M)
+        H = build_hankel_matrix(signals[:, 0], max(L_candidates))
+        _, singular_values = esprit_poles(H, max(M_candidates), dt, use_gpu=use_gpu)
+
+    else:
+        # Single (M, L) combination (original behavior)
+        H = build_hankel_matrix(signals[:, 0], window_length)
+
+        # Extract poles using ESPRIT
+        poles_all, singular_values = esprit_poles(H, model_order, dt, use_gpu=use_gpu)
+
+        # Convert to frequencies and damping
+        frequencies, damping_ratios = poles_to_modal_params(poles_all, fs)
+
+        # Filter poles
+        mask = filter_poles(poles_all, frequencies, damping_ratios,
+                           max_damping=max_damping,
+                           min_freq=freq_range[0],
+                           max_freq=freq_range[1])
+
+        poles = poles_all[mask]
+        frequencies = frequencies[mask]
+        damping_ratios = damping_ratios[mask]
 
     # Estimate mode shapes using all channels
     mode_shapes_raw = estimate_mode_shapes(signals, poles, dt)
 
+    # Adaptive reference sensor selection: use channel with highest variance (best SNR)
+    # This avoids normalizing against a weak/noisy channel
+    if ref_sensor == 0 and n_channels > 1:  # Only auto-select if using default
+        ref_sensor_auto = int(np.argmax(np.std(signals, axis=0)))
+    else:
+        ref_sensor_auto = ref_sensor
+
     # Normalize mode shapes
-    mode_shapes = normalize_mode_shapes(mode_shapes_raw, ref_sensor=ref_sensor)
+    mode_shapes = normalize_mode_shapes(mode_shapes_raw, ref_sensor=ref_sensor_auto)
 
     return ModalParameters(
         poles=poles,

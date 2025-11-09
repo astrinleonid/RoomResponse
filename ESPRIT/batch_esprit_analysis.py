@@ -57,7 +57,7 @@ def analyze_single_file(filepath: str, args) -> Dict:
     window_length = min(2000, int(len(processed) * 0.10))
     print(f"  Hankel window: {window_length}")
 
-    # Run ESPRIT
+    # Run ESPRIT with stabilization enabled
     try:
         modal_params = esprit_modal_identification(
             processed,
@@ -67,7 +67,8 @@ def analyze_single_file(filepath: str, args) -> Dict:
             use_gpu=args.gpu,
             max_damping=0.2,
             freq_range=tuple(args.freq_range),
-            ref_sensor=0
+            ref_sensor=0,
+            use_stabilization=True  # Enable automatic stabilization grid
         )
 
         print(f"  Identified modes: {len(modal_params.frequencies)}")
