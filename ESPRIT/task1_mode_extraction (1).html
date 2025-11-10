@@ -1,0 +1,121 @@
+<html><head><title>task1_mode_extraction (1).html</title><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"></head><body><h1 id="h1-task-1-mode-parameter-extraction-esprit-lsce-era-strong-project-specific-spec-strong-"><a>Project‑Specific Spec</a>" class="reference-link"></a><span class="header-link octicon octicon-link"></span>Task 1: Mode Parameter Extraction (ESPRIT/LSCE/ERA) — <strong>Project‑Specific Spec</strong></h1><p>This document specifies <strong>inputs, formats, preprocessing, algorithms, parameters, and outputs</strong> for extracting modal parameters of the <strong>piano soundboard</strong> from <strong>multi‑impact, five‑sensor</strong> measurements with a recorded hammer force channel.</p>
+<hr>
+<h2 id="h2-0-scope-amp-definitions"><a name="0) Scope &amp; Definitions" class="reference-link"></a><span class="header-link octicon octicon-link"></span>0) Scope &amp; Definitions</h2><ul>
+<li><strong>Structure</strong>: Flat, ribbed wooden soundboard (piano) with potential <strong>complex modes</strong> (non‑proportional damping, spatial phase variation).  </li><li><strong>Excitation</strong>: Impact hammer, various <strong>impact points</strong> over the board.  </li><li><strong>Sensors (fixed)</strong>: 5 outputs (microphones or accelerometers).  </li><li><strong>Force channel</strong>: 1 input (hammer), used for synchronization and H₁ FRF estimation when needed.  </li><li><strong>Primary method</strong>: <strong>ESPRIT</strong> (time‑domain), with <strong>LSCE</strong>, <strong>Matrix Pencil</strong>, or <strong>ERA</strong> optionally run for cross‑checks.  </li><li><strong>Goal outputs</strong>: Modal poles <code>s_k = σ_k + jω_k</code>, natural frequencies <code>f_k</code>, damping ratios <code>ζ_k</code>, and <strong>complex</strong> mode shapes <code>φ_k</code> at the 5 sensors (and later interpolated over 2D surface).</li></ul>
+<hr>
+<h2 id="h2-1-input-formats"><a name="1) Input Formats" class="reference-link"></a><span class="header-link octicon octicon-link"></span>1) Input Formats</h2><p>Two equivalent formats are supported.</p>
+<h3 id="h3-1-1-tabular-per-impact-strong-tsv-strong-"><a>TSV</a>" class="reference-link"></a><span class="header-link octicon octicon-link"></span>1.1 Tabular (per‑impact) <strong>TSV</strong></h3><ul>
+<li>One file per <strong>impact location</strong>.  </li><li><strong>Columns (6 total)</strong>:  <ul>
+<li><code>force</code> (N), then <strong>5 response channels</strong> <code>y1…y5</code> (Pa for mics <strong>or</strong> m/s² for accels).  </li></ul>
+</li><li><strong>Rows</strong>: uniform samples. No header required (optional header ignored).  </li><li><strong>Filename convention</strong> (example):  <ul>
+<li><code>point_{impact_id}_responses.tsv</code> — tab‑delimited floats in scientific notation OK.  </li><li>Example from current data: <code>point_65_response.txt</code> (6 columns).  </li></ul>
+</li><li><strong>Required sidecar</strong>: JSON metadata with the same stem:  <pre><code class="language-json">{
+  "fs_hz": 48000,
+  "units": {"force":"N","y":"Pa"},
+  "impact_id": 65,
+  "sensors": ["S1","S2","S3","S4","S5"],
+  "positions": {
+    "S1": [0.0, 0.0], "S2": [0.1, 0.0], "S3": [0.2, 0.0], "S4": [0.3, 0.0], "S5": [0.4, 0.0]
+  },
+  "notes": "averaged over M hits; synchronized; normalized; zero-padded to onset"
+}</code></pre>
+</li></ul>
+<h3 id="h3-1-2-stacked-strong-npz-strong-batch-of-impacts-"><a>NPZ</a> (batch of impacts)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>1.2 Stacked <strong>NPZ</strong> (batch of impacts)</h3><ul>
+<li><strong>Shapes</strong>:  <ul>
+<li><code>force</code>: <code>(I, T)</code> → I impacts, T samples  </li><li><code>resp</code>: <code>(I, T, 5)</code> → 5 outputs  </li></ul>
+</li><li><code>fs_hz</code> and <code>units</code> in the NPZ or in a JSON sidecar.  </li><li>Optional arrays: <code>impact_xy</code> <code>(I, 2)</code> for input DOF coordinates; <code>sensor_xy</code> <code>(5, 2)</code>.</li></ul>
+<blockquote>
+<p><strong>Note</strong>: In both formats, signals are already <strong>averaged across hits</strong>, <strong>time‑aligned to impact onset</strong>, <strong>normalized by the hammer calibration</strong>, and <strong>zero‑padded</strong> before onset (per prior discussion).</p>
+</blockquote>
+<hr>
+<h2 id="h2-2-preprocessing-project-defaults-"><a name="2) Preprocessing (Project Defaults)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>2) Preprocessing (Project Defaults)</h2><ol>
+<li><p><strong>Sanity checks</strong></p>
+<ul>
+<li>Verify no clipping (force or response).  </li><li>Reject double hits: multiple force peaks within contact window.</li></ul>
+</li><li><p><strong>Onset &amp; contact detection (force channel)</strong></p>
+<ul>
+<li>Onset index <code>n0</code>: first sample where <code>force &gt; θF</code> or derivative exceeds <code>θdF</code>.  </li><li>Contact end <code>nC</code>: last index above small fraction of peak (e.g., 3–5 % of <code>max(force)</code>) or first zero crossing after peak.</li></ul>
+</li><li><p><strong>Windowing</strong></p>
+<ul>
+<li><strong>Force window</strong> (for FRF use): rectangular/Hann <strong>tight around [n0, nC]</strong>.  </li><li><strong>Response window</strong> (for time‑domain ID): <strong>exponential decay</strong> on <code>[nC+δ, nC+δ+T]</code>.  <ul>
+<li>Target tail attenuation: <strong>−70 dB</strong> at window end.  </li><li>If <code>T_win</code> seconds and <code>A_end/A_0 = 10^(−70/20)</code>, then<br><code>α = ln(A_0/A_end)/T_win</code>. Apply <code>w(t) = exp(−α t)</code>.</li></ul>
+</li></ul>
+</li><li><p><strong>Detrending / DC handling</strong></p>
+<ul>
+<li>Remove DC; optional high‑pass (e.g., 1–5 Hz) if microphones are used.</li></ul>
+</li><li><p><strong>Down‑selection of band (optional)</strong></p>
+<ul>
+<li>If focusing on a band, choose length <code>T_win</code> such that frequency resolution <code>Δf = fs/Tfft</code> (with zero‑padding) resolves close modes (e.g., <code>Δf ≤ 0.25 Hz</code>).</li></ul>
+</li><li><p><strong>Coherence &amp; FRF (diagnostic)</strong></p>
+<ul>
+<li>Compute H₁ FRFs and <strong>coherence</strong> to flag poor‑quality bins; keep primarily for QA (ESPRIT works on time‑domain decays).</li></ul>
+</li></ol>
+<p><strong>Parameter defaults (edit per dataset)</strong></p>
+<pre><code class="language-yaml">force_threshold_abs: 5e-3
+force_threshold_deriv: 3*std(dF)
+contact_tail_frac: 0.03
+delta_after_contact: 1.0e-3
+target_tail_db: -70
+hp_cut_hz: 1.0</code></pre>
+<hr>
+<h2 id="h2-3-modal-identification-workflow"><a name="3) Modal Identification Workflow" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3) Modal Identification Workflow</h2><h3 id="h3-3-1-build-trajectory-hankel-matrices"><a name="3.1 Build trajectory (Hankel) matrices" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3.1 Build trajectory (Hankel) matrices</h3><ul>
+<li>For each output channel (or stacked outputs), form Hankel matrix from the <strong>windowed free decay</strong> sequence.  </li><li>Choose row dimension <code>L</code> ≈ <strong>30–60 %</strong> of segment length; test <code>L ∈ {T/3, T/2}</code>.</li></ul>
+<h3 id="h3-3-2-model-order-estimation"><a name="3.2 Model‑order estimation" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3.2 Model‑order estimation</h3><ul>
+<li>SVD on Hankel → inspect singular value drop; cross‑check with <strong>CMIF</strong> on FRFs.  </li><li>Try order grid <code>M ∈ {2,4,6,…, 2*M_max}</code> where <code>M_max</code> covers the visible peaks in the band.  </li><li>Build <strong>stabilization diagram</strong> versus <code>M</code> (frequency, damping, pole type).</li></ul>
+<h3 id="h3-3-3-pole-extraction"><a name="3.3 Pole extraction" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3.3 Pole extraction</h3><ul>
+<li>Use <strong>ESPRIT</strong> (preferred), or <strong>Matrix Pencil</strong>, or <strong>LSCE</strong>.  </li><li>Poles: <code>s_k = σ_k + jω_k</code> →<br><code>f_k = ω_k/(2π)</code>, <code>ζ_k = −σ_k/sqrt(σ_k² + ω_k²)</code>.</li><li>Reject poles with |ζ_k| &gt; 0.2 (typical outliers for these plates) unless physically justified.</li></ul>
+<h3 id="h3-3-4-complex-mode-shapes-multi-output-"><a name="3.4 Complex mode shapes (multi‑output)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3.4 Complex mode shapes (multi‑output)</h3><ul>
+<li>Solve complex LS relating modal exponentials to each sensor’s decay:<pre><code>h_i[n] ≈ Σ_k φ_k(i) · e^{s_k n Δt}</code></pre></li><li>Normalize each mode: <code>max_i |φ_k(i)| = 1</code>, and set a <strong>reference phase</strong><br><code>arg φ_k(i_ref) = 0</code> (choose a stable sensor as <code>i_ref</code>).</li></ul>
+<h3 id="h3-3-5-cross-validation"><a name="3.5 Cross‑validation" class="reference-link"></a><span class="header-link octicon octicon-link"></span>3.5 Cross‑validation</h3><ul>
+<li>Reconstruct decays using identified modes and compute RMS error per channel.  </li><li>Optionally compare with frequency‑domain fit (PolyMAX/RFP) on the same band.  </li><li>Compute <strong>MAC</strong> between shapes obtained from different impact subsets.</li></ul>
+<hr>
+<h2 id="h2-4-algorithm-parameters-initial-grid-"><a name="4) Algorithm Parameters (Initial Grid)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>4) Algorithm Parameters (Initial Grid)</h2><pre><code class="language-yaml">L_over_T_choices: [0.33, 0.5, 0.66]
+order_grid: [2, 4, 6, 8, 10, 12, 14, 16]
+reject_damping_gt: 0.2
+stability_tol:
+  freq_rel: 0.003
+  zeta_abs: 0.005
+  modal_phase_deg: 10
+min_mode_coherence: 0.6
+min_snr_db: 20</code></pre>
+<hr>
+<h2 id="h2-5-outputs-files-amp-formats-"><a name="5) Outputs (Files &amp; Formats)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>5) Outputs (Files &amp; Formats)</h2><h3 id="h3-5-1-modal-table-csv-"><a name="5.1 Modal table (CSV)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>5.1 Modal table (CSV)</h3><p>Columns per mode <code>k</code>:</p>
+<pre><code>mode_id, f_hz, zeta, sigma, omega, pole_real, pole_imag, 
+norm_ref_sensor, mac_quality, stable_order_min, stable_order_max</code></pre><h3 id="h3-5-2-mode-shapes-csv-"><a name="5.2 Mode shapes (CSV)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>5.2 Mode shapes (CSV)</h3><ul>
+<li>One file per mode: <code>mode_{k:03d}_shape.csv</code>  <pre><code>sensor_id, x, y, phi_real, phi_imag, phi_mag, phi_phase_deg</code></pre></li></ul>
+<h3 id="h3-5-3-npz-bundle"><a name="5.3 NPZ bundle" class="reference-link"></a><span class="header-link octicon octicon-link"></span>5.3 NPZ bundle</h3><p><code>modes.npz</code> containing:</p>
+<pre><code>f_hz (K,), zeta (K,), poles (K,),
+phi (K, 5) complex64,
+ref_sensor (K,) int,
+meta dict (fs_hz, units, sensor_xy, impact_ids, etc.)</code></pre><h3 id="h3-5-4-qa-plots"><a name="5.4 QA Plots" class="reference-link"></a><span class="header-link octicon octicon-link"></span>5.4 QA Plots</h3><ul>
+<li>Stabilization diagram, damping vs order, reconstructed vs measured decays,<br>optional FRF & coherence overlays.</ul>
+<hr>
+<h2 id="h2-6-acceptance-criteria"><a name="6) Acceptance Criteria" class="reference-link"></a><span class="header-link octicon octicon-link"></span>6) Acceptance Criteria</h2><p>A mode is <strong>accepted</strong> if:  </p>
+<ul>
+<li>Stable across ≥3 adjacent model orders (per tolerances).  </li><li>Reconstructed decay error (RMS) &lt; −25 dB relative to windowed signal RMS.  </li><li>MAC between shapes from two different impact subsets &gt; 0.85.  </li><li>(Optional) FRF/CMIF peak aligned within ±Δf of <code>f_k</code>.</li></ul>
+<hr>
+<h2 id="h2-7-edge-cases-amp-notes"><a name="7) Edge Cases &amp; Notes" class="reference-link"></a><span class="header-link octicon octicon-link"></span>7) Edge Cases &amp; Notes</h2><ul>
+<li><strong>Impulse shape</strong>: deconvolution not required if hammer is hard &amp; single‑contact; ensure bandwidth covers modes of interest.  </li><li><strong>Complex modes</strong>: retain complex shapes; do not force real symmetry.  </li><li><strong>Reflections</strong>: end window before strong room reflections.  </li><li><strong>Closely spaced modes</strong>: prefer longer windows and larger <code>L</code>; cross‑check with Matrix Pencil/ESPRIT variants.  </li><li><strong>Units</strong>: keep consistent; document in metadata.  </li><li><strong>Environment</strong>: log temperature/humidity.</li></ul>
+<hr>
+<h2 id="h2-8-minimal-pseudocode-esprit-ls-for-shapes-"><a name="8) Minimal Pseudocode (ESPRIT + LS for shapes)" class="reference-link"></a><span class="header-link octicon octicon-link"></span>8) Minimal Pseudocode (ESPRIT + LS for shapes)</h2><pre><code class="language-python"># inputs: force, Y (T x 5), fs
+n0, nC = detect_onset_and_contact(force)
+seg = Y[nC+delta : nC+delta+T_win, :] * exp_window(alpha, T_win)
+
+H = hankel_matrix(seg, L)     # stack channels or build joint H
+U, S, Vh = svd(H, full_matrices=False)
+for M in order_grid:
+    E = U[:, :M]
+    E1, E2 = E[:-1, :], E[1:, :]
+    Phi = np.linalg.pinv(E1) @ E2
+    lam = np.linalg.eigvals(Phi)
+    s = np.log(lam) / dt
+    # store poles vs M, build stabilization diagram
+
+# choose stable poles s_k
+Z = np.vstack([np.exp(s_k * np.arange(T_win)*dt) for s_k in s_sel]).T
+phi = np.zeros((len(s_sel), 5), dtype=complex)
+for i in range(5):
+    phi[:, i] = np.linalg.lstsq(Z, seg[:, i], rcond=None)[0]
+
+# normalize shapes, export CSV/NPZ, make QA plots</code></pre>
+</body></html>
