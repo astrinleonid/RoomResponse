@@ -461,7 +461,7 @@ class RoomResponseRecorder:
                 pulse[:self.fade_samples] *= fade_in
                 pulse[-self.fade_samples:] *= fade_out
 
-        return pulse * self.volume
+        return pulse * self.volume * 0.3
 
     def _generate_complete_signal(self) -> list:
         """Generate the complete test signal with all pulses"""
