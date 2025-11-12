@@ -40,15 +40,7 @@ ENV/
 .DS_Store
 Thumbs.db
 user_config.json
-piano_point_responses/point_57_response.txt
-piano_point_responses/point_60_response.txt
-piano_point_responses/point_65_response.txt
-piano_point_responses/point_70_response.txt
-piano_point_responses/point_74_response.txt
-piano_point_responses/point_79_response.txt
-piano_point_responses/point_80_response.txt
-piano_point_responses/point_81_response.txt
-piano_point_responses/point_82_response.txt
-piano_point_responses/point_83_response.txt
-piano_point_responses/point_84_response.txt
-piano_point_responses/README.md
+
+# Piano point responses export
+piano_point_responses/
+piano_point_responses.zip
