@@ -255,6 +255,79 @@ def synth_signal(x: np.ndarray, N: int, fs: float, f_true: np.ndarray, Q_true: n
         t = np.arange(N) / fs
         x += A * np.exp(-alpha * t) * np.cos(w * t + ph)
 
+# Helper function for mode matching and comparison
+def compare_modes(true_frequencies: np.ndarray, true_damping_ratios: np.ndarray,
+                 est_frequencies: np.ndarray, est_damping_ratios: np.ndarray,
+                 freq_tol: float = 5.0, damp_tol: float = 0.05) -> dict:
+    """
+    Compare estimated modes against ground truth.
+
+    Args:
+        true_frequencies: True frequencies (Hz)
+        true_damping_ratios: True damping ratios
+        est_frequencies: Estimated frequencies (Hz)
+        est_damping_ratios: Estimated damping ratios
+        freq_tol: Frequency tolerance (Hz)
+        damp_tol: Damping ratio tolerance
+
+    Returns:
+        Dictionary with comparison metrics
+    """
+    n_true = len(true_frequencies)
+    n_est = len(est_frequencies)
+
+    matched_pairs = []
+    used_est = set()
+
+    for i in range(n_true):
+        f_true = true_frequencies[i]
+        z_true = true_damping_ratios[i]
+
+        best_j = -1
+        best_err = np.inf
+
+        for j in range(n_est):
+            if j in used_est:
+                continue
+
+            f_est = est_frequencies[j]
+            z_est = est_damping_ratios[j]
+
+            freq_err = abs(f_est - f_true)
+            damp_err = abs(z_est - z_true)
+
+            if freq_err <= freq_tol and damp_err <= damp_tol:
+                total_err = freq_err + damp_err * 100
+                if total_err < best_err:
+                    best_err = total_err
+                    best_j = j
+
+        if best_j >= 0:
+            used_est.add(best_j)
+            freq_err = abs(est_frequencies[best_j] - f_true)
+            damp_err = abs(est_damping_ratios[best_j] - z_true)
+            matched_pairs.append((i, best_j, freq_err, damp_err))
+
+    n_matched = len(matched_pairs)
+    unmatched_true = [i for i in range(n_true) if i not in [p[0] for p in matched_pairs]]
+    unmatched_est = [j for j in range(n_est) if j not in used_est]
+
+    freq_errors = [p[2] for p in matched_pairs]
+    damp_errors = [p[3] for p in matched_pairs]
+
+    return {
+        'n_true': n_true,
+        'n_est': n_est,
+        'n_matched': n_matched,
+        'match_rate': n_matched / n_true if n_true > 0 else 0.0,
+        'matched_pairs': matched_pairs,
+        'unmatched_true': unmatched_true,
+        'unmatched_est': unmatched_est,
+        'freq_errors': freq_errors,
+        'damp_errors': damp_errors
+    }
+
+
 # Self-test function
 def self_test():
     fs = 787.815125
@@ -319,6 +392,244 @@ def self_test():
         plt.ylabel('Amplitude')
         plt.title('Self-test Reconstruction')
         plt.show()
+
+
+# Enhanced self-test with detailed comparison (compatible with test_esprit_core_synthetic.py)
+def self_test_detailed(noise_level: float = 0.0, visualize: bool = True):
+    """
+    Enhanced self-test with detailed comparison metrics.
+
+    Args:
+        noise_level: Noise level to add to synthetic signal
+        visualize: Whether to create visualization plots
+    """
+    print("="*70)
+    print("ESPRIT.PY SELF-TEST WITH SYNTHETIC DATA (TLS-U)")
+    print("="*70)
+
+    # Ground truth parameters (matching test_esprit_core_synthetic.py)
+    fs = 787.815125
+    dt = 1.0 / fs
+    N = 260
+    L = 140
+    C = N - L + 1
+    Ksub = 12
+    Jwant = 6
+
+    f_true = np.array([120.0, 145.0, 168.0, 185.0, 210.0, 235.0])
+    Q_true = np.array([12.0, 20.0, 15.0, 8.0, 25.0, 18.0])
+    zeta_true = 1.0 / (2.0 * Q_true)
+    A_true = np.array([1.0, 0.9, 0.8, 0.7, 0.65, 0.6])
+    ph_true = np.array([0.2, -0.6, 0.9, -1.1, 0.7, -0.3])
+
+    print(f"\nGround Truth Parameters:")
+    print(f"  Sampling frequency: {fs:.2f} Hz")
+    print(f"  Signal length: {N} samples ({N/fs:.3f} s)")
+    print(f"  Number of modes: {len(f_true)}")
+    print(f"\n  Mode parameters:")
+    print(f"  #   Freq (Hz)  Q        Damping    Amplitude ")
+    print("-" * 50)
+    for i in range(len(f_true)):
+        print(f"  {i}   {f_true[i]:<10.1f} {Q_true[i]:<8.1f} {zeta_true[i]:<10.4f} {A_true[i]:<10.2f}")
+
+    # Generate synthetic signal
+    print(f"\nGenerating synthetic signal (noise level: {noise_level:.6f})...")
+    x = np.zeros(N)
+    synth_signal(x, N, fs, f_true, Q_true, A_true, ph_true, len(f_true))
+
+    # Add noise if requested
+    if noise_level > 0:
+        noise = np.random.randn(N) * noise_level
+        x += noise
+
+    # Run TLS-ESPRIT from U subspace
+    print(f"\nRunning TLS-ESPRIT (U-subspace approach)...")
+    print(f"  Window length (L): {L}")
+    print(f"  Model order (K): {Ksub}")
+
+    H = build_hankel(x, N, L)
+    U, S, Vh = np.linalg.svd(H, full_matrices=False)
+    V = Vh.T
+    Us = U[:, :Ksub]
+
+    # Try TLS-U approach
+    lam_re, lam_im = TLS_ESPRIT_FromUs(Us, L, L, 1, Ksub)
+    F_est, Q_est, Z_est = LambdasToFZQ(lam_re, lam_im, Ksub, dt, Jwant)
+
+    # Sort estimated modes by frequency
+    sort_idx = np.argsort(F_est)
+    F_est = F_est[sort_idx]
+    Q_est = Q_est[sort_idx]
+    Z_est = Z_est[sort_idx]
+
+    print(f"\nIdentified {len(F_est)} modes")
+
+    # Compare with ground truth
+    print(f"\n{'='*70}")
+    print("COMPARISON: ESTIMATED vs GROUND TRUTH")
+    print("="*70)
+
+    comparison = compare_modes(f_true, zeta_true, F_est, Z_est,
+                               freq_tol=5.0, damp_tol=0.05)
+
+    print(f"\nSummary:")
+    print(f"  True modes: {comparison['n_true']}")
+    print(f"  Estimated modes: {comparison['n_est']}")
+    print(f"  Matched modes: {comparison['n_matched']}")
+    print(f"  Match rate: {comparison['match_rate']*100:.1f}%")
+
+    if comparison['n_matched'] > 0:
+        print(f"\n  Average errors (for matched modes):")
+        print(f"    Frequency error: {np.mean(comparison['freq_errors']):.3f} Hz "
+              f"(std: {np.std(comparison['freq_errors']):.3f} Hz)")
+        print(f"    Damping error: {np.mean(comparison['damp_errors']):.4f} "
+              f"(std: {np.std(comparison['damp_errors']):.4f})")
+
+        print(f"\n  Matched pairs (true_idx, est_idx, freq_err, damp_err):")
+        for true_idx, est_idx, freq_err, damp_err in comparison['matched_pairs']:
+            print(f"    Mode {true_idx}: f_true={f_true[true_idx]:.1f} Hz, "
+                  f"f_est={F_est[est_idx]:.1f} Hz, "
+                  f"df={freq_err:.2f} Hz, dz={damp_err:.4f}")
+
+    if comparison['unmatched_true']:
+        print(f"\n  Unmatched true modes: {comparison['unmatched_true']}")
+        for idx in comparison['unmatched_true']:
+            print(f"    Mode {idx}: f={f_true[idx]:.1f} Hz, "
+                  f"zeta={zeta_true[idx]:.4f}")
+
+    # Validation
+    print(f"\n{'='*70}")
+    print("VALIDATION")
+    print("="*70)
+
+    min_match_rate = 0.8
+    max_freq_error = 1.0
+    max_damp_error = 0.01
+
+    success = True
+
+    if comparison['match_rate'] < min_match_rate:
+        print(f"[FAIL] Match rate {comparison['match_rate']*100:.1f}% < {min_match_rate*100:.1f}%")
+        success = False
+    else:
+        print(f"[PASS] Match rate {comparison['match_rate']*100:.1f}% >= {min_match_rate*100:.1f}%")
+
+    if comparison['n_matched'] > 0:
+        avg_freq_err = np.mean(comparison['freq_errors'])
+        avg_damp_err = np.mean(comparison['damp_errors'])
+
+        if avg_freq_err > max_freq_error:
+            print(f"[FAIL] Avg frequency error {avg_freq_err:.3f} Hz > {max_freq_error} Hz")
+            success = False
+        else:
+            print(f"[PASS] Avg frequency error {avg_freq_err:.3f} Hz <= {max_freq_error} Hz")
+
+        if avg_damp_err > max_damp_error:
+            print(f"[FAIL] Avg damping error {avg_damp_err:.4f} > {max_damp_error}")
+            success = False
+        else:
+            print(f"[PASS] Avg damping error {avg_damp_err:.4f} <= {max_damp_error}")
+
+    if success:
+        print("\n*** SELF-TEST PASSED! ***")
+    else:
+        print("\n*** SELF-TEST FAILED! ***")
+
+    # Visualization
+    if visualize and len(F_est) > 0:
+        from matplotlib.gridspec import GridSpec
+
+        fig = plt.figure(figsize=(18, 10))
+        gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
+
+        t = np.arange(N) / fs
+
+        # Time series
+        ax_time = fig.add_subplot(gs[0, :2])
+        ax_time.plot(t, x, 'b-', linewidth=0.8, alpha=0.7, label='Synthetic signal')
+        ax_time.set_xlabel('Time (s)')
+        ax_time.set_ylabel('Amplitude')
+        ax_time.set_title(f'Synthetic Multi-Mode Signal (noise={noise_level:.1e})')
+        ax_time.grid(True, alpha=0.3)
+        ax_time.legend()
+
+        # FFT
+        ax_fft = fig.add_subplot(gs[0, 2])
+        fft_vals = np.fft.rfft(x)
+        fft_freqs = np.fft.rfftfreq(N, 1/fs)
+        ax_fft.semilogy(fft_freqs, np.abs(fft_vals), 'b-', linewidth=0.5)
+        for f in f_true:
+            ax_fft.axvline(f, color='g', linestyle='--', alpha=0.5, linewidth=1)
+        ax_fft.set_xlabel('Frequency (Hz)')
+        ax_fft.set_ylabel('Magnitude')
+        ax_fft.set_title('Frequency Spectrum')
+        ax_fft.grid(True, alpha=0.3)
+        ax_fft.set_xlim([0, fs/2])
+
+        # Frequency comparison
+        ax_freq = fig.add_subplot(gs[1, 0])
+        x_true = np.arange(len(f_true))
+        x_est = np.arange(len(F_est))
+
+        ax_freq.scatter(x_true, f_true, s=100, marker='o',
+                       color='green', label='True', alpha=0.7, edgecolors='black', linewidth=2)
+        ax_freq.scatter(x_est, F_est, s=80, marker='x',
+                       color='red', label='Estimated', alpha=0.9, linewidth=2)
+
+        # Draw lines connecting matched pairs
+        for true_idx, est_idx, _, _ in comparison['matched_pairs']:
+            ax_freq.plot([true_idx, est_idx],
+                        [f_true[true_idx], F_est[est_idx]],
+                        'k--', alpha=0.3, linewidth=1)
+
+        ax_freq.set_xlabel('Mode Index')
+        ax_freq.set_ylabel('Frequency (Hz)')
+        ax_freq.set_title('Frequency Comparison (TLS-U)')
+        ax_freq.legend()
+        ax_freq.grid(True, alpha=0.3)
+
+        # Damping comparison
+        ax_damp = fig.add_subplot(gs[1, 1])
+        ax_damp.scatter(x_true, zeta_true * 100, s=100, marker='o',
+                       color='green', label='True', alpha=0.7, edgecolors='black', linewidth=2)
+        ax_damp.scatter(x_est, Z_est * 100, s=80, marker='x',
+                       color='red', label='Estimated', alpha=0.9, linewidth=2)
+
+        # Draw lines connecting matched pairs
+        for true_idx, est_idx, _, _ in comparison['matched_pairs']:
+            ax_damp.plot([true_idx, est_idx],
+                        [zeta_true[true_idx] * 100, Z_est[est_idx] * 100],
+                        'k--', alpha=0.3, linewidth=1)
+
+        ax_damp.set_xlabel('Mode Index')
+        ax_damp.set_ylabel('Damping Ratio (%)')
+        ax_damp.set_title('Damping Comparison (TLS-U)')
+        ax_damp.legend()
+        ax_damp.grid(True, alpha=0.3)
+
+        # Frequency vs Damping scatter
+        ax_scatter = fig.add_subplot(gs[1, 2])
+        ax_scatter.scatter(f_true, zeta_true * 100,
+                          s=100, marker='o', color='green', label='True',
+                          alpha=0.7, edgecolors='black', linewidth=2)
+        ax_scatter.scatter(F_est, Z_est * 100,
+                          s=80, marker='x', color='red', label='Estimated',
+                          alpha=0.9, linewidth=2)
+
+        ax_scatter.set_xlabel('Frequency (Hz)')
+        ax_scatter.set_ylabel('Damping Ratio (%)')
+        ax_scatter.set_title('Frequency vs Damping (TLS-U)')
+        ax_scatter.legend()
+        ax_scatter.grid(True, alpha=0.3)
+
+        # Overall title
+        match_str = f"{comparison['n_matched']}/{comparison['n_true']} matched ({comparison['match_rate']*100:.0f}%)"
+        fig.suptitle(f"esprit.py TLS-U Self-Test: {match_str}", fontsize=14, fontweight='bold')
+
+        plt.tight_layout()
+        plt.show()
+
+    return comparison
 
 # Cube loading and processing
 class BandPreset:
@@ -598,8 +909,9 @@ def stabilization_diagram_with_shapes(index_path: str, cube_path: str, band_inde
         amp_m = amplitudes_in_m[k]
         print(f"Mode {k}: Amplitudes in receivers (complex with sign): {amp_m}")
 
-# Run self-test
-self_test()
+# Run self-test (commented out to allow module import)
+# Uncomment the line below to run self-test when executing the module directly
+# self_test()
 
 # Example call (uncomment and set paths if needed, add selected_r='1,3-5' for example)
-stabilization_diagram_with_shapes("D:\\NEUMANN\\Modes_measurements\\out\\index.txt", "D:\\NEUMANN\\Modes_measurements\\out\\y_cube.bin", band_index=3, K=40, selected_r="")
+# stabilization_diagram_with_shapes("D:\\NEUMANN\\Modes_measurements\\out\\index.txt", "D:\\NEUMANN\\Modes_measurements\\out\\y_cube.bin", band_index=3, K=40, selected_r="")
