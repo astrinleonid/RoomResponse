@@ -98,7 +98,7 @@ def esprit_poles_ls(hankel_matrix: np.ndarray, model_order: int, dt: float,
         use_gpu: Use GPU acceleration if available
 
     Returns:
-        poles: Complex poles s_k, shape (M,)
+        poles: Discrete-time poles λ_k (NOT continuous-time), shape (M,)
         singular_values: All singular values from SVD, shape (min(L,K),)
     """
     if use_gpu:
@@ -129,10 +129,11 @@ def esprit_poles_ls(hankel_matrix: np.ndarray, model_order: int, dt: float,
             raise
 
     # Automatic subspace order selection based on energy (99% threshold)
-    # This prevents overfitting to noise when model_order is too high
-    energy = xp.cumsum(s**2) / xp.sum(s**2)
-    M_auto = int(xp.searchsorted(energy, 0.99))
-    M_use = min(model_order, max(4, M_auto))  # At least 4, at most model_order
+    # DISABLED: Using full model_order for now to match esprit.py behavior
+    # energy = xp.cumsum(s**2) / xp.sum(s**2)
+    # M_auto = int(xp.searchsorted(energy, 0.99))
+    # M_use = min(model_order, max(4, M_auto))  # At least 4, at most model_order
+    M_use = model_order  # Use full model order
 
     # Extract signal subspace (first M_use singular vectors)
     E = U[:, :M_use]
@@ -147,32 +148,40 @@ def esprit_poles_ls(hankel_matrix: np.ndarray, model_order: int, dt: float,
     X, *_ = xp.linalg.lstsq(E1, E2, rcond=None)
 
     # Eigenvalues of Phi give the discrete-time poles
-    lam = xp.linalg.eigvals(X)
+    # For GPU: transfer to CPU for eigenvalue decomposition (GPU eig is limited)
+    if use_gpu and xp.__name__ == 'cupy':
+        X_cpu = cp.asnumpy(X)
+        lam = np.linalg.eigvals(X_cpu)
+        lam = cp.asarray(lam)  # Back to GPU
+    else:
+        lam = xp.linalg.eigvals(X)
 
-    # Convert to continuous-time poles: s = ln(λ) / dt
-    poles = xp.log(lam) / dt
+    # CRITICAL: Return discrete-time poles (NOT continuous-time)
+    # Conjugate pairing MUST happen in z-plane before log transform
+    poles_discrete = lam
 
     # Move results back to CPU if using GPU
     if use_gpu and xp.__name__ == 'cupy':
-        poles = cp.asnumpy(poles)
+        poles_discrete = cp.asnumpy(poles_discrete)
         s = cp.asnumpy(s)
 
-    return poles, s
+    return poles_discrete, s
 
 
-def esprit_poles_tls(hankel_matrix: np.ndarray, model_order: int, dt: float,
-                     use_gpu: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+def esprit_poles_tls_usubspace(hankel_matrix: np.ndarray, model_order: int, dt: float,
+                                use_gpu: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Extract modal poles using TLS-ESPRIT algorithm (Total Least Squares).
+    Extract modal poles using TLS-ESPRIT from U-subspace (matching esprit.py algorithm).
 
-    TLS-ESPRIT is more robust to noise than LS-ESPRIT because it accounts for
-    errors in both the data matrix and the shift matrix.
+    This is the superior algorithm that treats each row of the U-subspace as a
+    "virtual channel" and builds shifted row pairs from ALL L rows, capturing
+    more shift structure information than the standard subspace split approach.
 
-    Algorithm:
-    1. Extract signal subspace E from Hankel matrix SVD
-    2. Build shifted subspace matrices E1, E2
-    3. Stack [E1 | E2] and compute SVD to find noise subspace
-    4. Extract Phi from noise subspace structure
+    Algorithm (matching esprit.py TLS_ESPRIT_FromUs):
+    1. Extract signal subspace U from Hankel matrix SVD: U[:, :K]
+    2. Build shifted row pairs: U1[i,:] = U[i,:] and U2[i,:] = U[i+1,:] for i=0..L-2
+    3. Stack [U1 | U2] and compute SVD to find noise subspace
+    4. Extract Phi from noise subspace structure: -X = Phi @ Y
     5. Eigenvalues of Phi give discrete-time poles
 
     Args:
@@ -182,7 +191,7 @@ def esprit_poles_tls(hankel_matrix: np.ndarray, model_order: int, dt: float,
         use_gpu: Use GPU acceleration if available
 
     Returns:
-        poles: Complex poles s_k, shape (M,)
+        poles: Discrete-time poles λ_k (NOT continuous-time), shape (M,)
         singular_values: All singular values from SVD, shape (min(L,K),)
     """
     if use_gpu:
@@ -213,25 +222,27 @@ def esprit_poles_tls(hankel_matrix: np.ndarray, model_order: int, dt: float,
             raise
 
     # Automatic subspace order selection based on energy (99% threshold)
-    energy = xp.cumsum(s**2) / xp.sum(s**2)
-    M_auto = int(xp.searchsorted(energy, 0.99))
-    M_use = min(model_order, max(4, M_auto))  # At least 4, at most model_order
+    # DISABLED: Using full model_order for now to match esprit.py behavior
+    # energy = xp.cumsum(s**2) / xp.sum(s**2)
+    # M_auto = int(xp.searchsorted(energy, 0.99))
+    # M_use = min(model_order, max(4, M_auto))  # At least 4, at most model_order
+    M_use = model_order  # Use full model order
 
-    # Extract signal subspace (first M_use singular vectors)
-    E = U[:, :M_use]
+    # Extract signal subspace (first M_use columns of U)
+    Us = U[:, :M_use]  # Shape: (L, M_use)
+    L = Us.shape[0]
 
-    # Split into E1 (rows 0 to L-2) and E2 (rows 1 to L-1)
-    E1 = E[:-1, :]
-    E2 = E[1:, :]
+    # Build shifted row pairs from U-subspace (matching esprit.py build_U1U2_Lmajor)
+    # Each row of U is treated as a "virtual channel"
+    m = L - 1  # Number of shifted pairs
+    U1 = Us[:-1, :]  # Rows 0 to L-2, shape (L-1, M_use)
+    U2 = Us[1:, :]   # Rows 1 to L-1, shape (L-1, M_use)
 
-    # TLS-ESPRIT: Stack [E1 | E2] and find noise subspace
-    m = E1.shape[0]  # L-1
+    # TLS-ESPRIT: Stack [U1 | U2] and find noise subspace
     n2 = 2 * M_use
-
-    # Build stacked matrix Z = [E1 | E2]
-    Z = xp.zeros((m, n2), dtype=E.dtype)
-    Z[:, :M_use] = E1
-    Z[:, M_use:] = E2
+    Z = xp.zeros((m, n2), dtype=Us.dtype)
+    Z[:, :M_use] = U1
+    Z[:, M_use:] = U2
 
     # Full SVD of Z to get noise subspace
     U_z, S_z, Vh_z = xp.linalg.svd(Z, full_matrices=True)
@@ -244,24 +255,50 @@ def esprit_poles_tls(hankel_matrix: np.ndarray, model_order: int, dt: float,
     X = Vn[:M_use, :]
     Y = Vn[M_use:, :]
 
-    # Solve for Phi: -X = Phi @ Y (TLS solution)
-    # Use pinv for the smaller KxK system
+    # Solve for Phi: -X = Phi @ Y (TLS solution, matching esprit.py)
     tol_pinv = 1e-9
     Yp = xp.linalg.pinv(Y, rcond=tol_pinv)
     Phi = -X @ Yp
 
     # Eigenvalues of Phi give the discrete-time poles
-    lam = xp.linalg.eigvals(Phi)
+    # For GPU: transfer to CPU for eigenvalue decomposition (GPU eig is limited)
+    if use_gpu and xp.__name__ == 'cupy':
+        Phi_cpu = cp.asnumpy(Phi)
+        lam = np.linalg.eigvals(Phi_cpu)
+        lam = cp.asarray(lam)  # Back to GPU
+    else:
+        lam = xp.linalg.eigvals(Phi)
 
-    # Convert to continuous-time poles: s = ln(λ) / dt
-    poles = xp.log(lam) / dt
+    # Return discrete-time poles (conjugate pairing in z-plane before log)
+    poles_discrete = lam
 
     # Move results back to CPU if using GPU
     if use_gpu and xp.__name__ == 'cupy':
-        poles = cp.asnumpy(poles)
+        poles_discrete = cp.asnumpy(poles_discrete)
         s = cp.asnumpy(s)
 
-    return poles, s
+    return poles_discrete, s
+
+
+def esprit_poles_tls(hankel_matrix: np.ndarray, model_order: int, dt: float,
+                     use_gpu: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extract modal poles using TLS-ESPRIT algorithm (Total Least Squares).
+
+    Now uses the superior U-subspace row stacking approach (matching esprit.py).
+
+    Args:
+        hankel_matrix: Hankel matrix H, shape (L, K)
+        model_order: Model order M (number of poles to extract)
+        dt: Time step in seconds
+        use_gpu: Use GPU acceleration if available
+
+    Returns:
+        poles: Discrete-time poles λ_k (NOT continuous-time), shape (M,)
+        singular_values: All singular values from SVD, shape (min(L,K),)
+    """
+    # Use the superior U-subspace algorithm (matches esprit.py TLS_ESPRIT_FromUs)
+    return esprit_poles_tls_usubspace(hankel_matrix, model_order, dt, use_gpu)
 
 
 def esprit_poles(hankel_matrix: np.ndarray, model_order: int, dt: float,
@@ -277,7 +314,7 @@ def esprit_poles(hankel_matrix: np.ndarray, model_order: int, dt: float,
         use_tls: Use TLS-ESPRIT (more robust) instead of LS-ESPRIT (default: True)
 
     Returns:
-        poles: Complex poles s_k, shape (M,)
+        poles: Discrete-time poles λ_k (NOT continuous-time), shape (M,)
         singular_values: All singular values from SVD, shape (min(L,K),)
     """
     if use_tls:
@@ -454,16 +491,16 @@ def cluster_poles(poles_list: list, frequencies_list: list, damping_list: list,
 def validate_conjugate_pairs(poles: np.ndarray, dt: float,
                             freq_tol: float = 0.01, radius_tol: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Validate and pair complex conjugate poles.
+    Validate and pair complex conjugate poles (matching esprit.py algorithm).
 
     Physical modes must appear as complex conjugate pairs. This function
-    identifies and validates pairs, rejecting spurious computational poles.
+    identifies and validates pairs using absolute error metric (NOT relative).
 
     Args:
         poles: Discrete-time poles (complex eigenvalues λ), shape (M,)
         dt: Time step in seconds
-        freq_tol: Relative frequency tolerance for pairing (default: 1%)
-        radius_tol: Relative radius tolerance for pairing (default: 1%)
+        freq_tol: UNUSED (kept for API compatibility)
+        radius_tol: UNUSED (kept for API compatibility)
 
     Returns:
         paired_poles: Validated poles (continuous-time s), shape (K,)
@@ -494,7 +531,7 @@ def validate_conjugate_pairs(poles: np.ndarray, dt: float,
         if np.abs(bi) < 1e-6:
             continue
 
-        # Find conjugate pair
+        # Find conjugate pair (best match by absolute error)
         best_err = np.inf
         best_j = -1
 
@@ -506,38 +543,28 @@ def validate_conjugate_pairs(poles: np.ndarray, dt: float,
             bj = lam_im[j]
             rj = lam_abs[j]
 
-            # Check if imaginary parts are opposite sign
+            # Check if imaginary parts are opposite sign (same criterion as esprit.py)
             if np.abs(bj + bi) > 1e-5 * (np.abs(bj) + np.abs(bi) + 1.0):
                 continue  # Not conjugates
 
-            # Check relative radius match
-            radius_err = np.abs(rj - ri) / (ri + 1e-10)
-            if radius_err > radius_tol:
-                continue
-
-            # Check relative frequency match
-            freq_err = np.abs(np.abs(bj) - np.abs(bi)) / (np.abs(bi) + 1e-10)
-            if freq_err > freq_tol:
-                continue
-
-            # Compute pairing error
+            # Compute absolute pairing error (matching esprit.py exactly)
             err = np.abs(aj - ai) + 1.0 * np.abs(bj + bi) + np.abs(rj - ri)
 
             if err < best_err:
                 best_err = err
                 best_j = j
 
-        # If conjugate pair found, accept it
+        # If conjugate pair found, accept it (NO additional tolerance checks!)
         if best_j != -1:
             used[i] = True
             used[best_j] = True
 
-            # Average the pair properties
+            # Average the pair properties (matching esprit.py)
             a_avg = 0.5 * (ai + lam_re[best_j])
             b_avg = 0.5 * (bi - lam_im[best_j])  # Take positive imaginary part
             r_avg = np.hypot(a_avg, b_avg)
 
-            # Convert to continuous-time pole
+            # Convert to continuous-time pole (matching esprit.py)
             theta = np.arctan2(b_avg, a_avg)
             s_re = np.log(max(r_avg, 1e-300)) / dt
             s_im = theta / dt
@@ -659,19 +686,29 @@ def esprit_modal_identification(signals: np.ndarray, fs: float,
                     else:
                         H = build_hankel_matrix(signals[:, 0], L)
 
-                    poles_trial, _ = esprit_poles(H, M, dt, use_gpu=use_gpu, use_tls=use_tls)
+                    # Extract DISCRETE-TIME poles
+                    lam_trial, _ = esprit_poles(H, M, dt, use_gpu=use_gpu, use_tls=use_tls)
 
-                    # Apply conjugate pairing if enabled
+                    # Apply conjugate pairing if enabled (in z-plane)
                     if use_conjugate_pairing:
-                        # Convert back to discrete-time for pairing
-                        lam_trial = np.exp(poles_trial * dt)
-                        poles_trial, _ = validate_conjugate_pairs(lam_trial, dt)
+                        # Filter by radius first
+                        radius_mask = filter_poles_by_radius(lam_trial, r_min=0.5, r_max=1.3)
+                        lam_filtered = lam_trial[radius_mask]
+
+                        if len(lam_filtered) > 0:
+                            poles_trial, _ = validate_conjugate_pairs(lam_filtered, dt)
+                        else:
+                            continue
+
                         if len(poles_trial) == 0:
                             continue
+                    else:
+                        # No conjugate pairing - convert directly
+                        poles_trial = np.log(lam_trial) / dt
 
                     freqs_trial, damps_trial = poles_to_modal_params(poles_trial, fs)
 
-                    # Filter invalid poles (including radius and min frequency)
+                    # Filter invalid poles (including min frequency)
                     mask = filter_poles(poles_trial, freqs_trial, damps_trial,
                                        max_damping=max_damping,
                                        min_freq=max(freq_range[0], min_freq),
@@ -702,22 +739,23 @@ def esprit_modal_identification(signals: np.ndarray, fs: float,
         else:
             H = build_hankel_matrix(signals[:, 0], window_length)
 
-        # Extract poles using ESPRIT
-        poles_all, singular_values = esprit_poles(H, model_order, dt, use_gpu=use_gpu, use_tls=use_tls)
+        # Extract DISCRETE-TIME poles using ESPRIT
+        lam_all, singular_values = esprit_poles(H, model_order, dt, use_gpu=use_gpu, use_tls=use_tls)
 
-        # Apply conjugate pairing if enabled
+        # Apply conjugate pairing if enabled (in z-plane, before log transform)
         if use_conjugate_pairing:
-            # Convert back to discrete-time for pairing
-            lam_all = np.exp(poles_all * dt)
-
             # First filter by radius in discrete-time domain
             radius_mask = filter_poles_by_radius(lam_all, r_min=0.5, r_max=1.3)
             lam_filtered = lam_all[radius_mask]
 
             if len(lam_filtered) > 0:
+                # Validate conjugate pairs and convert to continuous-time
                 poles_all, pair_quality = validate_conjugate_pairs(lam_filtered, dt)
             else:
                 poles_all = np.array([])
+        else:
+            # No conjugate pairing - convert directly to continuous-time
+            poles_all = np.log(lam_all) / dt
 
         # Convert to frequencies and damping
         if len(poles_all) > 0:
