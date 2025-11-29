@@ -612,19 +612,21 @@ def create_visualizations(signals: np.ndarray, fs: float, true_modes: list,
     # 3. Frequency Comparison (middle row, left)
     ax_freq = fig.add_subplot(gs[1, 0])
 
-    # Plot true modes
+    # Plot true modes (already sorted)
     x_true = np.arange(len(f_true))
     ax_freq.scatter(x_true, f_true, s=120, marker='o',
                    color='green', label='True modes', alpha=0.7,
                    edgecolors='black', linewidth=2, zorder=3)
 
-    # Plot estimated modes from each implementation
+    # Plot estimated modes from each implementation (sorted by frequency)
     for impl_name, color, marker in zip(impl_names, colors, markers):
         if impl_name in results['implementations']:
             impl = results['implementations'][impl_name]
             if impl['n_modes'] > 0:
-                x_est = np.arange(len(impl['frequencies']))
-                ax_freq.scatter(x_est, impl['frequencies'], s=100, marker=marker,
+                # Sort by frequency for proper comparison
+                freq_sorted = np.sort(impl['frequencies'])
+                x_est = np.arange(len(freq_sorted))
+                ax_freq.scatter(x_est, freq_sorted, s=100, marker=marker,
                               color=color, label=impl_name.split('(')[0].strip(),
                               alpha=0.8, linewidth=2.5, zorder=2)
 
@@ -637,18 +639,24 @@ def create_visualizations(signals: np.ndarray, fs: float, true_modes: list,
     # 4. Damping Comparison (middle row, middle)
     ax_damp = fig.add_subplot(gs[1, 1])
 
-    # Plot true damping ratios
+    # Plot true damping ratios (already sorted by frequency)
     ax_damp.scatter(x_true, zeta_true * 100, s=120, marker='o',
                    color='green', label='True modes', alpha=0.7,
                    edgecolors='black', linewidth=2, zorder=3)
 
-    # Plot estimated damping from each implementation
+    # Plot estimated damping from each implementation (sorted by frequency)
     for impl_name, color, marker in zip(impl_names, colors, markers):
         if impl_name in results['implementations']:
             impl = results['implementations'][impl_name]
             if impl['n_modes'] > 0:
-                x_est = np.arange(len(impl['damping_ratios']))
-                ax_damp.scatter(x_est, np.array(impl['damping_ratios']) * 100,
+                # Sort by frequency to match frequency chart
+                freqs = np.array(impl['frequencies'])
+                damps = np.array(impl['damping_ratios'])
+                sort_idx = np.argsort(freqs)
+                damps_sorted = damps[sort_idx]
+
+                x_est = np.arange(len(damps_sorted))
+                ax_damp.scatter(x_est, damps_sorted * 100,
                               s=100, marker=marker, color=color,
                               label=impl_name.split('(')[0].strip(),
                               alpha=0.8, linewidth=2.5, zorder=2)
