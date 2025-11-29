@@ -254,7 +254,7 @@
   "implementations": {
     "esprit.py (TLS-U)": {
       "n_modes": 0,
-      "time": 19.681977799977176,
+      "time": 19.766985700000077,
       "frequencies": [],
       "damping_ratios": [],
       "match_stats": {
@@ -268,7 +268,7 @@
     },
     "esprit_core (TLS-U CPU)": {
       "n_modes": 30,
-      "time": 19.99888510000892,
+      "time": 19.91063289999147,
       "frequencies": [
         1148.4523636106967,
         985.2759212012943,
@@ -396,7 +396,7 @@
     },
     "esprit_core (TLS-U GPU)": {
       "n_modes": 30,
-      "time": 9.456686999998055,
+      "time": 9.3779738000012,
       "frequencies": [
         1148.452363610698,
         985.275921201293,

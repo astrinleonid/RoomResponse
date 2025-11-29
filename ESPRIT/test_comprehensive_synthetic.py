@@ -11,6 +11,8 @@ import numpy as np
 import time
 import json
 from pathlib import Path
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 # Import both implementations
 import esprit
@@ -546,6 +548,218 @@ def run_comprehensive_test():
     print("\n" + "="*80)
     print("[OK] Comprehensive synthetic test completed successfully!")
     print("="*80)
+
+    # Create visualizations
+    print("\nGenerating visualization plots...")
+    create_visualizations(signals, fs, true_modes, results)
+    print("Plots saved to ESPRIT/ directory")
+
+
+def create_visualizations(signals: np.ndarray, fs: float, true_modes: list,
+                          results: dict):
+    """
+    Create comprehensive visualization plots comparing implementations.
+
+    Args:
+        signals: Multi-channel signal data
+        fs: Sampling frequency
+        true_modes: List of (freq, damping, amplitude, phase) tuples
+        results: Results dictionary from run_comprehensive_test
+    """
+    fig = plt.figure(figsize=(20, 12))
+    gs = GridSpec(3, 3, figure=fig, hspace=0.3, wspace=0.3)
+
+    N = len(signals)
+    t = np.arange(N) / fs
+
+    # Extract true parameters
+    f_true = np.array([f for f, _, _, _ in true_modes])
+    zeta_true = np.array([zeta for _, zeta, _, _ in true_modes])
+
+    # Extract results
+    impl_names = ['esprit_core (TLS-U CPU)', 'esprit_core (TLS-U GPU)']
+    colors = ['red', 'blue']
+    markers = ['x', '+']
+
+    # 1. Time series (top row, span 2 columns)
+    ax_time = fig.add_subplot(gs[0, :2])
+    ax_time.plot(t, signals[:, 0], 'b-', linewidth=0.5, alpha=0.6, label='Synthetic signal')
+    ax_time.set_xlabel('Time (s)', fontsize=11)
+    ax_time.set_ylabel('Amplitude', fontsize=11)
+    ax_time.set_title(f'Synthetic Signal: {len(true_modes)} modes, {fs:.0f} Hz, SNR={20*np.log10(1.0/results["config"]["noise_level"]):.1f} dB',
+                     fontsize=12, fontweight='bold')
+    ax_time.grid(True, alpha=0.3)
+    ax_time.legend(fontsize=10)
+
+    # 2. FFT Spectrum (top row, right column)
+    ax_fft = fig.add_subplot(gs[0, 2])
+    from scipy.fft import rfft, rfftfreq
+    fft_vals = rfft(signals[:, 0])
+    fft_freqs = rfftfreq(N, 1/fs)
+
+    ax_fft.semilogy(fft_freqs, np.abs(fft_vals), 'b-', linewidth=0.7, alpha=0.7)
+
+    # Mark true mode frequencies
+    for f in f_true:
+        ax_fft.axvline(f, color='green', linestyle='--', alpha=0.4, linewidth=1.5)
+
+    ax_fft.set_xlabel('Frequency (Hz)', fontsize=11)
+    ax_fft.set_ylabel('Magnitude', fontsize=11)
+    ax_fft.set_title('Frequency Spectrum\n(green lines = true modes)', fontsize=12, fontweight='bold')
+    ax_fft.grid(True, alpha=0.3, which='both')
+    ax_fft.set_xlim([0, min(fs/2, results['config']['f_max'] * 1.1)])
+
+    # 3. Frequency Comparison (middle row, left)
+    ax_freq = fig.add_subplot(gs[1, 0])
+
+    # Plot true modes
+    x_true = np.arange(len(f_true))
+    ax_freq.scatter(x_true, f_true, s=120, marker='o',
+                   color='green', label='True modes', alpha=0.7,
+                   edgecolors='black', linewidth=2, zorder=3)
+
+    # Plot estimated modes from each implementation
+    for impl_name, color, marker in zip(impl_names, colors, markers):
+        if impl_name in results['implementations']:
+            impl = results['implementations'][impl_name]
+            if impl['n_modes'] > 0:
+                x_est = np.arange(len(impl['frequencies']))
+                ax_freq.scatter(x_est, impl['frequencies'], s=100, marker=marker,
+                              color=color, label=impl_name.split('(')[0].strip(),
+                              alpha=0.8, linewidth=2.5, zorder=2)
+
+    ax_freq.set_xlabel('Mode Index', fontsize=11)
+    ax_freq.set_ylabel('Frequency (Hz)', fontsize=11)
+    ax_freq.set_title('Frequency Comparison', fontsize=12, fontweight='bold')
+    ax_freq.legend(fontsize=9, loc='best')
+    ax_freq.grid(True, alpha=0.3)
+
+    # 4. Damping Comparison (middle row, middle)
+    ax_damp = fig.add_subplot(gs[1, 1])
+
+    # Plot true damping ratios
+    ax_damp.scatter(x_true, zeta_true * 100, s=120, marker='o',
+                   color='green', label='True modes', alpha=0.7,
+                   edgecolors='black', linewidth=2, zorder=3)
+
+    # Plot estimated damping from each implementation
+    for impl_name, color, marker in zip(impl_names, colors, markers):
+        if impl_name in results['implementations']:
+            impl = results['implementations'][impl_name]
+            if impl['n_modes'] > 0:
+                x_est = np.arange(len(impl['damping_ratios']))
+                ax_damp.scatter(x_est, np.array(impl['damping_ratios']) * 100,
+                              s=100, marker=marker, color=color,
+                              label=impl_name.split('(')[0].strip(),
+                              alpha=0.8, linewidth=2.5, zorder=2)
+
+    ax_damp.set_xlabel('Mode Index', fontsize=11)
+    ax_damp.set_ylabel('Damping Ratio (%)', fontsize=11)
+    ax_damp.set_title('Damping Ratio Comparison', fontsize=12, fontweight='bold')
+    ax_damp.legend(fontsize=9, loc='best')
+    ax_damp.grid(True, alpha=0.3)
+
+    # 5. Frequency Error (middle row, right)
+    ax_ferr = fig.add_subplot(gs[1, 2])
+
+    for impl_name, color, marker in zip(impl_names, colors, markers):
+        if impl_name in results['implementations']:
+            impl = results['implementations'][impl_name]
+            stats = impl['match_stats']
+            if len(stats['freq_errors']) > 0:
+                x_err = np.arange(len(stats['freq_errors']))
+                ax_ferr.scatter(x_err, stats['freq_errors'], s=80, marker=marker,
+                              color=color, label=impl_name.split('(')[0].strip(),
+                              alpha=0.8, linewidth=2)
+
+    ax_ferr.axhline(0, color='green', linestyle='--', alpha=0.5, linewidth=1.5)
+    ax_ferr.set_xlabel('Matched Mode Index', fontsize=11)
+    ax_ferr.set_ylabel('Frequency Error (Hz)', fontsize=11)
+    ax_ferr.set_title('Frequency Errors\n(estimated - true)', fontsize=12, fontweight='bold')
+    ax_ferr.legend(fontsize=9, loc='best')
+    ax_ferr.grid(True, alpha=0.3)
+
+    # 6. Mode Detection Chart (bottom row, left 2 columns)
+    ax_detect = fig.add_subplot(gs[2, :2])
+
+    bar_width = 0.25
+    x_pos = np.arange(len(impl_names) + 1)
+
+    # Statistics for each implementation
+    stats_data = []
+    labels_data = ['True modes']
+
+    matched_counts = [len(f_true)]
+    missed_counts = [0]
+    spurious_counts = [0]
+
+    for impl_name in impl_names:
+        if impl_name in results['implementations']:
+            impl = results['implementations'][impl_name]
+            stats = impl['match_stats']
+            labels_data.append(impl_name.split('(')[0].strip())
+            matched_counts.append(stats['matched'])
+            missed_counts.append(stats['missed'])
+            spurious_counts.append(stats['spurious'])
+
+    x_pos = np.arange(len(labels_data))
+
+    ax_detect.bar(x_pos - bar_width, matched_counts, bar_width,
+                 label='Matched', color='green', alpha=0.7, edgecolor='black')
+    ax_detect.bar(x_pos, missed_counts, bar_width,
+                 label='Missed', color='orange', alpha=0.7, edgecolor='black')
+    ax_detect.bar(x_pos + bar_width, spurious_counts, bar_width,
+                 label='Spurious', color='red', alpha=0.7, edgecolor='black')
+
+    ax_detect.set_xlabel('Implementation', fontsize=11)
+    ax_detect.set_ylabel('Mode Count', fontsize=11)
+    ax_detect.set_title('Mode Detection Statistics', fontsize=12, fontweight='bold')
+    ax_detect.set_xticks(x_pos)
+    ax_detect.set_xticklabels(labels_data, rotation=15, ha='right')
+    ax_detect.legend(fontsize=10)
+    ax_detect.grid(True, alpha=0.3, axis='y')
+
+    # 7. Performance Comparison (bottom row, right)
+    ax_perf = fig.add_subplot(gs[2, 2])
+
+    perf_labels = []
+    perf_times = []
+    perf_colors_bar = []
+
+    for impl_name, color in zip(['esprit.py (TLS-U)'] + impl_names, ['gray'] + colors):
+        if impl_name in results['implementations']:
+            impl = results['implementations'][impl_name]
+            perf_labels.append(impl_name.replace(' (TLS-U CPU)', '\n(CPU)').replace(' (TLS-U GPU)', '\n(GPU)'))
+            perf_times.append(impl['time'] * 1000)  # Convert to ms
+            perf_colors_bar.append(color)
+
+    x_perf = np.arange(len(perf_labels))
+    bars = ax_perf.bar(x_perf, perf_times, color=perf_colors_bar, alpha=0.7, edgecolor='black')
+
+    # Add value labels on bars
+    for bar, time_val in zip(bars, perf_times):
+        height = bar.get_height()
+        ax_perf.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{time_val:.0f}',
+                    ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    ax_perf.set_ylabel('Processing Time (ms)', fontsize=11)
+    ax_perf.set_title('Performance Comparison', fontsize=12, fontweight='bold')
+    ax_perf.set_xticks(x_perf)
+    ax_perf.set_xticklabels(perf_labels, fontsize=9)
+    ax_perf.grid(True, alpha=0.3, axis='y')
+
+    # Overall title
+    fig.suptitle(f'ESPRIT Comprehensive Synthetic Test: {len(true_modes)} Modes, '
+                f'{results["config"]["f_min"]:.0f}-{results["config"]["f_max"]:.0f} Hz',
+                fontsize=16, fontweight='bold', y=0.995)
+
+    # Save figure
+    output_path = Path(__file__).parent / 'test_comprehensive_synthetic_plots.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"  Saved: {output_path}")
+
+    plt.show()
 
 
 if __name__ == '__main__':
