@@ -341,13 +341,13 @@ def run_comparison_test():
 def create_comparison_plots(true_modes, result_single, result_multi, signal_data, fs):
     """Create visualization comparing single-band vs multi-band."""
 
-    fig = plt.figure(figsize=(18, 10))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
+    fig = plt.figure(figsize=(20, 12))
+    gs = GridSpec(3, 4, figure=fig, hspace=0.35, wspace=0.3)
 
     true_freqs = np.array([f for f, _, _, _ in true_modes])
     true_freqs_sorted = np.sort(true_freqs)
 
-    # FFT Spectrum
+    # FFT Spectrum (top row, span all columns)
     ax_fft = fig.add_subplot(gs[0, :])
     from scipy.fft import rfft, rfftfreq
     fft_vals = rfft(signal_data)
@@ -359,21 +359,70 @@ def create_comparison_plots(true_modes, result_single, result_multi, signal_data
     for f in true_freqs:
         ax_fft.axvline(f, color='green', linestyle='--', alpha=0.3, linewidth=1)
 
-    # Mark band boundaries
-    for band_config in BAND_CONFIGS:
-        ax_fft.axvline(band_config.low_freq, color='orange', linestyle=':', alpha=0.5, linewidth=1.5)
-    ax_fft.axvline(BAND_CONFIGS[-1].high_freq, color='orange', linestyle=':', alpha=0.5, linewidth=1.5)
+    # Mark band boundaries and shade bands
+    band_colors = ['#FFE5E5', '#E5F5FF', '#E5FFE5', '#FFF5E5']
+    for i, band_config in enumerate(BAND_CONFIGS):
+        ax_fft.axvspan(band_config.low_freq, band_config.high_freq,
+                      alpha=0.15, color=band_colors[i], zorder=0)
+        ax_fft.axvline(band_config.low_freq, color='orange', linestyle=':', alpha=0.6, linewidth=1.5)
+    ax_fft.axvline(BAND_CONFIGS[-1].high_freq, color='orange', linestyle=':', alpha=0.6, linewidth=1.5)
 
     ax_fft.set_xlabel('Frequency (Hz)', fontsize=11)
     ax_fft.set_ylabel('Magnitude', fontsize=11)
-    ax_fft.set_title('Spectrum with Band Divisions (orange) and True Modes (green)',
+    ax_fft.set_title('Spectrum with Band Divisions (orange lines, colored shading) and True Modes (green dashed)',
                      fontsize=12, fontweight='bold')
     ax_fft.grid(True, alpha=0.3, which='both')
     ax_fft.set_xlim([0, 4400])
     ax_fft.legend(fontsize=10)
 
-    # Frequency comparison - Single-band
-    ax_single = fig.add_subplot(gs[1, 0])
+    # Band-by-band analysis (middle row, 4 subplots)
+    band_titles = [
+        f'Band 1: {BAND_CONFIGS[0].low_freq:.0f}-{BAND_CONFIGS[0].high_freq:.0f} Hz\n(decim x{BAND_CONFIGS[0].decimate_factor})',
+        f'Band 2: {BAND_CONFIGS[1].low_freq:.0f}-{BAND_CONFIGS[1].high_freq:.0f} Hz\n(decim x{BAND_CONFIGS[1].decimate_factor})',
+        f'Band 3: {BAND_CONFIGS[2].low_freq:.0f}-{BAND_CONFIGS[2].high_freq:.0f} Hz\n(decim x{BAND_CONFIGS[2].decimate_factor})',
+        f'Band 4: {BAND_CONFIGS[3].low_freq:.0f}-{BAND_CONFIGS[3].high_freq:.0f} Hz\n(decim x{BAND_CONFIGS[3].decimate_factor})'
+    ]
+
+    for i, (band_result, band_config, band_color) in enumerate(zip(
+            result_multi['band_results'], BAND_CONFIGS, band_colors)):
+
+        ax_band = fig.add_subplot(gs[1, i])
+
+        # True modes in this band
+        band_low, band_high = band_result['band_range']
+        true_in_band = true_freqs[(true_freqs >= band_low) & (true_freqs < band_high)]
+
+        # Plot true modes
+        if len(true_in_band) > 0:
+            y_true = np.ones(len(true_in_band)) * 1.0
+            ax_band.scatter(true_in_band, y_true, s=150, marker='o',
+                          color='green', label='True', alpha=0.7,
+                          edgecolors='black', linewidth=2, zorder=3)
+
+        # Plot detected modes
+        if band_result['n_modes'] > 0:
+            y_detected = np.ones(len(band_result['frequencies'])) * 0.5
+            ax_band.scatter(band_result['frequencies'], y_detected, s=120, marker='x',
+                          color='red', label='Detected', alpha=0.9, linewidth=3, zorder=2)
+
+        ax_band.set_xlim([band_low - 50, band_high + 50])
+        ax_band.set_ylim([0, 1.5])
+        ax_band.set_xlabel('Frequency (Hz)', fontsize=10)
+        ax_band.set_yticks([])
+        ax_band.set_title(band_titles[i], fontsize=10, fontweight='bold')
+        ax_band.axvspan(band_low, band_high, alpha=0.1, color=band_color, zorder=0)
+        ax_band.axvline(band_low, color='orange', linestyle=':', alpha=0.5, linewidth=1.5)
+        ax_band.axvline(band_high, color='orange', linestyle=':', alpha=0.5, linewidth=1.5)
+        ax_band.legend(fontsize=9, loc='upper right')
+        ax_band.grid(True, alpha=0.3, axis='x')
+
+        # Add text showing counts
+        ax_band.text(0.5, 0.05, f'{band_result["n_modes"]} detected / {len(true_in_band)} true',
+                    transform=ax_band.transAxes, ha='center', fontsize=9,
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+    # Frequency comparison - Single-band (bottom row, left 2 columns)
+    ax_single = fig.add_subplot(gs[2, :2])
 
     x_true = np.arange(len(true_freqs_sorted))
     ax_single.scatter(x_true, true_freqs_sorted, s=120, marker='o',
@@ -386,15 +435,20 @@ def create_comparison_plots(true_modes, result_single, result_multi, signal_data
         ax_single.scatter(x_est, freq_sorted, s=100, marker='x',
                          color='red', label='Detected', alpha=0.8, linewidth=2.5, zorder=2)
 
-    ax_single.set_xlabel('Mode Index', fontsize=11)
+    # Add band boundary lines
+    for band_config in BAND_CONFIGS:
+        ax_single.axhline(band_config.low_freq, color='orange', linestyle=':', alpha=0.3, linewidth=1)
+    ax_single.axhline(BAND_CONFIGS[-1].high_freq, color='orange', linestyle=':', alpha=0.3, linewidth=1)
+
+    ax_single.set_xlabel('Mode Index (sorted by frequency)', fontsize=11)
     ax_single.set_ylabel('Frequency (Hz)', fontsize=11)
     ax_single.set_title(f'Single-band: {len(result_single.frequencies)} modes detected',
                        fontsize=12, fontweight='bold')
     ax_single.legend(fontsize=10)
     ax_single.grid(True, alpha=0.3)
 
-    # Frequency comparison - Multi-band
-    ax_multi = fig.add_subplot(gs[1, 1])
+    # Frequency comparison - Multi-band (bottom row, right 2 columns)
+    ax_multi = fig.add_subplot(gs[2, 2:])
 
     ax_multi.scatter(x_true, true_freqs_sorted, s=120, marker='o',
                     color='green', label='True modes', alpha=0.7,
@@ -404,9 +458,14 @@ def create_comparison_plots(true_modes, result_single, result_multi, signal_data
         freq_sorted = np.sort(result_multi['frequencies'])
         x_est = np.arange(len(freq_sorted))
         ax_multi.scatter(x_est, freq_sorted, s=100, marker='x',
-                        color='blue', label='Detected', alpha=0.8, linewidth=2.5, zorder=2)
+                        color='blue', label='Detected (all bands)', alpha=0.8, linewidth=2.5, zorder=2)
 
-    ax_multi.set_xlabel('Mode Index', fontsize=11)
+    # Add band boundary lines
+    for band_config in BAND_CONFIGS:
+        ax_multi.axhline(band_config.low_freq, color='orange', linestyle=':', alpha=0.3, linewidth=1)
+    ax_multi.axhline(BAND_CONFIGS[-1].high_freq, color='orange', linestyle=':', alpha=0.3, linewidth=1)
+
+    ax_multi.set_xlabel('Mode Index (sorted by frequency)', fontsize=11)
     ax_multi.set_ylabel('Frequency (Hz)', fontsize=11)
     ax_multi.set_title(f'Multi-band (4 bands): {result_multi["n_modes"]} modes detected',
                       fontsize=12, fontweight='bold')
@@ -414,7 +473,7 @@ def create_comparison_plots(true_modes, result_single, result_multi, signal_data
     ax_multi.grid(True, alpha=0.3)
 
     # Overall title
-    fig.suptitle('Single-band vs Multi-band ESPRIT Comparison',
+    fig.suptitle('Multi-band ESPRIT: Band-by-Band Analysis',
                 fontsize=16, fontweight='bold')
 
     # Save
