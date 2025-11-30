@@ -1634,6 +1634,113 @@ with open('analysis_results.json', 'w') as f:
 
 ---
 
+### E. Recent Benchmarking Results (November 2025)
+
+See [BENCHMARKING_REPORT.md](BENCHMARKING_REPORT.md) for detailed analysis.
+
+**Key findings from 40-mode synthetic test (40 Hz - 4000 Hz)**:
+
+#### Adaptive Tolerance Matching
+
+Fixed 3 Hz tolerance is inappropriate for wide frequency ranges. Use **hybrid absolute + relative tolerance**:
+
+```python
+# For mode matching/validation
+tolerance = max(3.0, 0.05 * frequency)
+```
+
+- Low frequencies (< 60 Hz): 3 Hz absolute
+- High frequencies (> 60 Hz): 5% relative
+
+This correctly classifies high-frequency modes that have reasonable relative errors (e.g., 4000 Hz mode detected at 3797 Hz is 5.1% relative error, should be matched, not marked spurious).
+
+#### Stabilization Can Degrade Performance
+
+Stabilization is **not always beneficial**:
+
+**When stabilization helps**:
+- Clean signals with good SNR across all frequencies
+- Unknown number of modes
+- Need for automated mode selection
+
+**When stabilization degrades performance**:
+- Poor SNR at high frequencies (exponentially decaying amplitudes)
+- Model order already too high relative to true modes → overfitting
+- Numerical instability in eigenvalue decomposition at high model orders
+
+**Benchmark** (40 modes, model_order=90, SNR=34 dB):
+
+| Configuration | Matched | Freq RMSE | Time |
+|--------------|---------|-----------|------|
+| No stabilization | 24/40 | ~5 Hz | <1 min |
+| With stabilization | 33/40 | 23 Hz | 15+ min |
+
+**Conclusion**: Stabilization detected more modes but with catastrophically worse frequency precision (360% increase in RMSE).
+
+#### Model Order Optimization is Critical
+
+**Model order too low** (e.g., 50 for 40 modes):
+- Detects only ~model_order/2 modes due to conjugate pairs
+- Example: model_order=50 → detected 25/40 modes
+- Excellent precision for detected modes (~7 Hz RMSE)
+- Zero spurious detections
+
+**Model order too high** (e.g., 90 for 40 modes):
+- Overfitting to noise
+- Poor frequency precision
+- May detect spurious modes
+
+**Recommended**: model_order = 1.5-2.0 × expected_modes
+
+For 40 modes: model_order=60-80 (sweet spot not yet tested in benchmark)
+
+#### High-Frequency Damping Estimation Failure
+
+Damping ratio estimation **fails catastrophically above 1 kHz**:
+
+| Frequency | True Damping | Detected | Issue |
+|-----------|--------------|----------|-------|
+| 40-300 Hz | 1.0-2.3% | 1.0-2.2% | Good |
+| 300-1000 Hz | 2.3-3.1% | 1.6-2.2% | Moderate |
+| 1000-4000 Hz | 3.2-4.0% | ~0% | **Failed** |
+
+**Root causes**:
+- Exponential amplitude decay (1.0 @ 40 Hz → 0.14 @ 4000 Hz)
+- Poor SNR at high frequencies with fixed noise level
+- Short signal duration relative to number of modes
+
+**Potential solutions** (under investigation):
+- Longer signal duration (4s or 8s instead of 2s)
+- Frequency-dependent processing (separate bands)
+- Amplitude compensation in damping estimation
+- Regularization or prior constraints on damping ratios
+
+#### Recommended Configuration for Wide-Band Analysis
+
+Based on benchmarking, for 40-4000 Hz range:
+
+```python
+result = esprit_modal_identification(
+    signals=data,
+    fs=8000,
+    model_order=70,           # 1.75× expected modes (sweet spot)
+    window_length=None,       # Auto: T//2
+    use_tls=True,             # Always use TLS
+    use_stabilization=False,  # Disable unless excellent SNR
+    use_conjugate_pairing=True,
+    min_freq=30.0,
+    freq_range=(30.0, 4400.0),
+    max_damping=0.05          # Expect lightly damped structural modes
+)
+```
+
+For high-frequency modes (> 1 kHz), consider:
+- Multi-band processing with frequency-specific parameters
+- Longer signal duration
+- Separate analysis for frequency sub-bands
+
+---
+
 **End of Guide**
 
-*Last updated: November 2024*
+*Last updated: November 2025*
