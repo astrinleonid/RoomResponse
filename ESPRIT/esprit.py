@@ -914,4 +914,6 @@ def stabilization_diagram_with_shapes(index_path: str, cube_path: str, band_inde
 # self_test()
 
 # Example call (uncomment and set paths if needed, add selected_r='1,3-5' for example)
-# stabilization_diagram_with_shapes("D:\\NEUMANN\\Modes_measurements\\out\\index.txt", "D:\\NEUMANN\\Modes_measurements\\out\\y_cube.bin", band_index=3, K=40, selected_r="")
+# Original: stabilization_diagram_with_shapes("D:\\NEUMANN\\Modes_measurements\\out\\index.txt", "D:\\NEUMANN\\Modes_measurements\\out\\y_cube.bin", band_index=3, K=40, selected_r="")
+# Piano data:
+# stabilization_diagram_with_shapes("D:\\repos\\RoomResponse\\esprit_data\\index.txt", "D:\\repos\\RoomResponse\\esprit_data\\y_cube.bin", band_index=0, K=30, selected_r="")

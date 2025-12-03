@@ -1,0 +1,1260 @@
+Ground truth (f,Q):
+ #0 f=120.00 Hz, Q=12.00
+ #1 f=145.00 Hz, Q=20.00
+ #2 f=168.00 Hz, Q=15.00
+ #3 f=185.00 Hz, Q=8.00
+ #4 f=210.00 Hz, Q=25.00
+ #5 f=235.00 Hz, Q=18.00
+[SELFTEST] Top singular values: S1=9.253e+00 S2=8.076e+00 S3=6.316e+00
+[TLS-V] m=120 K=12 |Z| Smax=1.414e+00 Smin=5.176e-17 cond=2.732e+16
+[TLS-V] residual = 1.879e-15
+[TLS-V] |lambda| range: [0.911908 .. 0.971503]
+[TLS-V lambda 0] 0.553416 + 0.785541i
+[TLS-V lambda 1] 0.553416 + -0.785541i
+[TLS-V lambda 2] -0.283643 + 0.905903i
+[TLS-V lambda 3] -0.283643 + -0.905903i
+[TLS-V lambda 4] 0.391127 + 0.889291i
+[TLS-V lambda 5] 0.391127 + -0.889291i
+[TLS-V lambda 6] -0.100440 + 0.961828i
+[TLS-V lambda 7] -0.100440 + -0.961828i
+[TLS-V lambda 8] 0.218876 + 0.930936i
+[TLS-V lambda 9] 0.218876 + -0.930936i
+[TLS-V lambda 10] 0.086807 + 0.907767i
+[TLS-V lambda 11] 0.086807 + -0.907767i
+[MODE raw] f=120.00 Hz Q=12.01 zeta=0.0416
+[MODE raw] f=235.00 Hz Q=18.01 zeta=0.0278
+[MODE raw] f=145.00 Hz Q=20.01 zeta=0.0250
+[MODE raw] f=210.00 Hz Q=25.00 zeta=0.0200
+[MODE raw] f=168.00 Hz Q=15.01 zeta=0.0333
+[MODE raw] f=185.00 Hz Q=8.02 zeta=0.0624
+[MAP] dt=0.00126933 s, modes=6; f[0]=120.00..f[5]=235.00 Hz
+[MODE V 0] f=120.00 Hz Q=12.01 zeta=0.0416
+[MODE V 1] f=145.00 Hz Q=20.01 zeta=0.0250
+[MODE V 2] f=168.00 Hz Q=15.01 zeta=0.0333
+[MODE V 3] f=185.00 Hz Q=8.02 zeta=0.0624
+[MODE V 4] f=210.00 Hz Q=25.00 zeta=0.0200
+[MODE V 5] f=235.00 Hz Q=18.01 zeta=0.0278
+[SELFTEST] Done.
+Processing 10 selected excitation points: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[PROCESS] Processing excitation point r=0 (index 0)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=1.188e-11 cond=1.190e+11
+[TLS-U] residual = 1.825e-15
+[TLS-U] |lambda| range: [0.993922 .. 0.998726]
+[TLS-U lambda 0] 0.944233 + 0.312410i
+[TLS-U lambda 1] 0.944233 + -0.312410i
+[TLS-U lambda 2] 0.958843 + 0.271454i
+[TLS-U lambda 3] 0.958843 + -0.271454i
+[TLS-U lambda 4] 0.963289 + 0.258094i
+[TLS-U lambda 5] 0.963289 + -0.258094i
+[TLS-U lambda 6] 0.970073 + 0.216423i
+[TLS-U lambda 7] 0.970073 + -0.216423i
+[TLS-U lambda 8] 0.973704 + 0.202988i
+[TLS-U lambda 9] 0.973704 + -0.202988i
+[TLS-U lambda 10] 0.984104 + 0.158988i
+[TLS-U lambda 11] 0.984104 + -0.158988i
+[TLS-U lambda 12] 0.985407 + 0.137502i
+[TLS-U lambda 13] 0.985407 + -0.137502i
+[TLS-U lambda 14] 0.988230 + 0.131333i
+[TLS-U lambda 15] 0.988230 + -0.131333i
+[TLS-U lambda 16] 0.990487 + 0.120218i
+[TLS-U lambda 17] 0.990487 + -0.120218i
+[TLS-U lambda 18] 0.990235 + 0.118293i
+[TLS-U lambda 19] 0.990235 + -0.118293i
+[TLS-U lambda 20] 0.989716 + 0.106243i
+[TLS-U lambda 21] 0.989716 + -0.106243i
+[TLS-U lambda 22] 0.998457 + 0.023163i
+[TLS-U lambda 23] 0.998457 + -0.023163i
+[TLS-U lambda 24] 0.996569 + 0.038691i
+[TLS-U lambda 25] 0.996569 + -0.038691i
+[TLS-U lambda 26] 0.996090 + 0.064812i
+[TLS-U lambda 27] 0.996090 + -0.064812i
+[TLS-U lambda 28] 0.992332 + 0.073020i
+[TLS-U lambda 29] 0.992332 + -0.073020i
+[MODE raw] f=610.25 Hz Q=29.37 zeta=0.0170
+[MODE raw] f=526.90 Hz Q=39.65 zeta=0.0126
+[MODE raw] f=499.97 Hz Q=47.80 zeta=0.0105
+[MODE raw] f=419.22 Hz Q=18.01 zeta=0.0278
+[MODE raw] f=392.53 Hz Q=19.12 zeta=0.0262
+[MODE raw] f=305.91 Hz Q=25.50 zeta=0.0196
+[MODE raw] f=264.79 Hz Q=13.71 zeta=0.0365
+[MODE raw] f=252.34 Hz Q=21.41 zeta=0.0234
+[MODE raw] f=230.68 Hz Q=26.89 zeta=0.0186
+[MODE raw] f=227.07 Hz Q=21.80 zeta=0.0229
+[MODE raw] f=204.24 Hz Q=11.61 zeta=0.0431
+[MODE raw] f=44.30 Hz Q=9.11 zeta=0.0549
+[MODE raw] f=74.11 Hz Q=7.25 zeta=0.0690
+[MODE raw] f=124.09 Hz Q=18.01 zeta=0.0278
+[MODE raw] f=140.28 Hz Q=7.37 zeta=0.0679
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=44.30..f[14]=610.25 Hz
+[PROCESS] Processing excitation point r=1 (index 1)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=7.687e-12 cond=1.840e+11
+[TLS-U] residual = 2.114e-15
+[TLS-U] |lambda| range: [0.992482 .. 0.999695]
+[TLS-U lambda 0] 0.944714 + 0.311624i
+[TLS-U lambda 1] 0.944714 + -0.311624i
+[TLS-U lambda 2] 0.958598 + 0.270924i
+[TLS-U lambda 3] 0.958598 + -0.270924i
+[TLS-U lambda 4] 0.964515 + 0.250788i
+[TLS-U lambda 5] 0.964515 + -0.250788i
+[TLS-U lambda 6] 0.969869 + 0.213562i
+[TLS-U lambda 7] 0.969869 + -0.213562i
+[TLS-U lambda 8] 0.973361 + 0.202909i
+[TLS-U lambda 9] 0.973361 + -0.202909i
+[TLS-U lambda 10] 0.984158 + 0.158885i
+[TLS-U lambda 11] 0.984158 + -0.158885i
+[TLS-U lambda 12] 0.986159 + 0.136527i
+[TLS-U lambda 13] 0.986159 + -0.136527i
+[TLS-U lambda 14] 0.988239 + 0.131122i
+[TLS-U lambda 15] 0.988239 + -0.131122i
+[TLS-U lambda 16] 0.990552 + 0.119486i
+[TLS-U lambda 17] 0.990552 + -0.119486i
+[TLS-U lambda 18] 0.989786 + 0.107886i
+[TLS-U lambda 19] 0.989786 + -0.107886i
+[TLS-U lambda 20] 0.989165 + 0.081083i
+[TLS-U lambda 21] 0.989165 + -0.081083i
+[TLS-U lambda 22] 0.996163 + 0.064661i
+[TLS-U lambda 23] 0.996163 + -0.064661i
+[TLS-U lambda 24] 0.997126 + 0.039814i
+[TLS-U lambda 25] 0.997126 + -0.039814i
+[TLS-U lambda 26] 0.998786 + 0.025633i
+[TLS-U lambda 27] 0.998786 + -0.025633i
+[TLS-U lambda 28] 0.999455 + 0.021901i
+[TLS-U lambda 29] 0.999455 + -0.021901i
+[MODE raw] f=608.52 Hz Q=30.46 zeta=0.0164
+[MODE raw] f=526.05 Hz Q=35.68 zeta=0.0140
+[MODE raw] f=485.83 Hz Q=37.20 zeta=0.0134
+[MODE raw] f=413.94 Hz Q=15.67 zeta=0.0319
+[MODE raw] f=392.51 Hz Q=17.94 zeta=0.0279
+[MODE raw] f=305.70 Hz Q=25.79 zeta=0.0194
+[MODE raw] f=262.74 Hz Q=15.48 zeta=0.0323
+[MODE raw] f=251.93 Hz Q=21.25 zeta=0.0235
+[MODE raw] f=229.27 Hz Q=26.45 zeta=0.0189
+[MODE raw] f=207.35 Hz Q=12.46 zeta=0.0401
+[MODE raw] f=156.20 Hz Q=5.44 zeta=0.0919
+[MODE raw] f=123.80 Hz Q=18.61 zeta=0.0269
+[MODE raw] f=76.22 Hz Q=9.60 zeta=0.0521
+[MODE raw] f=49.00 Hz Q=14.50 zeta=0.0345
+[MODE raw] f=41.84 Hz Q=35.95 zeta=0.0139
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.84..f[14]=608.52 Hz
+[PROCESS] Processing excitation point r=2 (index 2)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=1.933e-12 cond=7.316e+11
+[TLS-U] residual = 1.273e-15
+[TLS-U] |lambda| range: [0.993344 .. 0.998708]
+[TLS-U lambda 0] 0.946971 + 0.307885i
+[TLS-U lambda 1] 0.946971 + -0.307885i
+[TLS-U lambda 2] 0.958431 + 0.270356i
+[TLS-U lambda 3] 0.958431 + -0.270356i
+[TLS-U lambda 4] 0.967642 + 0.226248i
+[TLS-U lambda 5] 0.967642 + -0.226248i
+[TLS-U lambda 6] 0.973056 + 0.204207i
+[TLS-U lambda 7] 0.973056 + -0.204207i
+[TLS-U lambda 8] 0.979116 + 0.183771i
+[TLS-U lambda 9] 0.979116 + -0.183771i
+[TLS-U lambda 10] 0.984059 + 0.159084i
+[TLS-U lambda 11] 0.984059 + -0.159084i
+[TLS-U lambda 12] 0.986232 + 0.136444i
+[TLS-U lambda 13] 0.986232 + -0.136444i
+[TLS-U lambda 14] 0.988076 + 0.131229i
+[TLS-U lambda 15] 0.988076 + -0.131229i
+[TLS-U lambda 16] 0.990560 + 0.119761i
+[TLS-U lambda 17] 0.990560 + -0.119761i
+[TLS-U lambda 18] 0.989809 + 0.107649i
+[TLS-U lambda 19] 0.989809 + -0.107649i
+[TLS-U lambda 20] 0.990024 + 0.081153i
+[TLS-U lambda 21] 0.990024 + -0.081153i
+[TLS-U lambda 22] 0.996130 + 0.064953i
+[TLS-U lambda 23] 0.996130 + -0.064953i
+[TLS-U lambda 24] 0.995917 + 0.041555i
+[TLS-U lambda 25] 0.995917 + -0.041555i
+[TLS-U lambda 26] 0.998173 + 0.026300i
+[TLS-U lambda 27] 0.998173 + -0.026300i
+[TLS-U lambda 28] 0.998511 + 0.019830i
+[TLS-U lambda 29] 0.998511 + -0.019830i
+[MODE raw] f=600.36 Hz Q=37.03 zeta=0.0135
+[MODE raw] f=525.09 Hz Q=32.92 zeta=0.0152
+[MODE raw] f=438.67 Hz Q=18.29 zeta=0.0273
+[MODE raw] f=395.07 Hz Q=17.95 zeta=0.0279
+[MODE raw] f=354.34 Hz Q=24.45 zeta=0.0204
+[MODE raw] f=306.10 Hz Q=25.28 zeta=0.0198
+[MODE raw] f=262.56 Hz Q=15.69 zeta=0.0319
+[MODE raw] f=252.18 Hz Q=20.30 zeta=0.0246
+[MODE raw] f=229.79 Hz Q=26.99 zeta=0.0185
+[MODE raw] f=206.90 Hz Q=12.42 zeta=0.0403
+[MODE raw] f=156.20 Hz Q=6.14 zeta=0.0814
+[MODE raw] f=124.36 Hz Q=18.54 zeta=0.0270
+[MODE raw] f=79.64 Hz Q=6.49 zeta=0.0770
+[MODE raw] f=50.31 Hz Q=8.90 zeta=0.0562
+[MODE raw] f=37.92 Hz Q=7.69 zeta=0.0650
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=37.92..f[14]=600.36 Hz
+[PROCESS] Processing excitation point r=3 (index 3)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=1.220e-12 cond=1.160e+12
+[TLS-U] residual = 1.154e-15
+[TLS-U] |lambda| range: [0.992229 .. 0.998273]
+[TLS-U lambda 0] 0.947590 + 0.305648i
+[TLS-U lambda 1] 0.947590 + -0.305648i
+[TLS-U lambda 2] 0.958037 + 0.270652i
+[TLS-U lambda 3] 0.958037 + -0.270652i
+[TLS-U lambda 4] 0.967287 + 0.221073i
+[TLS-U lambda 5] 0.967287 + -0.221073i
+[TLS-U lambda 6] 0.973291 + 0.203344i
+[TLS-U lambda 7] 0.973291 + -0.203344i
+[TLS-U lambda 8] 0.984035 + 0.159207i
+[TLS-U lambda 9] 0.984035 + -0.159207i
+[TLS-U lambda 10] 0.985273 + 0.137651i
+[TLS-U lambda 11] 0.985273 + -0.137651i
+[TLS-U lambda 12] 0.988188 + 0.131632i
+[TLS-U lambda 13] 0.988188 + -0.131632i
+[TLS-U lambda 14] 0.990282 + 0.120426i
+[TLS-U lambda 15] 0.990282 + -0.120426i
+[TLS-U lambda 16] 0.989352 + 0.110799i
+[TLS-U lambda 17] 0.989352 + -0.110799i
+[TLS-U lambda 18] 0.987749 + 0.099826i
+[TLS-U lambda 19] 0.987749 + -0.099826i
+[TLS-U lambda 20] 0.993141 + 0.078408i
+[TLS-U lambda 21] 0.993141 + -0.078408i
+[TLS-U lambda 22] 0.996161 + 0.064892i
+[TLS-U lambda 23] 0.996161 + -0.064892i
+[TLS-U lambda 24] 0.997012 + 0.019733i
+[TLS-U lambda 25] 0.997012 + -0.019733i
+[TLS-U lambda 26] 0.994678 + 0.030255i
+[TLS-U lambda 27] 0.994678 + -0.030255i
+[TLS-U lambda 28] 0.994498 + 0.041178i
+[TLS-U lambda 29] 0.994498 + -0.041178i
+[MODE raw] f=595.91 Hz Q=35.91 zeta=0.0139
+[MODE raw] f=525.85 Hz Q=30.76 zeta=0.0163
+[MODE raw] f=429.13 Hz Q=14.41 zeta=0.0347
+[MODE raw] f=393.36 Hz Q=18.04 zeta=0.0277
+[MODE raw] f=306.34 Hz Q=25.27 zeta=0.0198
+[MODE raw] f=265.11 Hz Q=13.43 zeta=0.0372
+[MODE raw] f=252.92 Hz Q=21.44 zeta=0.0233
+[MODE raw] f=231.12 Hz Q=24.95 zeta=0.0200
+[MODE raw] f=213.00 Hz Q=12.48 zeta=0.0401
+[MODE raw] f=192.36 Hz Q=6.97 zeta=0.0717
+[MODE raw] f=150.47 Hz Q=10.44 zeta=0.0479
+[MODE raw] f=124.24 Hz Q=18.82 zeta=0.0266
+[MODE raw] f=37.80 Hz Q=3.57 zeta=0.1400
+[MODE raw] f=58.07 Hz Q=3.16 zeta=0.1582
+[MODE raw] f=79.03 Hz Q=4.47 zeta=0.1119
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=37.80..f[14]=595.91 Hz
+[PROCESS] Processing excitation point r=4 (index 4)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=2.683e-12 cond=5.271e+11
+[TLS-U] residual = 2.389e-15
+[TLS-U] |lambda| range: [0.993267 .. 0.998895]
+[TLS-U lambda 0] 0.948775 + 0.303760i
+[TLS-U lambda 1] 0.948775 + -0.303760i
+[TLS-U lambda 2] 0.958577 + 0.270380i
+[TLS-U lambda 3] 0.958577 + -0.270380i
+[TLS-U lambda 4] 0.968061 + 0.222346i
+[TLS-U lambda 5] 0.968061 + -0.222346i
+[TLS-U lambda 6] 0.973638 + 0.203207i
+[TLS-U lambda 7] 0.973638 + -0.203207i
+[TLS-U lambda 8] 0.983984 + 0.159301i
+[TLS-U lambda 9] 0.983984 + -0.159301i
+[TLS-U lambda 10] 0.984930 + 0.140641i
+[TLS-U lambda 11] 0.984930 + -0.140641i
+[TLS-U lambda 12] 0.989200 + 0.132787i
+[TLS-U lambda 13] 0.989200 + -0.132787i
+[TLS-U lambda 14] 0.987589 + 0.130914i
+[TLS-U lambda 15] 0.987589 + -0.130914i
+[TLS-U lambda 16] 0.990704 + 0.119616i
+[TLS-U lambda 17] 0.990704 + -0.119616i
+[TLS-U lambda 18] 0.989525 + 0.107088i
+[TLS-U lambda 19] 0.989525 + -0.107088i
+[TLS-U lambda 20] 0.993245 + 0.081491i
+[TLS-U lambda 21] 0.993245 + -0.081491i
+[TLS-U lambda 22] 0.995949 + 0.064826i
+[TLS-U lambda 23] 0.995949 + -0.064826i
+[TLS-U lambda 24] 0.998631 + 0.022995i
+[TLS-U lambda 25] 0.998631 + -0.022995i
+[TLS-U lambda 26] 0.997702 + 0.041594i
+[TLS-U lambda 27] 0.997702 + -0.041594i
+[TLS-U lambda 28] 0.997138 + 0.035012i
+[TLS-U lambda 29] 0.997138 + -0.035012i
+[MODE raw] f=591.77 Hz Q=40.85 zeta=0.0122
+[MODE raw] f=525.06 Hz Q=34.12 zeta=0.0147
+[MODE raw] f=431.18 Hz Q=16.72 zeta=0.0299
+[MODE raw] f=392.96 Hz Q=19.07 zeta=0.0262
+[MODE raw] f=306.54 Hz Q=25.01 zeta=0.0200
+[MODE raw] f=270.88 Hz Q=13.94 zeta=0.0359
+[MODE raw] f=254.85 Hz Q=34.59 zeta=0.0145
+[MODE raw] f=251.70 Hz Q=17.44 zeta=0.0287
+[MODE raw] f=229.48 Hz Q=28.57 zeta=0.0175
+[MODE raw] f=205.89 Hz Q=11.46 zeta=0.0436
+[MODE raw] f=156.35 Hz Q=11.97 zeta=0.0418
+[MODE raw] f=124.14 Hz Q=16.71 zeta=0.0299
+[MODE raw] f=43.97 Hz Q=10.43 zeta=0.0480
+[MODE raw] f=79.57 Hz Q=14.55 zeta=0.0344
+[MODE raw] f=67.03 Hz Q=7.82 zeta=0.0640
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=43.97..f[14]=591.77 Hz
+[PROCESS] Processing excitation point r=5 (index 5)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=8.061e-12 cond=1.754e+11
+[TLS-U] residual = 1.067e-15
+[TLS-U] |lambda| range: [0.993008 .. 0.999545]
+[TLS-U lambda 0] 0.948585 + 0.306036i
+[TLS-U lambda 1] 0.948585 + -0.306036i
+[TLS-U lambda 2] 0.958394 + 0.270116i
+[TLS-U lambda 3] 0.958394 + -0.270116i
+[TLS-U lambda 4] 0.966548 + 0.227703i
+[TLS-U lambda 5] 0.966548 + -0.227703i
+[TLS-U lambda 6] 0.973790 + 0.203752i
+[TLS-U lambda 7] 0.973790 + -0.203752i
+[TLS-U lambda 8] 0.983992 + 0.159268i
+[TLS-U lambda 9] 0.983992 + -0.159268i
+[TLS-U lambda 10] 0.984812 + 0.141457i
+[TLS-U lambda 11] 0.984812 + -0.141457i
+[TLS-U lambda 12] 0.988360 + 0.134730i
+[TLS-U lambda 13] 0.988360 + -0.134730i
+[TLS-U lambda 14] 0.988115 + 0.131219i
+[TLS-U lambda 15] 0.988115 + -0.131219i
+[TLS-U lambda 16] 0.990734 + 0.119803i
+[TLS-U lambda 17] 0.990734 + -0.119803i
+[TLS-U lambda 18] 0.989589 + 0.106990i
+[TLS-U lambda 19] 0.989589 + -0.106990i
+[TLS-U lambda 20] 0.992326 + 0.081252i
+[TLS-U lambda 21] 0.992326 + -0.081252i
+[TLS-U lambda 22] 0.996047 + 0.064897i
+[TLS-U lambda 23] 0.996047 + -0.064897i
+[TLS-U lambda 24] 0.996860 + 0.040746i
+[TLS-U lambda 25] 0.996860 + -0.040746i
+[TLS-U lambda 26] 0.999035 + 0.024267i
+[TLS-U lambda 27] 0.999035 + -0.024267i
+[TLS-U lambda 28] 0.999311 + 0.021638i
+[TLS-U lambda 29] 0.999311 + -0.021638i
+[MODE raw] f=596.03 Hz Q=47.64 zeta=0.0105
+[MODE raw] f=524.67 Hz Q=32.12 zeta=0.0156
+[MODE raw] f=441.87 Hz Q=16.49 zeta=0.0303
+[MODE raw] f=393.93 Hz Q=20.09 zeta=0.0249
+[MODE raw] f=306.47 Hz Q=25.02 zeta=0.0200
+[MODE raw] f=272.47 Hz Q=14.01 zeta=0.0357
+[MODE raw] f=258.75 Hz Q=27.08 zeta=0.0185
+[MODE raw] f=252.15 Hz Q=20.54 zeta=0.0243
+[MODE raw] f=229.83 Hz Q=29.35 zeta=0.0170
+[MODE raw] f=205.69 Hz Q=11.58 zeta=0.0432
+[MODE raw] f=156.03 Hz Q=9.38 zeta=0.0533
+[MODE raw] f=124.26 Hz Q=17.66 zeta=0.0283
+[MODE raw] f=78.02 Hz Q=8.86 zeta=0.0565
+[MODE raw] f=46.38 Hz Q=18.10 zeta=0.0276
+[MODE raw] f=41.35 Hz Q=23.78 zeta=0.0210
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.35..f[14]=596.03 Hz
+[PROCESS] Processing excitation point r=6 (index 6)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=5.221e-12 cond=2.709e+11
+[TLS-U] residual = 1.214e-15
+[TLS-U] |lambda| range: [0.992970 .. 0.999036]
+[TLS-U lambda 0] 0.947312 + 0.309998i
+[TLS-U lambda 1] 0.947312 + -0.309998i
+[TLS-U lambda 2] 0.958617 + 0.270479i
+[TLS-U lambda 3] 0.958617 + -0.270479i
+[TLS-U lambda 4] 0.965716 + 0.231048i
+[TLS-U lambda 5] 0.965716 + -0.231048i
+[TLS-U lambda 6] 0.973666 + 0.203759i
+[TLS-U lambda 7] 0.973666 + -0.203759i
+[TLS-U lambda 8] 0.983951 + 0.162720i
+[TLS-U lambda 9] 0.983951 + -0.162720i
+[TLS-U lambda 10] 0.984454 + 0.159081i
+[TLS-U lambda 11] 0.984454 + -0.159081i
+[TLS-U lambda 12] 0.986441 + 0.137230i
+[TLS-U lambda 13] 0.986441 + -0.137230i
+[TLS-U lambda 14] 0.988155 + 0.131480i
+[TLS-U lambda 15] 0.988155 + -0.131480i
+[TLS-U lambda 16] 0.990636 + 0.119704i
+[TLS-U lambda 17] 0.990636 + -0.119704i
+[TLS-U lambda 18] 0.990033 + 0.108239i
+[TLS-U lambda 19] 0.990033 + -0.108239i
+[TLS-U lambda 20] 0.998770 + 0.023070i
+[TLS-U lambda 21] 0.998770 + -0.023070i
+[TLS-U lambda 22] 0.997062 + 0.039513i
+[TLS-U lambda 23] 0.997062 + -0.039513i
+[TLS-U lambda 24] 0.995988 + 0.064735i
+[TLS-U lambda 25] 0.995988 + -0.064735i
+[TLS-U lambda 26] 0.991623 + 0.086921i
+[TLS-U lambda 27] 0.991623 + -0.086921i
+[TLS-U lambda 28] 0.993737 + 0.078825i
+[TLS-U lambda 29] 0.993737 + -0.078825i
+[MODE raw] f=604.01 Hz Q=48.50 zeta=0.0103
+[MODE raw] f=525.22 Hz Q=34.70 zeta=0.0144
+[MODE raw] f=448.50 Hz Q=16.65 zeta=0.0300
+[MODE raw] f=393.99 Hz Q=19.63 zeta=0.0255
+[MODE raw] f=313.01 Hz Q=30.48 zeta=0.0164
+[MODE raw] f=305.97 Hz Q=28.82 zeta=0.0173
+[MODE raw] f=264.00 Hz Q=17.00 zeta=0.0294
+[MODE raw] f=252.63 Hz Q=21.06 zeta=0.0237
+[MODE raw] f=229.67 Hz Q=27.83 zeta=0.0180
+[MODE raw] f=207.98 Hz Q=13.37 zeta=0.0374
+[MODE raw] f=44.11 Hz Q=11.98 zeta=0.0417
+[MODE raw] f=75.65 Hz Q=9.19 zeta=0.0544
+[MODE raw] f=123.96 Hz Q=16.97 zeta=0.0295
+[MODE raw] f=166.98 Hz Q=9.55 zeta=0.0524
+[MODE raw] f=151.18 Hz Q=12.59 zeta=0.0397
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=44.11..f[14]=604.01 Hz
+[PROCESS] Processing excitation point r=7 (index 7)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=4.313e-12 cond=3.279e+11
+[TLS-U] residual = 1.510e-15
+[TLS-U] |lambda| range: [0.993156 .. 0.998911]
+[TLS-U lambda 0] 0.958837 + 0.271028i
+[TLS-U lambda 1] 0.958837 + -0.271028i
+[TLS-U lambda 2] 0.964547 + 0.236659i
+[TLS-U lambda 3] 0.964547 + -0.236659i
+[TLS-U lambda 4] 0.972639 + 0.206281i
+[TLS-U lambda 5] 0.972639 + -0.206281i
+[TLS-U lambda 6] 0.979483 + 0.189033i
+[TLS-U lambda 7] 0.979483 + -0.189033i
+[TLS-U lambda 8] 0.983906 + 0.159238i
+[TLS-U lambda 9] 0.983906 + -0.159238i
+[TLS-U lambda 10] 0.985155 + 0.149201i
+[TLS-U lambda 11] 0.985155 + -0.149201i
+[TLS-U lambda 12] 0.987208 + 0.136641i
+[TLS-U lambda 13] 0.987208 + -0.136641i
+[TLS-U lambda 14] 0.987852 + 0.131131i
+[TLS-U lambda 15] 0.987852 + -0.131131i
+[TLS-U lambda 16] 0.990555 + 0.119687i
+[TLS-U lambda 17] 0.990555 + -0.119687i
+[TLS-U lambda 18] 0.989937 + 0.106698i
+[TLS-U lambda 19] 0.989937 + -0.106698i
+[TLS-U lambda 20] 0.993195 + 0.079736i
+[TLS-U lambda 21] 0.993195 + -0.079736i
+[TLS-U lambda 22] 0.995867 + 0.064851i
+[TLS-U lambda 23] 0.995867 + -0.064851i
+[TLS-U lambda 24] 0.998650 + 0.022830i
+[TLS-U lambda 25] 0.998650 + -0.022830i
+[TLS-U lambda 26] 0.997494 + 0.042159i
+[TLS-U lambda 27] 0.997494 + -0.042159i
+[TLS-U lambda 28] 0.996519 + 0.035791i
+[TLS-U lambda 29] 0.996519 + -0.035791i
+[MODE raw] f=526.12 Hz Q=38.25 zeta=0.0131
+[MODE raw] f=459.52 Hz Q=17.52 zeta=0.0285
+[MODE raw] f=399.14 Hz Q=18.20 zeta=0.0275
+[MODE raw] f=364.11 Hz Q=38.98 zeta=0.0128
+[MODE raw] f=306.44 Hz Q=24.34 zeta=0.0205
+[MODE raw] f=287.06 Hz Q=20.78 zeta=0.0241
+[MODE raw] f=262.68 Hz Q=20.32 zeta=0.0246
+[MODE raw] f=252.05 Hz Q=18.92 zeta=0.0264
+[MODE raw] f=229.65 Hz Q=26.81 zeta=0.0186
+[MODE raw] f=205.06 Hz Q=12.38 zeta=0.0404
+[MODE raw] f=153.00 Hz Q=11.09 zeta=0.0451
+[MODE raw] f=124.19 Hz Q=16.06 zeta=0.0311
+[MODE raw] f=43.65 Hz Q=10.50 zeta=0.0476
+[MODE raw] f=80.67 Hz Q=13.07 zeta=0.0382
+[MODE raw] f=68.56 Hz Q=6.34 zeta=0.0789
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=43.65..f[14]=526.12 Hz
+[PROCESS] Processing excitation point r=8 (index 8)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=3.124e-12 cond=4.528e+11
+[TLS-U] residual = 2.191e-15
+[TLS-U] |lambda| range: [0.986939 .. 0.998445]
+[TLS-U lambda 0] 0.958019 + 0.270312i
+[TLS-U lambda 1] 0.958019 + -0.270312i
+[TLS-U lambda 2] 0.961801 + 0.228202i
+[TLS-U lambda 3] 0.961801 + -0.228202i
+[TLS-U lambda 4] 0.973585 + 0.202389i
+[TLS-U lambda 5] 0.973585 + -0.202389i
+[TLS-U lambda 6] 0.981291 + 0.163593i
+[TLS-U lambda 7] 0.981291 + -0.163593i
+[TLS-U lambda 8] 0.984507 + 0.159022i
+[TLS-U lambda 9] 0.984507 + -0.159022i
+[TLS-U lambda 10] 0.985973 + 0.136985i
+[TLS-U lambda 11] 0.985973 + -0.136985i
+[TLS-U lambda 12] 0.988280 + 0.131852i
+[TLS-U lambda 13] 0.988280 + -0.131852i
+[TLS-U lambda 14] 0.990854 + 0.120196i
+[TLS-U lambda 15] 0.990854 + -0.120196i
+[TLS-U lambda 16] 0.989178 + 0.108585i
+[TLS-U lambda 17] 0.989178 + -0.108585i
+[TLS-U lambda 18] 0.997472 + 0.019118i
+[TLS-U lambda 19] 0.997472 + -0.019118i
+[TLS-U lambda 20] 0.995830 + 0.026817i
+[TLS-U lambda 21] 0.995830 + -0.026817i
+[TLS-U lambda 22] 0.993939 + 0.041061i
+[TLS-U lambda 23] 0.993939 + -0.041061i
+[TLS-U lambda 24] 0.984010 + 0.075981i
+[TLS-U lambda 25] 0.984010 + -0.075981i
+[TLS-U lambda 26] 0.992058 + 0.078193i
+[TLS-U lambda 27] 0.992058 + -0.078193i
+[TLS-U lambda 28] 0.996366 + 0.064406i
+[TLS-U lambda 29] 0.996366 + -0.064406i
+[MODE raw] f=525.23 Hz Q=29.98 zeta=0.0167
+[MODE raw] f=444.92 Hz Q=10.08 zeta=0.0496
+[MODE raw] f=391.45 Hz Q=18.25 zeta=0.0274
+[MODE raw] f=315.50 Hz Q=15.95 zeta=0.0313
+[MODE raw] f=305.85 Hz Q=29.26 zeta=0.0171
+[MODE raw] f=263.66 Hz Q=15.12 zeta=0.0331
+[MODE raw] f=253.31 Hz Q=22.35 zeta=0.0224
+[MODE raw] f=230.55 Hz Q=32.04 zeta=0.0156
+[MODE raw] f=208.81 Hz Q=11.19 zeta=0.0447
+[MODE raw] f=36.60 Hz Q=4.11 zeta=0.1216
+[MODE raw] f=51.42 Hz Q=3.56 zeta=0.1403
+[MODE raw] f=78.85 Hz Q=3.98 zeta=0.1256
+[MODE raw] f=147.18 Hz Q=2.97 zeta=0.1682
+[MODE raw] f=150.22 Hz Q=8.08 zeta=0.0619
+[MODE raw] f=123.28 Hz Q=20.75 zeta=0.0241
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=36.60..f[14]=525.23 Hz
+[PROCESS] Processing excitation point r=9 (index 9)
+[TLS-U] m=16380 K=30 |Z| Smax=1.414e+00 Smin=9.591e-12 cond=1.474e+11
+[TLS-U] residual = 2.331e-15
+[TLS-U] |lambda| range: [0.992405 .. 0.999675]
+[TLS-U lambda 0] 0.958795 + 0.269306i
+[TLS-U lambda 1] 0.958795 + -0.269306i
+[TLS-U lambda 2] 0.965453 + 0.230071i
+[TLS-U lambda 3] 0.965453 + -0.230071i
+[TLS-U lambda 4] 0.974368 + 0.202481i
+[TLS-U lambda 5] 0.974368 + -0.202481i
+[TLS-U lambda 6] 0.983086 + 0.164841i
+[TLS-U lambda 7] 0.983086 + -0.164841i
+[TLS-U lambda 8] 0.984484 + 0.159353i
+[TLS-U lambda 9] 0.984484 + -0.159353i
+[TLS-U lambda 10] 0.986336 + 0.136925i
+[TLS-U lambda 11] 0.986336 + -0.136925i
+[TLS-U lambda 12] 0.988136 + 0.131642i
+[TLS-U lambda 13] 0.988136 + -0.131642i
+[TLS-U lambda 14] 0.990476 + 0.119982i
+[TLS-U lambda 15] 0.990476 + -0.119982i
+[TLS-U lambda 16] 0.989839 + 0.107864i
+[TLS-U lambda 17] 0.989839 + -0.107864i
+[TLS-U lambda 18] 0.992380 + 0.079488i
+[TLS-U lambda 19] 0.992380 + -0.079488i
+[TLS-U lambda 20] 0.990032 + 0.068594i
+[TLS-U lambda 21] 0.990032 + -0.068594i
+[TLS-U lambda 22] 0.996272 + 0.063890i
+[TLS-U lambda 23] 0.996272 + -0.063890i
+[TLS-U lambda 24] 0.996215 + 0.038892i
+[TLS-U lambda 25] 0.996215 + -0.038892i
+[TLS-U lambda 26] 0.998922 + 0.025166i
+[TLS-U lambda 27] 0.998922 + -0.025166i
+[TLS-U lambda 28] 0.999439 + 0.021684i
+[TLS-U lambda 29] 0.999439 + -0.021684i
+[MODE raw] f=522.96 Hz Q=33.32 zeta=0.0150
+[MODE raw] f=446.79 Hz Q=15.52 zeta=0.0322
+[MODE raw] f=391.31 Hz Q=21.23 zeta=0.0236
+[MODE raw] f=317.29 Hz Q=26.00 zeta=0.0192
+[MODE raw] f=306.48 Hz Q=29.65 zeta=0.0169
+[MODE raw] f=263.45 Hz Q=16.37 zeta=0.0305
+[MODE raw] f=252.95 Hz Q=21.10 zeta=0.0237
+[MODE raw] f=230.23 Hz Q=26.38 zeta=0.0190
+[MODE raw] f=207.30 Hz Q=12.60 zeta=0.0397
+[MODE raw] f=152.65 Hz Q=8.99 zeta=0.0556
+[MODE raw] f=132.11 Hz Q=4.56 zeta=0.1095
+[MODE raw] f=122.31 Hz Q=19.03 zeta=0.0263
+[MODE raw] f=74.52 Hz Q=6.46 zeta=0.0774
+[MODE raw] f=48.10 Hz Q=16.54 zeta=0.0302
+[MODE raw] f=41.43 Hz Q=33.32 zeta=0.0150
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.43..f[14]=522.96 Hz
+Common modes: 20
+Mode 0: f=41.30 Hz, zeta=0.0569
+Mode 1: f=50.55 Hz, zeta=0.0745
+Mode 2: f=71.06 Hz, zeta=0.0723
+Mode 3: f=78.46 Hz, zeta=0.0688
+Mode 4: f=123.86 Hz, zeta=0.0277
+Mode 5: f=136.20 Hz, zeta=0.0887
+Mode 6: f=154.22 Hz, zeta=0.0672
+Mode 7: f=205.87 Hz, zeta=0.0440
+Mode 8: f=229.76 Hz, zeta=0.0186
+Mode 9: f=252.41 Hz, zeta=0.0244
+Mode 10: f=256.80 Hz, zeta=0.0165
+Mode 11: f=265.23 Hz, zeta=0.0327
+Mode 12: f=306.76 Hz, zeta=0.0201
+Mode 13: f=359.23 Hz, zeta=0.0166
+Mode 14: f=393.62 Hz, zeta=0.0265
+Mode 15: f=423.37 Hz, zeta=0.0311
+Mode 16: f=446.71 Hz, zeta=0.0330
+Mode 17: f=519.91 Hz, zeta=0.0143
+Mode 18: f=594.57 Hz, zeta=0.0122
+Mode 19: f=605.78 Hz, zeta=0.0143
+D:\repos\RoomResponse
+Results saved to results.json
+Mode 0: Participation factors along r: [0.00551643 0.00270503 0.00910383 0.02024671 0.00661983 0.0021185
+ 0.00431682 0.00555967 0.02609167 0.00058711]
+Mode 0: Amplitudes in receivers (complex with sign): [-0.00074622-0.00146938j -0.0006944 -0.00037646j  0.01419888+0.00741212j
+  0.00183748-0.00028692j]
+Mode 1: Participation factors along r: [0.01044304 0.00769891 0.01701903 0.03456468 0.01289438 0.00701604
+ 0.01017101 0.01266078 0.0437831  0.00758136]
+Mode 1: Amplitudes in receivers (complex with sign): [0.0047487 -0.00249857j 0.00328794-0.00547862j 0.01310587+0.03184343j
+ 0.00351023+0.00100652j]
+Mode 2: Participation factors along r: [0.01295781 0.02499324 0.0342726  0.04896327 0.01966767 0.0258127
+ 0.02387236 0.02631457 0.06763992 0.03494287]
+Mode 2: Amplitudes in receivers (complex with sign): [ 8.65076618e-05+0.01693083j  3.08541887e-04+0.01802538j
+ -2.74311038e-02+0.05257539j  1.95564769e-03+0.02099163j]
+Mode 3: Participation factors along r: [0.01441862 0.03695665 0.04873775 0.06272    0.02218875 0.03961871
+ 0.03232806 0.03323769 0.0824746  0.04730231]
+Mode 3: Amplitudes in receivers (complex with sign): [-0.01892589+0.01996647j -0.01907524+0.02082794j -0.0594751 +0.04652236j
+ -0.01888948+0.0252048j ]
+Mode 4: Participation factors along r: [0.01816149 0.0300574  0.03153745 0.04023367 0.01895238 0.02722913
+ 0.02279882 0.02287644 0.04866831 0.02828909]
+Mode 4: Amplitudes in receivers (complex with sign): [ 0.05824118-0.05378115j  0.04801489-0.04137542j -0.04884038+0.00589028j
+ -0.01864659-0.01336277j]
+Mode 5: Participation factors along r: [0.02864838 0.03878474 0.04045938 0.07096688 0.02719799 0.03757546
+ 0.03188661 0.03224096 0.10606763 0.05081276]
+Mode 5: Amplitudes in receivers (complex with sign): [ 0.10410912+0.01567975j  0.0754637 +0.00474147j -0.08131905-0.06630431j
+  0.01201889-0.06669273j]
+Mode 6: Participation factors along r: [0.03304706 0.03012217 0.02064838 0.044405   0.02998741 0.02782157
+ 0.03235084 0.03460845 0.07959707 0.04133241]
+Mode 6: Amplitudes in receivers (complex with sign): [ 0.04440813+0.07235611j  0.03695006+0.04419552j -0.03098428-0.07333554j
+  0.05654353-0.02954457j]
+Mode 7: Participation factors along r: [0.05301239 0.06424545 0.05068328 0.02708004 0.05287476 0.04820173
+ 0.05124314 0.04980592 0.00867393 0.04328263]
+Mode 7: Amplitudes in receivers (complex with sign): [-0.122638  -0.04269687j -0.06036256+0.01575413j -0.05875539-0.04125057j
+  0.06621075+0.07539897j]
+Mode 8: Participation factors along r: [0.03782853 0.0478226  0.04315505 0.02935046 0.03328443 0.03488643
+ 0.03331095 0.03201164 0.01616832 0.02723775]
+Mode 8: Amplitudes in receivers (complex with sign): [ 0.01682848+0.00148718j  0.00377546-0.02194748j -0.03969161-0.1065984j
+ -0.07177964+0.03309587j]
+Mode 9: Participation factors along r: [0.05216203 0.06890667 0.06520607 0.04720947 0.05115964 0.05944078
+ 0.05926996 0.0590644  0.04020738 0.0604414 ]
+Mode 9: Amplitudes in receivers (complex with sign): [-0.06619206-0.07651448j -0.01767573+0.06139596j  0.08650046-0.10165002j
+ -0.09319955-0.08079623j]
+Mode 10: Participation factors along r: [0.04344163 0.05845219 0.05554866 0.04193061 0.04353628 0.05193965
+ 0.05179254 0.05180192 0.03938251 0.05428175]
+Mode 10: Amplitudes in receivers (complex with sign): [-0.03744878-0.08307348j -0.04851307+0.05251998j  0.07383422-0.06223036j
+ -0.04676132-0.08752694j]
+Mode 11: Participation factors along r: [0.08882366 0.12330963 0.12040329 0.09670689 0.08739048 0.10959344
+ 0.10502286 0.10271283 0.09240634 0.10891879]
+Mode 11: Amplitudes in receivers (complex with sign): [ 0.03761128-0.16015025j -0.09668848-0.01437616j  0.13521066-0.07086849j
+  0.01269883-0.14546775j]
+Mode 12: Participation factors along r: [0.07884555 0.11069166 0.10309967 0.09821087 0.07030333 0.08860816
+ 0.08099971 0.0775547  0.09303175 0.07740786]
+Mode 12: Amplitudes in receivers (complex with sign): [0.08189496+0.14009883j 0.0294255 -0.06755845j 0.07755537+0.02900396j
+ 0.03204556+0.13825105j]
+Mode 13: Participation factors along r: [0.00538177 0.00982179 0.01246138 0.01759601 0.00281882 0.00835541
+ 0.00508284 0.00449187 0.02057153 0.00804073]
+Mode 13: Amplitudes in receivers (complex with sign): [-0.02559985+0.0194033j   0.03650298+0.00977853j  0.03120625+0.02581555j
+ -0.0323744 -0.02110898j]
+Mode 14: Participation factors along r: [0.01989711 0.03064613 0.03604546 0.03199226 0.02076339 0.03082308
+ 0.02623995 0.02406057 0.03433651 0.02989757]
+Mode 14: Amplitudes in receivers (complex with sign): [-0.0453969 -0.04331738j  0.02090124+0.09537132j  0.03509148+0.07687668j
+  0.06228538-0.05140402j]
+Mode 15: Participation factors along r: [0.03381078 0.05116989 0.05413596 0.05937585 0.0332208  0.0524696
+ 0.04691923 0.04136549 0.06439561 0.05501639]
+Mode 15: Amplitudes in receivers (complex with sign): [-0.00547816-0.03185168j -0.09409272+0.05292371j -0.00805885+0.09444801j
+  0.02412256+0.04129137j]
+Mode 16: Participation factors along r: [0.02022057 0.03661523 0.03744262 0.05148143 0.02712055 0.04637071
+ 0.04368346 0.03887312 0.07064246 0.05656749]
+Mode 16: Amplitudes in receivers (complex with sign): [-0.00103672-0.0287055j  -0.08127489-0.02964465j -0.04049722+0.09001651j
+ -0.01322479+0.025766j  ]
+Mode 17: Participation factors along r: [0.00961215 0.01297743 0.01184848 0.00374145 0.00594329 0.00531755
+ 0.00367111 0.00253244 0.00752944 0.00159173]
+Mode 17: Amplitudes in receivers (complex with sign): [ 0.03800432+0.00737862j  0.03895123+0.00644687j -0.06365707+0.0025376j
+ -0.01866045+0.00226479j]
+Mode 18: Participation factors along r: [0.00515677 0.00667281 0.00698772 0.00581657 0.0030884  0.00442943
+ 0.00340384 0.00300765 0.00637077 0.00350885]
+Mode 18: Amplitudes in receivers (complex with sign): [-0.00819588+0.01021098j  0.0015465 -0.00957185j -0.00313646-0.01294328j
+  0.00097802+0.00096367j]
+Mode 19: Participation factors along r: [0.00619348 0.00776457 0.00799144 0.00659868 0.003663   0.00498144
+ 0.00377766 0.0032113  0.00656202 0.00348808]
+Mode 19: Amplitudes in receivers (complex with sign): [-1.01304273e-02+0.01062971j  5.88408830e-03-0.01340189j
+ -4.40973031e-03-0.01361074j -6.49112864e-05+0.003041j  ]
+================================================================================
+COMPARISON: esprit.py vs Our Implementation
+================================================================================
+
+Dataset: 10 measurements from piano_point_responses
+Files: 00, 02, 03, 04, 05, 06, 07, 08, 09, 10
+Frequency band index: 0
+
+================================================================================
+OUR IMPLEMENTATION: Multi-Band + Multi-Point TLS-ESPRIT
+================================================================================
+
+Band (matching esprit.py band_presets[0]):
+  Frequency range: 40.0-500.0 Hz
+  Decimation: 4x
+  Exp factor: 0.01
+
+Processing measurements:
+  [1/10] 00... 9 modes
+  [2/10] 02... 9 modes
+  [3/10] 03... 9 modes
+  [4/10] 04... 9 modes
+  [5/10] 05... 9 modes
+  [6/10] 06... 9 modes
+  [7/10] 07... 9 modes
+  [8/10] 08... 9 modes
+  [9/10] 09... 10 modes
+  [10/10] 10... 10 modes
+
+Total candidates: 92
+Stable modes: 9
+
+Mode | Frequency (Hz) |  ±Std  | Damping (%) |  ±Std  | Detections
+-----|----------------|--------|-------------|--------|------------
+   0 |          80.87 |   1.32 |        9.86 |   2.26 |          7
+   1 |         123.44 |   0.26 |        3.06 |   0.21 |         10
+   2 |         141.39 |   2.46 |        0.82 |   0.24 |          8
+   3 |         203.35 |   0.93 |        5.82 |   0.24 |         10
+   4 |         229.90 |   0.97 |        2.22 |   0.17 |         10
+   5 |         251.80 |   0.27 |        2.44 |   0.23 |         10
+   6 |         263.46 |   0.66 |        1.85 |   0.20 |         10
+   7 |         307.42 |   0.73 |        2.56 |   0.07 |         10
+   8 |         387.73 |   1.45 |        1.41 |   0.38 |         10
+
+================================================================================
+ESPRIT.PY: Reference Implementation
+================================================================================
+
+Data loaded:
+  R (excitation points): 10
+  M_out (channels): 5
+  N_use (samples): 28766
+  fs: 48000.0 Hz
+
+Band preset 0:
+  Frequency range: 40.0-500.0 Hz
+  Decimation: 4x
+  N_band: 8192
+  fs_band: 12000.0 Hz
+  N_band (processed): 8192
+
+ESPRIT parameters:
+  Window length L: 2730
+  Model order K: 30
+  Effective channels: 4
+
+Processing 10 excitation points:
+  Point 0 (00)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=9.594e-12 cond=1.474e+11
+[TLS-U] residual = 1.217e-15
+[TLS-U] |lambda| range: [0.993921 .. 0.998726]
+[TLS-U lambda 0] 0.944232 + 0.312412i
+[TLS-U lambda 1] 0.944232 + -0.312412i
+[TLS-U lambda 2] 0.958843 + 0.271454i
+[TLS-U lambda 3] 0.958843 + -0.271454i
+[TLS-U lambda 4] 0.963288 + 0.258098i
+[TLS-U lambda 5] 0.963288 + -0.258098i
+[TLS-U lambda 6] 0.970072 + 0.216425i
+[TLS-U lambda 7] 0.970072 + -0.216425i
+[TLS-U lambda 8] 0.973704 + 0.202987i
+[TLS-U lambda 9] 0.973704 + -0.202987i
+[TLS-U lambda 10] 0.984104 + 0.158988i
+[TLS-U lambda 11] 0.984104 + -0.158988i
+[TLS-U lambda 12] 0.985407 + 0.137503i
+[TLS-U lambda 13] 0.985407 + -0.137503i
+[TLS-U lambda 14] 0.988231 + 0.131332i
+[TLS-U lambda 15] 0.988231 + -0.131332i
+[TLS-U lambda 16] 0.990479 + 0.120246i
+[TLS-U lambda 17] 0.990479 + -0.120246i
+[TLS-U lambda 18] 0.990242 + 0.118343i
+[TLS-U lambda 19] 0.990242 + -0.118343i
+[TLS-U lambda 20] 0.989720 + 0.106258i
+[TLS-U lambda 21] 0.989720 + -0.106258i
+[TLS-U lambda 22] 0.998457 + 0.023166i
+[TLS-U lambda 23] 0.998457 + -0.023166i
+[TLS-U lambda 24] 0.996569 + 0.038692i
+[TLS-U lambda 25] 0.996569 + -0.038692i
+[TLS-U lambda 26] 0.996090 + 0.064811i
+[TLS-U lambda 27] 0.996090 + -0.064811i
+[TLS-U lambda 28] 0.992312 + 0.073056i
+[TLS-U lambda 29] 0.992312 + -0.073056i
+[MODE raw] f=610.25 Hz Q=29.36 zeta=0.0170
+[MODE raw] f=526.90 Hz Q=39.66 zeta=0.0126
+[MODE raw] f=499.97 Hz Q=47.80 zeta=0.0105
+[MODE raw] f=419.23 Hz Q=18.01 zeta=0.0278
+[MODE raw] f=392.53 Hz Q=19.12 zeta=0.0262
+[MODE raw] f=305.91 Hz Q=25.50 zeta=0.0196
+[MODE raw] f=264.79 Hz Q=13.71 zeta=0.0365
+[MODE raw] f=252.33 Hz Q=21.42 zeta=0.0233
+[MODE raw] f=230.73 Hz Q=26.84 zeta=0.0186
+[MODE raw] f=227.17 Hz Q=21.91 zeta=0.0228
+[MODE raw] f=204.26 Hz Q=11.63 zeta=0.0430
+[MODE raw] f=44.30 Hz Q=9.11 zeta=0.0549
+[MODE raw] f=74.11 Hz Q=7.25 zeta=0.0690
+[MODE raw] f=124.09 Hz Q=18.00 zeta=0.0278
+[MODE raw] f=140.35 Hz Q=7.34 zeta=0.0681
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=44.30..f[14]=610.25 Hz
+15 modes
+  Point 1 (02)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=2.381e-11 cond=5.941e+10
+[TLS-U] residual = 2.310e-15
+[TLS-U] |lambda| range: [0.992488 .. 0.999706]
+[TLS-U lambda 0] 0.944712 + 0.311629i
+[TLS-U lambda 1] 0.944712 + -0.311629i
+[TLS-U lambda 2] 0.958598 + 0.270924i
+[TLS-U lambda 3] 0.958598 + -0.270924i
+[TLS-U lambda 4] 0.964512 + 0.250801i
+[TLS-U lambda 5] 0.964512 + -0.250801i
+[TLS-U lambda 6] 0.969867 + 0.213564i
+[TLS-U lambda 7] 0.969867 + -0.213564i
+[TLS-U lambda 8] 0.973362 + 0.202910i
+[TLS-U lambda 9] 0.973362 + -0.202910i
+[TLS-U lambda 10] 0.984158 + 0.158885i
+[TLS-U lambda 11] 0.984158 + -0.158885i
+[TLS-U lambda 12] 0.986159 + 0.136529i
+[TLS-U lambda 13] 0.986159 + -0.136529i
+[TLS-U lambda 14] 0.988240 + 0.131123i
+[TLS-U lambda 15] 0.988240 + -0.131123i
+[TLS-U lambda 16] 0.990552 + 0.119486i
+[TLS-U lambda 17] 0.990552 + -0.119486i
+[TLS-U lambda 18] 0.989787 + 0.107889i
+[TLS-U lambda 19] 0.989787 + -0.107889i
+[TLS-U lambda 20] 0.989164 + 0.081158i
+[TLS-U lambda 21] 0.989164 + -0.081158i
+[TLS-U lambda 22] 0.996162 + 0.064662i
+[TLS-U lambda 23] 0.996162 + -0.064662i
+[TLS-U lambda 24] 0.997123 + 0.039818i
+[TLS-U lambda 25] 0.997123 + -0.039818i
+[TLS-U lambda 26] 0.998787 + 0.025652i
+[TLS-U lambda 27] 0.998787 + -0.025652i
+[TLS-U lambda 28] 0.999466 + 0.021915i
+[TLS-U lambda 29] 0.999466 + -0.021915i
+[MODE raw] f=608.53 Hz Q=30.46 zeta=0.0164
+[MODE raw] f=526.05 Hz Q=35.68 zeta=0.0140
+[MODE raw] f=485.86 Hz Q=37.20 zeta=0.0134
+[MODE raw] f=413.94 Hz Q=15.66 zeta=0.0319
+[MODE raw] f=392.51 Hz Q=17.94 zeta=0.0279
+[MODE raw] f=305.70 Hz Q=25.79 zeta=0.0194
+[MODE raw] f=262.74 Hz Q=15.48 zeta=0.0323
+[MODE raw] f=251.94 Hz Q=21.25 zeta=0.0235
+[MODE raw] f=229.27 Hz Q=26.45 zeta=0.0189
+[MODE raw] f=207.36 Hz Q=12.46 zeta=0.0401
+[MODE raw] f=156.35 Hz Q=5.45 zeta=0.0917
+[MODE raw] f=123.80 Hz Q=18.60 zeta=0.0269
+[MODE raw] f=76.23 Hz Q=9.59 zeta=0.0521
+[MODE raw] f=49.04 Hz Q=14.52 zeta=0.0344
+[MODE raw] f=41.87 Hz Q=37.34 zeta=0.0134
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.87..f[14]=608.53 Hz
+15 modes
+  Point 2 (03)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=2.400e-11 cond=5.893e+10
+[TLS-U] residual = 2.288e-15
+[TLS-U] |lambda| range: [0.993350 .. 0.998703]
+[TLS-U lambda 0] 0.946963 + 0.307899i
+[TLS-U lambda 1] 0.946963 + -0.307899i
+[TLS-U lambda 2] 0.958431 + 0.270357i
+[TLS-U lambda 3] 0.958431 + -0.270357i
+[TLS-U lambda 4] 0.967639 + 0.226319i
+[TLS-U lambda 5] 0.967639 + -0.226319i
+[TLS-U lambda 6] 0.973054 + 0.204218i
+[TLS-U lambda 7] 0.973054 + -0.204218i
+[TLS-U lambda 8] 0.979043 + 0.184078i
+[TLS-U lambda 9] 0.979043 + -0.184078i
+[TLS-U lambda 10] 0.984060 + 0.159083i
+[TLS-U lambda 11] 0.984060 + -0.159083i
+[TLS-U lambda 12] 0.986229 + 0.136447i
+[TLS-U lambda 13] 0.986229 + -0.136447i
+[TLS-U lambda 14] 0.988077 + 0.131231i
+[TLS-U lambda 15] 0.988077 + -0.131231i
+[TLS-U lambda 16] 0.990560 + 0.119761i
+[TLS-U lambda 17] 0.990560 + -0.119761i
+[TLS-U lambda 18] 0.989809 + 0.107654i
+[TLS-U lambda 19] 0.989809 + -0.107654i
+[TLS-U lambda 20] 0.990025 + 0.081211i
+[TLS-U lambda 21] 0.990025 + -0.081211i
+[TLS-U lambda 22] 0.996128 + 0.064954i
+[TLS-U lambda 23] 0.996128 + -0.064954i
+[TLS-U lambda 24] 0.995913 + 0.041557i
+[TLS-U lambda 25] 0.995913 + -0.041557i
+[TLS-U lambda 26] 0.998170 + 0.026315i
+[TLS-U lambda 27] 0.998170 + -0.026315i
+[TLS-U lambda 28] 0.998507 + 0.019818i
+[TLS-U lambda 29] 0.998507 + -0.019818i
+[MODE raw] f=600.39 Hz Q=37.01 zeta=0.0135
+[MODE raw] f=525.10 Hz Q=32.93 zeta=0.0152
+[MODE raw] f=438.81 Hz Q=18.34 zeta=0.0273
+[MODE raw] f=395.09 Hz Q=17.95 zeta=0.0278
+[MODE raw] f=354.94 Hz Q=24.39 zeta=0.0205
+[MODE raw] f=306.10 Hz Q=25.29 zeta=0.0198
+[MODE raw] f=262.57 Hz Q=15.68 zeta=0.0319
+[MODE raw] f=252.18 Hz Q=20.31 zeta=0.0246
+[MODE raw] f=229.79 Hz Q=26.99 zeta=0.0185
+[MODE raw] f=206.91 Hz Q=12.42 zeta=0.0402
+[MODE raw] f=156.31 Hz Q=6.15 zeta=0.0812
+[MODE raw] f=124.36 Hz Q=18.52 zeta=0.0270
+[MODE raw] f=79.65 Hz Q=6.48 zeta=0.0771
+[MODE raw] f=50.34 Hz Q=8.89 zeta=0.0562
+[MODE raw] f=37.90 Hz Q=7.66 zeta=0.0652
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=37.90..f[14]=600.39 Hz
+15 modes
+  Point 3 (04)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=1.186e-12 cond=1.192e+12
+[TLS-U] residual = 1.647e-15
+[TLS-U] |lambda| range: [0.992234 .. 0.998268]
+[TLS-U lambda 0] 0.947587 + 0.305666i
+[TLS-U lambda 1] 0.947587 + -0.305666i
+[TLS-U lambda 2] 0.958038 + 0.270655i
+[TLS-U lambda 3] 0.958038 + -0.270655i
+[TLS-U lambda 4] 0.967286 + 0.221102i
+[TLS-U lambda 5] 0.967286 + -0.221102i
+[TLS-U lambda 6] 0.973294 + 0.203351i
+[TLS-U lambda 7] 0.973294 + -0.203351i
+[TLS-U lambda 8] 0.984036 + 0.159205i
+[TLS-U lambda 9] 0.984036 + -0.159205i
+[TLS-U lambda 10] 0.985256 + 0.137671i
+[TLS-U lambda 11] 0.985256 + -0.137671i
+[TLS-U lambda 12] 0.988194 + 0.131642i
+[TLS-U lambda 13] 0.988194 + -0.131642i
+[TLS-U lambda 14] 0.990253 + 0.120439i
+[TLS-U lambda 15] 0.990253 + -0.120439i
+[TLS-U lambda 16] 0.989319 + 0.110948i
+[TLS-U lambda 17] 0.989319 + -0.110948i
+[TLS-U lambda 18] 0.987742 + 0.100149i
+[TLS-U lambda 19] 0.987742 + -0.100149i
+[TLS-U lambda 20] 0.993144 + 0.078490i
+[TLS-U lambda 21] 0.993144 + -0.078490i
+[TLS-U lambda 22] 0.996157 + 0.064894i
+[TLS-U lambda 23] 0.996157 + -0.064894i
+[TLS-U lambda 24] 0.997003 + 0.019735i
+[TLS-U lambda 25] 0.997003 + -0.019735i
+[TLS-U lambda 26] 0.994654 + 0.030291i
+[TLS-U lambda 27] 0.994654 + -0.030291i
+[TLS-U lambda 28] 0.994488 + 0.041165i
+[TLS-U lambda 29] 0.994488 + -0.041165i
+[MODE raw] f=595.94 Hz Q=35.94 zeta=0.0139
+[MODE raw] f=525.85 Hz Q=30.77 zeta=0.0162
+[MODE raw] f=429.18 Hz Q=14.42 zeta=0.0347
+[MODE raw] f=393.37 Hz Q=18.05 zeta=0.0277
+[MODE raw] f=306.34 Hz Q=25.28 zeta=0.0198
+[MODE raw] f=265.15 Hz Q=13.40 zeta=0.0373
+[MODE raw] f=252.93 Hz Q=21.50 zeta=0.0233
+[MODE raw] f=231.15 Hz Q=24.68 zeta=0.0203
+[MODE raw] f=213.29 Hz Q=12.45 zeta=0.0402
+[MODE raw] f=192.98 Hz Q=7.02 zeta=0.0713
+[MODE raw] f=150.63 Hz Q=10.48 zeta=0.0477
+[MODE raw] f=124.24 Hz Q=18.77 zeta=0.0266
+[MODE raw] f=37.80 Hz Q=3.56 zeta=0.1403
+[MODE raw] f=58.14 Hz Q=3.15 zeta=0.1588
+[MODE raw] f=79.01 Hz Q=4.46 zeta=0.1122
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=37.80..f[14]=595.94 Hz
+15 modes
+  Point 4 (05)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=1.138e-11 cond=1.243e+11
+[TLS-U] residual = 2.122e-15
+[TLS-U] |lambda| range: [0.993259 .. 0.998892]
+[TLS-U lambda 0] 0.948755 + 0.303810i
+[TLS-U lambda 1] 0.948755 + -0.303810i
+[TLS-U lambda 2] 0.958576 + 0.270384i
+[TLS-U lambda 3] 0.958576 + -0.270384i
+[TLS-U lambda 4] 0.968047 + 0.222368i
+[TLS-U lambda 5] 0.968047 + -0.222368i
+[TLS-U lambda 6] 0.973637 + 0.203205i
+[TLS-U lambda 7] 0.973637 + -0.203205i
+[TLS-U lambda 8] 0.983983 + 0.159301i
+[TLS-U lambda 9] 0.983983 + -0.159301i
+[TLS-U lambda 10] 0.984911 + 0.140786i
+[TLS-U lambda 11] 0.984911 + -0.140786i
+[TLS-U lambda 12] 0.989147 + 0.132955i
+[TLS-U lambda 13] 0.989147 + -0.132955i
+[TLS-U lambda 14] 0.987598 + 0.130967i
+[TLS-U lambda 15] 0.987598 + -0.130967i
+[TLS-U lambda 16] 0.990702 + 0.119618i
+[TLS-U lambda 17] 0.990702 + -0.119618i
+[TLS-U lambda 18] 0.989528 + 0.107097i
+[TLS-U lambda 19] 0.989528 + -0.107097i
+[TLS-U lambda 20] 0.993241 + 0.081501i
+[TLS-U lambda 21] 0.993241 + -0.081501i
+[TLS-U lambda 22] 0.995948 + 0.064826i
+[TLS-U lambda 23] 0.995948 + -0.064826i
+[TLS-U lambda 24] 0.998628 + 0.022996i
+[TLS-U lambda 25] 0.998628 + -0.022996i
+[TLS-U lambda 26] 0.997739 + 0.041768i
+[TLS-U lambda 27] 0.997739 + -0.041768i
+[TLS-U lambda 28] 0.997078 + 0.035157i
+[TLS-U lambda 29] 0.997078 + -0.035157i
+[MODE raw] f=591.87 Hz Q=40.82 zeta=0.0122
+[MODE raw] f=525.07 Hz Q=34.12 zeta=0.0147
+[MODE raw] f=431.23 Hz Q=16.70 zeta=0.0299
+[MODE raw] f=392.96 Hz Q=19.07 zeta=0.0262
+[MODE raw] f=306.54 Hz Q=25.00 zeta=0.0200
+[MODE raw] f=271.16 Hz Q=13.95 zeta=0.0358
+[MODE raw] f=255.18 Hz Q=34.10 zeta=0.0147
+[MODE raw] f=251.80 Hz Q=17.52 zeta=0.0285
+[MODE raw] f=229.49 Hz Q=28.54 zeta=0.0175
+[MODE raw] f=205.90 Hz Q=11.47 zeta=0.0436
+[MODE raw] f=156.36 Hz Q=11.96 zeta=0.0418
+[MODE raw] f=124.14 Hz Q=16.71 zeta=0.0299
+[MODE raw] f=43.97 Hz Q=10.40 zeta=0.0481
+[MODE raw] f=79.91 Hz Q=15.07 zeta=0.0332
+[MODE raw] f=67.31 Hz Q=7.66 zeta=0.0653
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=43.97..f[14]=591.87 Hz
+15 modes
+  Point 5 (06)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=1.216e-11 cond=1.163e+11
+[TLS-U] residual = 2.434e-15
+[TLS-U] |lambda| range: [0.993007 .. 0.999560]
+[TLS-U lambda 0] 0.948580 + 0.306050i
+[TLS-U lambda 1] 0.948580 + -0.306050i
+[TLS-U lambda 2] 0.958394 + 0.270117i
+[TLS-U lambda 3] 0.958394 + -0.270117i
+[TLS-U lambda 4] 0.966547 + 0.227706i
+[TLS-U lambda 5] 0.966547 + -0.227706i
+[TLS-U lambda 6] 0.973790 + 0.203752i
+[TLS-U lambda 7] 0.973790 + -0.203752i
+[TLS-U lambda 8] 0.983992 + 0.159268i
+[TLS-U lambda 9] 0.983992 + -0.159268i
+[TLS-U lambda 10] 0.984810 + 0.141514i
+[TLS-U lambda 11] 0.984810 + -0.141514i
+[TLS-U lambda 12] 0.988348 + 0.134775i
+[TLS-U lambda 13] 0.988348 + -0.134775i
+[TLS-U lambda 14] 0.988114 + 0.131219i
+[TLS-U lambda 15] 0.988114 + -0.131219i
+[TLS-U lambda 16] 0.990733 + 0.119803i
+[TLS-U lambda 17] 0.990733 + -0.119803i
+[TLS-U lambda 18] 0.989590 + 0.106992i
+[TLS-U lambda 19] 0.989590 + -0.106992i
+[TLS-U lambda 20] 0.992326 + 0.081258i
+[TLS-U lambda 21] 0.992326 + -0.081258i
+[TLS-U lambda 22] 0.996046 + 0.064897i
+[TLS-U lambda 23] 0.996046 + -0.064897i
+[TLS-U lambda 24] 0.996859 + 0.040746i
+[TLS-U lambda 25] 0.996859 + -0.040746i
+[TLS-U lambda 26] 0.999034 + 0.024280i
+[TLS-U lambda 27] 0.999034 + -0.024280i
+[TLS-U lambda 28] 0.999325 + 0.021641i
+[TLS-U lambda 29] 0.999325 + -0.021641i
+[MODE raw] f=596.06 Hz Q=47.64 zeta=0.0105
+[MODE raw] f=524.67 Hz Q=32.12 zeta=0.0156
+[MODE raw] f=441.88 Hz Q=16.49 zeta=0.0303
+[MODE raw] f=393.93 Hz Q=20.09 zeta=0.0249
+[MODE raw] f=306.47 Hz Q=25.02 zeta=0.0200
+[MODE raw] f=272.57 Hz Q=14.03 zeta=0.0356
+[MODE raw] f=258.84 Hz Q=27.02 zeta=0.0185
+[MODE raw] f=252.15 Hz Q=20.53 zeta=0.0244
+[MODE raw] f=229.83 Hz Q=29.33 zeta=0.0170
+[MODE raw] f=205.69 Hz Q=11.58 zeta=0.0432
+[MODE raw] f=156.04 Hz Q=9.38 zeta=0.0533
+[MODE raw] f=124.26 Hz Q=17.65 zeta=0.0283
+[MODE raw] f=78.02 Hz Q=8.85 zeta=0.0565
+[MODE raw] f=46.41 Hz Q=18.10 zeta=0.0276
+[MODE raw] f=41.35 Hz Q=24.59 zeta=0.0203
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.35..f[14]=596.06 Hz
+15 modes
+  Point 6 (07)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=1.853e-11 cond=7.630e+10
+[TLS-U] residual = 1.654e-15
+[TLS-U] |lambda| range: [0.992970 .. 0.999037]
+[TLS-U lambda 0] 0.947309 + 0.310006i
+[TLS-U lambda 1] 0.947309 + -0.310006i
+[TLS-U lambda 2] 0.958617 + 0.270479i
+[TLS-U lambda 3] 0.958617 + -0.270479i
+[TLS-U lambda 4] 0.965713 + 0.231060i
+[TLS-U lambda 5] 0.965713 + -0.231060i
+[TLS-U lambda 6] 0.973664 + 0.203761i
+[TLS-U lambda 7] 0.973664 + -0.203761i
+[TLS-U lambda 8] 0.983951 + 0.162745i
+[TLS-U lambda 9] 0.983951 + -0.162745i
+[TLS-U lambda 10] 0.984450 + 0.159081i
+[TLS-U lambda 11] 0.984450 + -0.159081i
+[TLS-U lambda 12] 0.986439 + 0.137232i
+[TLS-U lambda 13] 0.986439 + -0.137232i
+[TLS-U lambda 14] 0.988155 + 0.131482i
+[TLS-U lambda 15] 0.988155 + -0.131482i
+[TLS-U lambda 16] 0.990635 + 0.119705i
+[TLS-U lambda 17] 0.990635 + -0.119705i
+[TLS-U lambda 18] 0.990036 + 0.108254i
+[TLS-U lambda 19] 0.990036 + -0.108254i
+[TLS-U lambda 20] 0.998770 + 0.023073i
+[TLS-U lambda 21] 0.998770 + -0.023073i
+[TLS-U lambda 22] 0.997063 + 0.039515i
+[TLS-U lambda 23] 0.997063 + -0.039515i
+[TLS-U lambda 24] 0.995986 + 0.064734i
+[TLS-U lambda 25] 0.995986 + -0.064734i
+[TLS-U lambda 26] 0.991597 + 0.087127i
+[TLS-U lambda 27] 0.991597 + -0.087127i
+[TLS-U lambda 28] 0.993733 + 0.078867i
+[TLS-U lambda 29] 0.993733 + -0.078867i
+[MODE raw] f=604.02 Hz Q=48.49 zeta=0.0103
+[MODE raw] f=525.22 Hz Q=34.70 zeta=0.0144
+[MODE raw] f=448.53 Hz Q=16.65 zeta=0.0300
+[MODE raw] f=393.99 Hz Q=19.63 zeta=0.0255
+[MODE raw] f=313.06 Hz Q=30.54 zeta=0.0164
+[MODE raw] f=305.98 Hz Q=28.79 zeta=0.0174
+[MODE raw] f=264.00 Hz Q=16.99 zeta=0.0294
+[MODE raw] f=252.64 Hz Q=21.06 zeta=0.0237
+[MODE raw] f=229.67 Hz Q=27.83 zeta=0.0180
+[MODE raw] f=208.00 Hz Q=13.38 zeta=0.0374
+[MODE raw] f=44.11 Hz Q=11.99 zeta=0.0417
+[MODE raw] f=75.65 Hz Q=9.20 zeta=0.0544
+[MODE raw] f=123.96 Hz Q=16.96 zeta=0.0295
+[MODE raw] f=167.38 Hz Q=9.55 zeta=0.0523
+[MODE raw] f=151.26 Hz Q=12.59 zeta=0.0397
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=44.11..f[14]=604.02 Hz
+15 modes
+  Point 7 (08)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=2.095e-11 cond=6.750e+10
+[TLS-U] residual = 2.090e-15
+[TLS-U] |lambda| range: [0.993170 .. 0.998908]
+[TLS-U lambda 0] 0.958839 + 0.271037i
+[TLS-U lambda 1] 0.958839 + -0.271037i
+[TLS-U lambda 2] 0.964522 + 0.236822i
+[TLS-U lambda 3] 0.964522 + -0.236822i
+[TLS-U lambda 4] 0.972590 + 0.206400i
+[TLS-U lambda 5] 0.972590 + -0.206400i
+[TLS-U lambda 6] 0.979358 + 0.189619i
+[TLS-U lambda 7] 0.979358 + -0.189619i
+[TLS-U lambda 8] 0.983901 + 0.159240i
+[TLS-U lambda 9] 0.983901 + -0.159240i
+[TLS-U lambda 10] 0.985161 + 0.149512i
+[TLS-U lambda 11] 0.985161 + -0.149512i
+[TLS-U lambda 12] 0.987183 + 0.136660i
+[TLS-U lambda 13] 0.987183 + -0.136660i
+[TLS-U lambda 14] 0.987863 + 0.131139i
+[TLS-U lambda 15] 0.987863 + -0.131139i
+[TLS-U lambda 16] 0.990555 + 0.119687i
+[TLS-U lambda 17] 0.990555 + -0.119687i
+[TLS-U lambda 18] 0.989940 + 0.106711i
+[TLS-U lambda 19] 0.989940 + -0.106711i
+[TLS-U lambda 20] 0.993192 + 0.079744i
+[TLS-U lambda 21] 0.993192 + -0.079744i
+[TLS-U lambda 22] 0.995866 + 0.064851i
+[TLS-U lambda 23] 0.995866 + -0.064851i
+[TLS-U lambda 24] 0.998647 + 0.022833i
+[TLS-U lambda 25] 0.998647 + -0.022833i
+[TLS-U lambda 26] 0.997497 + 0.042244i
+[TLS-U lambda 27] 0.997497 + -0.042244i
+[TLS-U lambda 28] 0.996492 + 0.035856i
+[TLS-U lambda 29] 0.996492 + -0.035856i
+[MODE raw] f=526.14 Hz Q=38.31 zeta=0.0131
+[MODE raw] f=459.84 Hz Q=17.57 zeta=0.0285
+[MODE raw] f=399.38 Hz Q=18.14 zeta=0.0276
+[MODE raw] f=365.26 Hz Q=38.92 zeta=0.0128
+[MODE raw] f=306.44 Hz Q=24.30 zeta=0.0206
+[MODE raw] f=287.65 Hz Q=21.13 zeta=0.0237
+[MODE raw] f=262.72 Hz Q=20.19 zeta=0.0248
+[MODE raw] f=252.06 Hz Q=18.98 zeta=0.0263
+[MODE raw] f=229.65 Hz Q=26.81 zeta=0.0187
+[MODE raw] f=205.08 Hz Q=12.40 zeta=0.0403
+[MODE raw] f=153.02 Hz Q=11.08 zeta=0.0451
+[MODE raw] f=124.20 Hz Q=16.05 zeta=0.0312
+[MODE raw] f=43.66 Hz Q=10.47 zeta=0.0477
+[MODE raw] f=80.83 Hz Q=13.15 zeta=0.0380
+[MODE raw] f=68.69 Hz Q=6.29 zeta=0.0795
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=43.66..f[14]=526.14 Hz
+15 modes
+  Point 8 (09)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=1.208e-12 cond=1.170e+12
+[TLS-U] residual = 1.934e-15
+[TLS-U] |lambda| range: [0.986916 .. 0.998446]
+[TLS-U lambda 0] 0.958018 + 0.270315i
+[TLS-U lambda 1] 0.958018 + -0.270315i
+[TLS-U lambda 2] 0.961789 + 0.228233i
+[TLS-U lambda 3] 0.961789 + -0.228233i
+[TLS-U lambda 4] 0.973581 + 0.202396i
+[TLS-U lambda 5] 0.973581 + -0.202396i
+[TLS-U lambda 6] 0.981292 + 0.163620i
+[TLS-U lambda 7] 0.981292 + -0.163620i
+[TLS-U lambda 8] 0.984506 + 0.159024i
+[TLS-U lambda 9] 0.984506 + -0.159024i
+[TLS-U lambda 10] 0.985971 + 0.136987i
+[TLS-U lambda 11] 0.985971 + -0.136987i
+[TLS-U lambda 12] 0.988280 + 0.131854i
+[TLS-U lambda 13] 0.988280 + -0.131854i
+[TLS-U lambda 14] 0.990852 + 0.120198i
+[TLS-U lambda 15] 0.990852 + -0.120198i
+[TLS-U lambda 16] 0.989174 + 0.108595i
+[TLS-U lambda 17] 0.989174 + -0.108595i
+[TLS-U lambda 18] 0.997464 + 0.019118i
+[TLS-U lambda 19] 0.997464 + -0.019118i
+[TLS-U lambda 20] 0.995822 + 0.026832i
+[TLS-U lambda 21] 0.995822 + -0.026832i
+[TLS-U lambda 22] 0.993930 + 0.041059i
+[TLS-U lambda 23] 0.993930 + -0.041059i
+[TLS-U lambda 24] 0.983974 + 0.076137i
+[TLS-U lambda 25] 0.983974 + -0.076137i
+[TLS-U lambda 26] 0.992079 + 0.078181i
+[TLS-U lambda 27] 0.992079 + -0.078181i
+[TLS-U lambda 28] 0.996366 + 0.064413i
+[TLS-U lambda 29] 0.996366 + -0.064413i
+[MODE raw] f=525.23 Hz Q=29.99 zeta=0.0167
+[MODE raw] f=444.98 Hz Q=10.08 zeta=0.0496
+[MODE raw] f=391.46 Hz Q=18.24 zeta=0.0274
+[MODE raw] f=315.55 Hz Q=15.97 zeta=0.0313
+[MODE raw] f=305.85 Hz Q=29.25 zeta=0.0171
+[MODE raw] f=263.66 Hz Q=15.12 zeta=0.0331
+[MODE raw] f=253.31 Hz Q=22.36 zeta=0.0224
+[MODE raw] f=230.55 Hz Q=32.01 zeta=0.0156
+[MODE raw] f=208.83 Hz Q=11.18 zeta=0.0447
+[MODE raw] f=36.60 Hz Q=4.10 zeta=0.1220
+[MODE raw] f=51.45 Hz Q=3.56 zeta=0.1406
+[MODE raw] f=78.85 Hz Q=3.97 zeta=0.1258
+[MODE raw] f=147.49 Hz Q=2.97 zeta=0.1681
+[MODE raw] f=150.20 Hz Q=8.11 zeta=0.0616
+[MODE raw] f=123.30 Hz Q=20.76 zeta=0.0241
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=36.60..f[14]=525.23 Hz
+15 modes
+  Point 9 (10)... [TLS-U] m=10916 K=30 |Z| Smax=1.414e+00 Smin=2.329e-11 cond=6.072e+10
+[TLS-U] residual = 1.314e-15
+[TLS-U] |lambda| range: [0.992389 .. 0.999679]
+[TLS-U lambda 0] 0.958795 + 0.269309i
+[TLS-U lambda 1] 0.958795 + -0.269309i
+[TLS-U lambda 2] 0.965450 + 0.230079i
+[TLS-U lambda 3] 0.965450 + -0.230079i
+[TLS-U lambda 4] 0.974366 + 0.202483i
+[TLS-U lambda 5] 0.974366 + -0.202483i
+[TLS-U lambda 6] 0.983084 + 0.164851i
+[TLS-U lambda 7] 0.983084 + -0.164851i
+[TLS-U lambda 8] 0.984483 + 0.159353i
+[TLS-U lambda 9] 0.984483 + -0.159353i
+[TLS-U lambda 10] 0.986335 + 0.136925i
+[TLS-U lambda 11] 0.986335 + -0.136925i
+[TLS-U lambda 12] 0.988136 + 0.131643i
+[TLS-U lambda 13] 0.988136 + -0.131643i
+[TLS-U lambda 14] 0.990476 + 0.119982i
+[TLS-U lambda 15] 0.990476 + -0.119982i
+[TLS-U lambda 16] 0.989838 + 0.107869i
+[TLS-U lambda 17] 0.989838 + -0.107869i
+[TLS-U lambda 18] 0.992379 + 0.079489i
+[TLS-U lambda 19] 0.992379 + -0.079489i
+[TLS-U lambda 20] 0.990009 + 0.068683i
+[TLS-U lambda 21] 0.990009 + -0.068683i
+[TLS-U lambda 22] 0.996276 + 0.063903i
+[TLS-U lambda 23] 0.996276 + -0.063903i
+[TLS-U lambda 24] 0.996215 + 0.038895i
+[TLS-U lambda 25] 0.996215 + -0.038895i
+[TLS-U lambda 26] 0.998922 + 0.025171i
+[TLS-U lambda 27] 0.998922 + -0.025171i
+[TLS-U lambda 28] 0.999444 + 0.021694i
+[TLS-U lambda 29] 0.999444 + -0.021694i
+[MODE raw] f=522.97 Hz Q=33.32 zeta=0.0150
+[MODE raw] f=446.81 Hz Q=15.52 zeta=0.0322
+[MODE raw] f=391.32 Hz Q=21.22 zeta=0.0236
+[MODE raw] f=317.31 Hz Q=26.00 zeta=0.0192
+[MODE raw] f=306.48 Hz Q=29.65 zeta=0.0169
+[MODE raw] f=263.45 Hz Q=16.37 zeta=0.0305
+[MODE raw] f=252.95 Hz Q=21.10 zeta=0.0237
+[MODE raw] f=230.23 Hz Q=26.38 zeta=0.0190
+[MODE raw] f=207.31 Hz Q=12.60 zeta=0.0397
+[MODE raw] f=152.65 Hz Q=8.99 zeta=0.0556
+[MODE raw] f=132.29 Hz Q=4.56 zeta=0.1096
+[MODE raw] f=122.33 Hz Q=19.09 zeta=0.0262
+[MODE raw] f=74.53 Hz Q=6.46 zeta=0.0774
+[MODE raw] f=48.11 Hz Q=16.56 zeta=0.0302
+[MODE raw] f=41.45 Hz Q=33.84 zeta=0.0148
+[MAP] dt=8.33333e-05 s, modes=15; f[0]=41.45..f[14]=522.97 Hz
+15 modes
+
+Total modes from all points: 150
+Stable modes (>=3 detections): 16
+
+Mode | Frequency (Hz) |  ±Std  | Damping (%) |  ±Std  | Detections
+-----|----------------|--------|-------------|--------|------------
+   0 |          37.43 |   0.59 |       10.92 |   3.20 |          3
+   1 |          42.96 |   1.24 |        3.44 |   1.63 |          7
+   2 |          49.07 |   1.75 |        5.78 |   4.26 |          5
+   3 |          77.68 |   2.26 |        6.96 |   2.85 |         10
+   4 |         124.63 |   2.48 |        3.52 |   2.36 |         11
+   5 |         153.17 |   6.17 |        6.72 |   3.40 |         12
+   6 |         205.97 |   4.70 |        4.40 |   0.89 |         11
+   7 |         229.78 |   0.99 |        1.86 |   0.18 |         11
+   8 |         252.68 |   0.91 |        2.35 |   0.32 |         11
+   9 |         265.28 |   3.41 |        3.27 |   0.36 |         10
+  10 |         306.81 |   6.53 |        2.01 |   0.36 |         14
+  11 |         397.48 |   8.84 |        2.70 |   0.20 |         12
+  12 |         442.66 |   9.22 |        3.28 |   0.67 |          8
+  13 |         519.92 |  12.45 |        1.43 |   0.16 |         12
+  14 |         596.07 |   3.01 |        1.25 |   0.13 |          4
+  15 |         607.60 |   2.63 |        1.46 |   0.30 |          3
+
+================================================================================
+COMPARISON SUMMARY
+================================================================================
+
+Our implementation:
+  Stable modes: 9
+  Time: 229.7 seconds
+
+esprit.py:
+  Stable modes: 16
+  Time: 1256.4 seconds
+
+--------------------------------------------------------------------------------
+Mode Matching (frequency tolerance: ±5 Hz)
+--------------------------------------------------------------------------------
+
+Our Freq (Hz) | esprit.py Freq (Hz) | Diff (Hz) | Our Damp (%) | esprit.py Damp (%)
+--------------|---------------------|-----------|--------------|-------------------
+        80.87 |               77.68 |    3.20 |      9.86 |           6.96
+       123.44 |              124.63 |    1.20 |      3.06 |           3.52
+       203.35 |              205.97 |    2.62 |      5.82 |           4.40
+       229.90 |              229.78 |    0.13 |      2.22 |           1.86
+       251.80 |              252.68 |    0.88 |      2.44 |           2.35
+       263.46 |              265.28 |    1.82 |      1.85 |           3.27
+       307.42 |              306.81 |    0.61 |      2.56 |           2.01
+
+Matched modes: 7/9
+
+================================================================================
