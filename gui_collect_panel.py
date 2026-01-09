@@ -12,7 +12,9 @@ import os
 import time
 import json
 import queue
-from typing import List, Dict, Any
+import threading
+from typing import List, Dict, Any, Optional
+from pathlib import Path
 import streamlit as st
 
 # Back-end deps
@@ -43,6 +45,156 @@ SK_SERIES_THREAD = "series_thread"
 SK_SERIES_LAST = "series_last_event"
 SK_SERIES_STARTED_AT = "series_started_at"
 SK_COLLECTION_OUTPUT_OVERRIDE = "collection_output_override"
+
+
+class ESPRITQueueManager:
+    """
+    Singleton manager for ESPRIT processing queue.
+    Ensures only one ESPRIT task runs at a time, with unlimited queue depth.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+
+        self.queue = queue.Queue()  # Unlimited queue
+        self.worker_thread = None
+        self.is_running = False
+        self.current_task = None
+        self.completed_count = 0
+        self.failed_count = 0
+        self._start_worker()
+
+    def _start_worker(self):
+        """Start the background worker thread."""
+        self.is_running = True
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True, name="ESPRIT-Queue-Worker")
+        self.worker_thread.start()
+        print("[ESPRIT Queue] Worker thread started")
+
+    def _worker_loop(self):
+        """Main worker loop - processes tasks sequentially."""
+        while self.is_running:
+            try:
+                # Block until a task is available (with timeout for clean shutdown)
+                task = self.queue.get(timeout=1.0)
+                self.current_task = task
+
+                scenario_dir = task['scenario_dir']
+                esprit_config = task['esprit_config']
+                evt_q = task['evt_q']
+                scenario_name = task['scenario_name']
+
+                queue_size = self.queue.qsize()
+                print(f"\n[ESPRIT Queue] Processing: {scenario_name} (queue: {queue_size} remaining)")
+
+                try:
+                    from esprit_helper import ESPRITScenarioProcessor
+
+                    result = ESPRITScenarioProcessor.process_scenario(
+                        scenario_dir=scenario_dir,
+                        esprit_config=esprit_config,
+                        force_reprocess=False,
+                        process_all_bands=True
+                    )
+
+                    if result:
+                        self.completed_count += 1
+                        print(f"[ESPRIT Queue] OK Completed: {scenario_name} - {result.get('total_modes_all_bands', 0)} modes")
+                        if evt_q:
+                            evt_q.put_nowait(WorkerEvent("esprit_complete", {
+                                "scenario": scenario_name,
+                                "total_modes": result.get('total_modes_all_bands', 0),
+                                "modes_per_band": result.get('modes_per_band', {})
+                            }))
+                    else:
+                        self.failed_count += 1
+                        print(f"[ESPRIT Queue] FAILED: {scenario_name}")
+                        if evt_q:
+                            evt_q.put_nowait(WorkerEvent("error", {
+                                "message": f"ESPRIT processing failed for {scenario_name}",
+                                "fatal": False
+                            }))
+
+                except Exception as e:
+                    self.failed_count += 1
+                    print(f"[ESPRIT Queue] ERROR Exception for {scenario_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    if evt_q:
+                        evt_q.put_nowait(WorkerEvent("error", {
+                            "message": f"ESPRIT error for {scenario_name}: {e}",
+                            "fatal": False
+                        }))
+
+                finally:
+                    self.current_task = None
+                    self.queue.task_done()
+
+            except queue.Empty:
+                # No tasks available, continue waiting
+                continue
+            except Exception as e:
+                print(f"[ESPRIT Queue] Worker error: {e}")
+                import traceback
+                traceback.print_exc()
+
+    def enqueue(self, scenario_dir: Path, esprit_config: Dict[str, Any], evt_q: Optional[queue.Queue], scenario_name: str):
+        """Add an ESPRIT processing task to the queue."""
+        task = {
+            'scenario_dir': scenario_dir,
+            'esprit_config': esprit_config,
+            'evt_q': evt_q,
+            'scenario_name': scenario_name
+        }
+        self.queue.put(task)
+        queue_size = self.queue.qsize()
+        current = f" (processing: {self.current_task['scenario_name']})" if self.current_task else ""
+        print(f"[ESPRIT Queue] Enqueued: {scenario_name} - position {queue_size} in queue{current}")
+
+        if evt_q:
+            evt_q.put_nowait(WorkerEvent("status", {
+                "message": f"ESPRIT queued for {scenario_name} (position: {queue_size})"
+            }))
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current queue status."""
+        return {
+            'queue_size': self.queue.qsize(),
+            'current_task': self.current_task['scenario_name'] if self.current_task else None,
+            'completed': self.completed_count,
+            'failed': self.failed_count,
+            'is_running': self.is_running
+        }
+
+    def shutdown(self):
+        """Shutdown the worker thread (for cleanup)."""
+        self.is_running = False
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=2.0)
+
+
+# Global ESPRIT queue manager instance
+_esprit_queue = None
+
+def get_esprit_queue() -> ESPRITQueueManager:
+    """Get or create the global ESPRIT queue manager."""
+    global _esprit_queue
+    if _esprit_queue is None:
+        _esprit_queue = ESPRITQueueManager()
+    return _esprit_queue
+
 
 class CollectionPanel:
     def __init__(self, scenario_manager, recorder: Optional["RoomResponseRecorder"]=None):
@@ -204,8 +356,18 @@ class CollectionPanel:
         return uniq
 
     def _load_defaults_from_config(self, cfg_path: str) -> dict:
-        """Load computer, room name, and num_measurements defaults from recorder config file."""
-        defaults = {"computer": "Unknown_Computer", "room": "Unknown_Room", "num_measurements": 0}
+        """Load computer, room name, num_measurements, and ESPRIT defaults from recorder config file."""
+        defaults = {
+            "computer": "Unknown_Computer",
+            "room": "Unknown_Room",
+            "num_measurements": 0,
+            "esprit_config": {
+                "enabled": False,
+                "K": 30,
+                "L_fraction": 0.5,
+                "selected_channels": []
+            }
+        }
         try:
             with open(cfg_path, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
@@ -230,6 +392,25 @@ class CollectionPanel:
                 json.dump(config, f, indent=2)
         except Exception as e:
             st.warning(f"Could not save config: {e}")
+
+    def _save_esprit_config(self, cfg_path: str, esprit_config: Dict[str, Any]) -> None:
+        """Save ESPRIT configuration to config file."""
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            # Save only the persistent ESPRIT settings
+            config['esprit_config'] = {
+                'enabled': esprit_config.get('enabled', False),
+                'K': esprit_config.get('K', 30),
+                'L_fraction': esprit_config.get('L_fraction', 0.5),
+                'selected_channels': esprit_config.get('selected_channels', [])
+            }
+
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            st.warning(f"Could not save ESPRIT config: {e}")
 
     def _load_configuration(self, root: str) -> Dict[str, Any]:
         cfg_path = os.path.join(root, "recorderConfig.json")
@@ -366,7 +547,127 @@ class CollectionPanel:
             "config_file": config_file,
             "output_dir": resolved,
             "recording_mode": mode_param,
+            "defaults": config_data["defaults"],  # Include defaults for ESPRIT config
         }
+
+    def _render_esprit_configuration(self, saved_esprit_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Render ESPRIT configuration UI."""
+        with st.expander("🎼 ESPRIT Modal Analysis (Optional)", expanded=False):
+            enable_esprit = st.checkbox(
+                "Enable real-time ESPRIT modal analysis",
+                value=saved_esprit_config.get('enabled', False),
+                help="Process averaged scenario responses with ESPRIT algorithm during collection"
+            )
+
+            if not enable_esprit:
+                return {'enabled': False}
+
+            st.info("ℹ️ ESPRIT will process ALL frequency bands (40-4000 Hz) after scenario completes")
+            st.caption("📊 All 4 bands will be processed separately and saved to individual files")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                model_order = st.number_input(
+                    "Model Order (K)",
+                    min_value=10,
+                    max_value=50,
+                    value=saved_esprit_config.get('K', 30),
+                    help="Number of poles to extract per band (should be > 2× expected modes)"
+                )
+
+            with col2:
+                L_fraction = st.slider(
+                    "Hankel Window",
+                    min_value=0.3,
+                    max_value=0.7,
+                    value=saved_esprit_config.get('L_fraction', 0.5),
+                    help="Hankel matrix window length as fraction of signal"
+                )
+
+            # Get multi-channel config from recorder
+            mc_config = getattr(self.recorder, 'multichannel_config', {})
+            num_channels = mc_config.get('num_channels', 1)
+            sample_rate = getattr(self.recorder, 'sample_rate', 48000)
+            cycle_duration = getattr(self.recorder, 'cycle_duration', 0.6)
+            N_use = int(sample_rate * cycle_duration)
+
+            cal_ch = mc_config.get('calibration_channel', 0)
+            channel_names = mc_config.get('channel_names', [f'Channel {i}' for i in range(num_channels)])
+
+            st.info(f"📊 Config: {num_channels} channels, {sample_rate} Hz, {N_use} samples")
+
+            # Channel selection for ESPRIT analysis
+            st.markdown("**Channel Selection**")
+            st.caption("Select which channels to include in ESPRIT analysis (excluding calibration channel)")
+
+            # Build list of available channels (excluding calibration)
+            available_channels = []
+            channel_labels = []
+            for i in range(num_channels):
+                if i != cal_ch:  # Skip calibration channel
+                    ch_name = channel_names[i] if i < len(channel_names) else f"Channel {i}"
+                    available_channels.append(i)
+                    channel_labels.append(f"Ch {i}: {ch_name}")
+
+            # Multi-select for channels
+            if available_channels:
+                # Determine default selection
+                saved_channels = saved_esprit_config.get('selected_channels', [])
+                if saved_channels:
+                    # Use saved channels, but only if they're still valid
+                    default_labels = []
+                    for ch_idx in saved_channels:
+                        if ch_idx in available_channels:
+                            ch_name = channel_names[ch_idx] if ch_idx < len(channel_names) else f"Channel {ch_idx}"
+                            default_labels.append(f"Ch {ch_idx}: {ch_name}")
+                else:
+                    # Default to all channels if none saved
+                    default_labels = channel_labels
+
+                selected_channel_labels = st.multiselect(
+                    "Channels to analyze:",
+                    options=channel_labels,
+                    default=default_labels,
+                    help="Deselect channels that are not connected to receivers"
+                )
+
+                # Map back to channel indices
+                selected_channels = []
+                for label in selected_channel_labels:
+                    ch_idx = int(label.split(':')[0].replace('Ch ', ''))
+                    selected_channels.append(ch_idx)
+
+                if not selected_channels:
+                    st.warning("⚠️ No channels selected! ESPRIT analysis will fail.")
+                else:
+                    st.caption(f"✓ {len(selected_channels)} channels selected for analysis")
+            else:
+                st.warning("⚠️ No channels available for ESPRIT (all are calibration)")
+                selected_channels = []
+
+            with st.expander("Band Details", expanded=False):
+                st.markdown("""
+                **Frequency Bands:**
+                - Band 0: 40-500 Hz (Piano fundamentals)
+                - Band 1: 500-1000 Hz (Low harmonics)
+                - Band 2: 1000-2000 Hz (Mid harmonics)
+                - Band 3: 2000-4000 Hz (High harmonics)
+
+                Each band will be processed with appropriate decimation and filtering.
+                Results saved to: `scenario/analysis/esprit_band*.json`
+                """)
+
+            return {
+                'enabled': True,
+                'M_out': num_channels,
+                'N_use': N_use,
+                'fs': sample_rate,
+                'L_fraction': L_fraction,
+                'K': model_order,
+                'skip_m': cal_ch,
+                'selected_channels': selected_channels  # List of channel indices to include
+            }
 
     def _render_single_scenario_mode(self, common_cfg: Dict[str, Any]) -> None:
         st.markdown("### Single Scenario Configuration")
@@ -379,6 +680,17 @@ class CollectionPanel:
             scenario_name = f"{common_cfg['computer_name']}-Scenario{scenario_number}-{common_cfg['room_name']}"
             scenario_path = os.path.join(common_cfg["output_dir"], scenario_name)
             st.info(f"📁 Scenario will be saved as: `{scenario_name}`"); st.caption(f"📂 Full path: `{scenario_path}`")
+
+        # ESPRIT configuration for single scenario
+        saved_esprit = common_cfg.get("defaults", {}).get("esprit_config", {})
+        esprit_cfg = self._render_esprit_configuration(saved_esprit)
+        st.session_state["esprit_enabled"] = esprit_cfg.get('enabled', False)
+        st.session_state["esprit_config"] = esprit_cfg if esprit_cfg.get('enabled') else None
+
+        # Save ESPRIT config if it changed
+        if esprit_cfg != saved_esprit:
+            self._save_esprit_config(common_cfg["config_file"], esprit_cfg)
+
         st.markdown("### Execute Collection")
 
         # Check if collection is running
@@ -462,6 +774,14 @@ class CollectionPanel:
         if parsed:
             st.caption(f"📁 All scenarios will be saved to: `{common_cfg['output_dir']}`")
 
+        # Get ESPRIT configuration
+        saved_esprit = common_cfg.get("defaults", {}).get("esprit_config", {})
+        esprit_cfg = self._render_esprit_configuration(saved_esprit)
+
+        # Save ESPRIT config if it changed
+        if esprit_cfg != saved_esprit:
+            self._save_esprit_config(common_cfg["config_file"], esprit_cfg)
+
         st.markdown("### Execute Series (Background)")
         btn_cols = st.columns([2, 2, 2, 2])
         with btn_cols[0]:
@@ -500,6 +820,8 @@ class CollectionPanel:
                     record_timeout_s=float(max_record_time),
                     interval_mode=interval_mode,
                     recording_mode=common_cfg["recording_mode"],
+                    esprit_config=esprit_cfg if esprit_cfg.get('enabled') else None,
+                    enable_esprit=esprit_cfg.get('enabled', False),
                 )
                 st.session_state[SK_SERIES_EVT_Q] = evt_q
                 st.session_state[SK_SERIES_CMD_Q] = cmd_q
@@ -565,6 +887,13 @@ class CollectionPanel:
             if last_event.kind == "done":
                 ok = last_event.payload.get("ok", False)
                 st.success("Series complete" if ok else f"Series ended: {last_event.payload.get('reason')}")
+            # Display ESPRIT status if available
+            if last_event.kind == "status" and "modes" in last_event.payload:
+                st.info(f"🎼 ESPRIT: {last_event.payload.get('modes')} modes detected")
+                freqs = last_event.payload.get('frequencies', [])
+                if freqs:
+                    freq_str = ", ".join([f"{f:.1f}" for f in freqs])
+                    st.caption(f"Frequencies (Hz): {freq_str}")
         # Auto-refresh (1 Hz)
         try:
             if worker.is_alive():
@@ -598,6 +927,7 @@ class CollectionPanel:
         last_done = st.session_state.get("single_last_done")
 
         # Drain all events from queue and categorize them
+        last_esprit = st.session_state.get("single_last_esprit")
         if evt_q:
             try:
                 while True:
@@ -610,6 +940,8 @@ class CollectionPanel:
                         last_error = ev
                     elif ev.kind == "done":
                         last_done = ev
+                    elif ev.kind == "esprit_complete":
+                        last_esprit = ev
             except queue.Empty:
                 pass
 
@@ -618,6 +950,7 @@ class CollectionPanel:
         st.session_state["single_last_status"] = last_status
         st.session_state["single_last_error"] = last_error
         st.session_state["single_last_done"] = last_done
+        st.session_state["single_last_esprit"] = last_esprit
 
         # DEBUG: Print event details
         if last_progress:
@@ -662,6 +995,22 @@ class CollectionPanel:
         if last_status:
             msg = last_status.payload.get("message", "")
             st.info(f"📊 Status: {msg}")
+
+        # Display ESPRIT results (if available)
+        if last_esprit:
+            scenario = last_esprit.payload.get("scenario", "Unknown")
+            total_modes = last_esprit.payload.get("total_modes", 0)
+            modes_per_band = last_esprit.payload.get("modes_per_band", {})
+
+            st.success(f"🎼 ESPRIT Multi-Band Analysis Complete: {scenario}")
+            st.metric("Total Modes (All Bands)", total_modes)
+
+            if modes_per_band:
+                cols = st.columns(4)
+                for idx, (band_name, count) in enumerate(modes_per_band.items()):
+                    with cols[idx]:
+                        st.caption(f"{band_name}")
+                        st.metric("Modes", count, label_visibility="collapsed")
 
         # Display error (if available)
         if last_error:
@@ -762,11 +1111,37 @@ class SingleScenarioExecutor:
                 cmd_q=cmd_q
             )
 
+            # Capture ESPRIT config BEFORE starting thread (session_state not available in threads)
+            esprit_enabled = st.session_state.get("esprit_enabled", False)
+            esprit_config = st.session_state.get("esprit_config", None)
+            print(f"\n[DEBUG] Captured ESPRIT config before thread: enabled={esprit_enabled}, config={esprit_config is not None}")
+
             # Run in background thread
             import threading
             def _run_collection():
                 try:
                     collector.collect_scenario(interactive_devices=common_config["interactive_devices"], confirm_start=False)
+
+                    # ESPRIT post-collection processing (if enabled) - add to queue
+                    print(f"\n[DEBUG] ESPRIT enabled check in thread: {esprit_enabled}")
+                    if esprit_enabled:
+                        from pathlib import Path
+                        scenario_dir = Path(collector.scenario_dir)
+
+                        # Add to global ESPRIT queue (non-blocking)
+                        esprit_queue = get_esprit_queue()
+                        esprit_queue.enqueue(
+                            scenario_dir=scenario_dir,
+                            esprit_config=esprit_config,
+                            evt_q=evt_q,
+                            scenario_name=scenario_name
+                        )
+
+                        # Show queue status
+                        status = esprit_queue.get_status()
+                        print(f"[DEBUG] ESPRIT queued. Queue status: {status['queue_size']} pending, "
+                              f"currently processing: {status['current_task'] or 'None'}")
+
                     evt_q.put_nowait(WorkerEvent("done", {"ok": True, "scenario": scenario_name}))
                 except Exception as e:
                     evt_q.put_nowait(WorkerEvent("error", {"message": f"Collection failed: {e}", "fatal": True}))
