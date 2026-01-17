@@ -51,7 +51,7 @@ class StreamingESPRITProcessor:
                  band_index: int = 0,
                  L_fraction: float = 0.5,
                  K: int = 30,
-                 skip_m: int = 2):
+                 skip_m: Optional[int] = 2):
         """
         Initialize the streaming processor.
 
@@ -62,7 +62,7 @@ class StreamingESPRITProcessor:
             band_index: Which band preset to use (0-3)
             L_fraction: Hankel window length as fraction of signal
             K: Model order (number of poles to extract)
-            skip_m: Channel index to skip (e.g., hammer calibration channel)
+            skip_m: Channel index to skip (e.g., hammer calibration channel), or None to use all channels
         """
         self.M_out = M_out
         self.N_use = N_use
@@ -77,8 +77,11 @@ class StreamingESPRITProcessor:
         self.fs_band = fs / self.current_preset.decimate_factor
         self.dt = 1.0 / self.fs_band
 
-        # Channel mapping (exclude skip_m)
-        self.m_map = [m for m in range(M_out) if m != skip_m]
+        # Channel mapping (exclude skip_m if specified, otherwise use all channels)
+        if skip_m is not None:
+            self.m_map = [m for m in range(M_out) if m != skip_m]
+        else:
+            self.m_map = list(range(M_out))
         self.M_eff = len(self.m_map)
 
         # Storage for incremental results

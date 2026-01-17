@@ -116,6 +116,12 @@ class ESPRITScenarioProcessor:
                     # Update M_out to match actual filtered channel count
                     config['M_out'] = averaged_response.shape[0]
                     print(f"Updated M_out to {config['M_out']} (filtered channel count)")
+
+                    # When using selected_channels, disable skip_m since we're already
+                    # pre-selecting which channels to process (all filtered channels are valid)
+                    if config.get('skip_m') is not None:
+                        print(f"INFO: Disabling skip_m (was {config['skip_m']}) since selected_channels pre-filters data")
+                        config['skip_m'] = None
                 else:
                     print("ERROR: No valid channels selected")
                     return None
@@ -648,7 +654,243 @@ class ESPRITAggregator:
             except Exception as e:
                 print(f"WARNING: Failed to read {metadata_file}: {e}")
 
-        # Sort by scenario number
-        scenarios.sort(key=lambda x: x[1])
+        # Sort by scenario number (numerically, not alphabetically)
+        def get_numeric_scenario(item):
+            try:
+                return int(item[1])
+            except (ValueError, TypeError):
+                return 0
+        scenarios.sort(key=get_numeric_scenario)
 
         return scenarios
+
+    @staticmethod
+    def export_for_merge(
+        scenario_dirs: List[Path],
+        output_dir: Path,
+        collection_name: Optional[str] = None,
+        min_occurrence_pct: float = 30.0,
+        freq_tolerance_pct: float = 2.0,
+        channel_remap: Optional[Dict[int, int]] = None
+    ) -> bool:
+        """
+        Export ESPRIT aggregation results in format compatible with Merge_res_New.py.
+
+        Generates results_{low}_{high}.json files for all 4 frequency bands.
+
+        Args:
+            scenario_dirs: List of paths to scenario directories
+            output_dir: Directory to save output files
+            collection_name: Name for this collection
+            min_occurrence_pct: Minimum % of scenarios a mode must appear in
+            freq_tolerance_pct: Frequency tolerance for grouping modes
+            channel_remap: Optional channel index remapping dict {old_idx: new_idx}
+                          Default remaps: 0->2, drop 1, 2->0, 3->1, 4->3, 5->4, 6->5
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Default channel remapping based on collection setup:
+        # Merge_res_New.py expects 6 receivers: 0, 1, 2(calibration), 3, 4, 5
+        #
+        # My original recording channels:
+        #   ch0 = calibration -> receiver 2
+        #   ch1 = disabled (empty)
+        #   ch2 -> receiver 0
+        #   ch3 -> receiver 1
+        #   ch4 -> receiver 2
+        #   ch5 -> receiver 3
+        #   ch6 -> receiver 4
+        #
+        # With all 5 channels processed (skip_m=None when using selected_channels):
+        # Aggregated amplitudes_in_m has 5 channels (indices 0-4):
+        #   Index 0 = ch2 -> receiver 0
+        #   Index 1 = ch3 -> receiver 1
+        #   Index 2 = ch4 -> receiver 2
+        #   Index 3 = ch5 -> receiver 3
+        #   Index 4 = ch6 -> receiver 4
+        if channel_remap is None:
+            channel_remap = {
+                0: 0,   # ch2 -> receiver 0
+                1: 1,   # ch3 -> receiver 1
+                2: 2,   # ch4 -> receiver 2
+                3: 3,   # ch5 -> receiver 3
+                4: 4,   # ch6 -> receiver 4
+            }
+
+        # Band definitions matching Merge_res_New.py expectations
+        band_ranges = [
+            (40, 500),
+            (500, 1000),
+            (1000, 2000),
+            (2000, 4000),
+        ]
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n{'='*70}")
+        print(f"ESPRIT Export for Merge_res_New.py")
+        print(f"Scenarios: {len(scenario_dirs)}")
+        print(f"Output: {output_dir}")
+        print(f"{'='*70}")
+
+        success_count = 0
+
+        for band_idx, (low_freq, high_freq) in enumerate(band_ranges):
+            print(f"\n--- Band {band_idx}: {low_freq}-{high_freq} Hz ---")
+
+            # Aggregate this band
+            results = ESPRITAggregator.aggregate_scenarios(
+                scenario_dirs=scenario_dirs,
+                output_file=None,  # Don't save intermediate
+                collection_name=collection_name,
+                band_index=band_idx,
+                min_occurrence_pct=min_occurrence_pct,
+                freq_tolerance_pct=freq_tolerance_pct
+            )
+
+            if results is None or len(results.get('common_f', [])) == 0:
+                print(f"WARNING: No modes found for band {band_idx}, skipping")
+                continue
+
+            # Remap amplitudes_in_m channels
+            # Determine number of output receivers from channel_remap
+            # (max receiver index + 1, or use actual number of input channels if 1:1 mapping)
+            num_output_receivers = max(channel_remap.values()) + 1 if channel_remap else len(results.get('amplitudes_in_m', [[]])[0])
+            remapped_amplitudes = []
+            for mode_amps in results.get('amplitudes_in_m', []):
+                # mode_amps is list of {real, imag} dicts indexed by aggregated channel
+                # Create output with all receivers, fill missing with zeros
+                remapped_list = []
+                for out_recv_idx in range(num_output_receivers):
+                    # Find which input index maps to this output receiver
+                    input_idx = None
+                    for in_idx, mapped_recv in channel_remap.items():
+                        if mapped_recv == out_recv_idx:
+                            input_idx = in_idx
+                            break
+                    if input_idx is not None and input_idx < len(mode_amps):
+                        remapped_list.append(mode_amps[input_idx])
+                    else:
+                        # Missing receiver - fill with zeros
+                        remapped_list.append({"real": 0.0, "imag": 0.0})
+                remapped_amplitudes.append(remapped_list)
+
+            # Extract scenario numbers from names for 'names' field
+            # First: 89 -> 88 (was incorrectly numbered)
+            # Then: 1-based to 0-based (1->0, 2->1, ..., 88->87), gaps preserved
+            import re
+            names = []
+            for name in results.get('scenario_names', results.get('names', [])):
+                match = re.search(r'Scenario(\d+)', name)
+                if match:
+                    orig_num = int(match.group(1))
+                else:
+                    try:
+                        orig_num = int(name)
+                    except ValueError:
+                        orig_num = 1
+
+                # First fix: 89 was incorrectly numbered, should be 88
+                if orig_num == 89:
+                    orig_num = 88
+
+                # Then convert to 0-based: subtract 1 (1->0, 2->1, ..., 88->87)
+                new_num = orig_num - 1
+                # Format as 2-digit string with leading zero (matching sample format)
+                names.append(f"{new_num:02d}")
+
+            print(f"  Renumbered scenarios: 89->88, then 1-88 -> 0-87 (gaps preserved)")
+
+            # Build selected_r_indices as scenario indices (matching names)
+            # This is a list of integer scenario indices, NOT receiver indices
+            selected_r_indices = [int(n) for n in names]
+
+            # Prepare output in Merge_res_New.py expected format
+            export_data = {
+                "common_f": results['common_f'],
+                "common_z": results['common_z'],
+                "signed_shapes": results['signed_shapes'],
+                "participation": results['participation'],
+                "amplitudes_in_m": remapped_amplitudes,
+                "names": names,
+                "selected_r_indices": selected_r_indices,
+            }
+
+            # Save as results_{low}_{high}.json
+            output_file = output_dir / f"results_{low_freq}_{high_freq}.json"
+            with open(output_file, 'w') as f:
+                json.dump(export_data, f, indent=4)
+
+            print(f"OK Saved {output_file.name}: {len(export_data['common_f'])} modes")
+            success_count += 1
+
+        print(f"\n{'='*70}")
+        print(f"Export complete: {success_count}/4 bands exported")
+        print(f"Output directory: {output_dir}")
+        print(f"{'='*70}")
+
+        return success_count > 0
+
+
+def export_collection_for_merge(
+    base_dir: str,
+    computer_name: str,
+    room_name: str,
+    output_dir: Optional[str] = None,
+    min_occurrence_pct: float = 30.0,
+    freq_tolerance_pct: float = 2.0
+) -> bool:
+    """
+    Convenience function to export a collection for Merge_res_New.py.
+
+    Usage:
+        from esprit_helper import export_collection_for_merge
+        export_collection_for_merge(
+            base_dir="C:/Users/astri/repos/RoomResponse/datasets",
+            computer_name="Ivers&Pond",
+            room_name="Take1",
+            output_dir="C:/Users/astri/repos/RoomResponse/ESPRIT"
+        )
+
+    Args:
+        base_dir: Base dataset directory
+        computer_name: Computer name to match
+        room_name: Room name to match
+        output_dir: Output directory (defaults to ESPRIT folder)
+        min_occurrence_pct: Minimum % of scenarios for mode inclusion
+        freq_tolerance_pct: Frequency tolerance for grouping modes
+
+    Returns:
+        True if successful
+    """
+    base_path = Path(base_dir)
+
+    # Find scenarios
+    scenarios = ESPRITAggregator.find_collection_scenarios(
+        base_dir=base_path,
+        computer_name=computer_name,
+        room_name=room_name
+    )
+
+    if not scenarios:
+        print(f"ERROR: No scenarios found for {computer_name}/{room_name}")
+        return False
+
+    scenario_dirs = [s[0] for s in scenarios]
+    print(f"Found {len(scenario_dirs)} scenarios for {computer_name}/{room_name}")
+
+    # Default output to ESPRIT folder
+    if output_dir is None:
+        output_path = Path(__file__).parent / "ESPRIT"
+    else:
+        output_path = Path(output_dir)
+
+    return ESPRITAggregator.export_for_merge(
+        scenario_dirs=scenario_dirs,
+        output_dir=output_path,
+        collection_name=f"{computer_name}_{room_name}",
+        min_occurrence_pct=min_occurrence_pct,
+        freq_tolerance_pct=freq_tolerance_pct
+    )
