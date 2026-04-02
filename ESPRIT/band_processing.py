@@ -247,6 +247,92 @@ def process_multiband(signals: np.ndarray, fs: float,
     return band_results
 
 
+def merge_multiband_results(signals: np.ndarray, fs: float,
+                            bands: Optional[List[FrequencyBand]] = None,
+                            esprit_function=None,
+                            esprit_params: Optional[Dict] = None,
+                            apply_preemphasis: bool = True,
+                            mac_threshold: float = 0.9,
+                            freq_tol_pct: float = 0.01) -> Dict:
+    """
+    Run ESPRIT on each frequency band and merge results to remove duplicates.
+
+    This is a high-level wrapper that:
+    1. Processes each band (filter, preemphasis, decimation)
+    2. Runs ESPRIT per band to get per-band ModalParameters
+    3. Calls merge_multiband_modes() to deduplicate cross-band detections
+
+    Args:
+        signals: Multi-channel signals, shape (T, n_channels)
+        fs: Sampling frequency (Hz)
+        bands: Band configurations (default: STANDARD_BANDS)
+        esprit_function: ESPRIT analysis function (e.g., esprit_modal_identification)
+        esprit_params: Dict of parameters to pass to ESPRIT (model_order, use_tls, etc.)
+        apply_preemphasis: Apply exponential pre-emphasis (default: True)
+        mac_threshold: MAC threshold for merge_multiband_modes (default: 0.9)
+        freq_tol_pct: Frequency tolerance for merge_multiband_modes (default: 1%)
+
+    Returns:
+        Dict from merge_multiband_modes with merged frequencies, damping, poles,
+        mode_shapes, band_names, center_weights, n_raw, n_merged, merge_log.
+        Also includes 'per_band_results' with raw per-band ModalParameters.
+    """
+    from band_merging import merge_multiband_modes
+
+    if bands is None:
+        bands = STANDARD_BANDS
+    if esprit_params is None:
+        esprit_params = {}
+    if esprit_function is None:
+        from esprit_core import esprit_modal_identification
+        esprit_function = esprit_modal_identification
+
+    per_band_results = []
+    used_bands = []
+
+    for band in bands:
+        try:
+            processed, fs_band, metadata = process_band(
+                signals, fs, band, apply_preemphasis=apply_preemphasis
+            )
+
+            # Determine model order
+            params = esprit_params.copy()
+            if band.model_order is not None:
+                params['model_order'] = band.model_order
+            elif 'model_order' not in params:
+                params['model_order'] = 30  # default
+
+            # Set freq_range to band boundaries
+            params['freq_range'] = (band.f_min, band.f_max)
+            params.setdefault('min_freq', band.f_min)
+
+            # Clamp window_length
+            wl = params.get('window_length', len(processed) // 2)
+            params['window_length'] = min(wl, len(processed) // 2)
+
+            # Remove fs from params if present (we pass fs_band positionally)
+            params.pop('fs', None)
+
+            result = esprit_function(processed, fs_band, **params)
+            per_band_results.append(result)
+            used_bands.append(band)
+
+        except Exception as e:
+            print(f"Warning: Band {band.name} failed: {e}")
+            continue
+
+    # Merge across bands
+    merged = merge_multiband_modes(
+        per_band_results, used_bands,
+        mac_threshold=mac_threshold,
+        freq_tol_pct=freq_tol_pct,
+    )
+    merged['per_band_results'] = per_band_results
+
+    return merged
+
+
 def validate_band_coverage(bands: List[FrequencyBand],
                           target_range: Tuple[float, float]) -> Dict:
     """

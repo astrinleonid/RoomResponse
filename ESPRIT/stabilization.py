@@ -316,12 +316,20 @@ def multiband_multipoint_stabilization(measurement_data: List[np.ndarray],
                                       band_processor,
                                       freq_tol_hz: float = 2.0,
                                       damping_tol: float = 0.05,
-                                      min_detections: int = 2) -> List[StableMode]:
+                                      min_detections: int = 2,
+                                      use_band_merging: bool = True,
+                                      mac_threshold: float = 0.9,
+                                      freq_tol_pct: float = 0.01) -> List[StableMode]:
     """
     Combined multi-band and multi-point stabilization.
 
     This is the most comprehensive analysis: processes multiple measurements
     across multiple frequency bands and identifies stable modes.
+
+    When use_band_merging=True (default), per-point multi-band results are first
+    deduplicated using MAC + band-center-weighted merging before cross-point
+    stabilization. This prevents the same physical mode detected in overlapping
+    bands from inflating detection counts.
 
     Args:
         measurement_data: List of measurement arrays, each (T, n_channels)
@@ -333,14 +341,22 @@ def multiband_multipoint_stabilization(measurement_data: List[np.ndarray],
         freq_tol_hz: Frequency clustering tolerance
         damping_tol: Damping clustering tolerance
         min_detections: Minimum detections across all bands+points
+        use_band_merging: Use MAC-based band merging before stabilization (default: True)
+        mac_threshold: MAC threshold for band merging (default: 0.9)
+        freq_tol_pct: Frequency tolerance for band merging (default: 1%)
 
     Returns:
         stable_modes: Stable modes across all bands and points
     """
+    from band_merging import merge_multiband_modes
+
     all_candidates = []
 
     # Process each measurement
     for source_id, measurement in enumerate(measurement_data):
+        per_band_results = []
+        used_bands = []
+
         # Process each frequency band
         for band in bands:
             try:
@@ -348,15 +364,43 @@ def multiband_multipoint_stabilization(measurement_data: List[np.ndarray],
                 processed, fs_band, _ = band_processor(measurement, fs, band)
 
                 # ESPRIT analysis on this band
-                # Update freq_range to match band
                 params_band = esprit_params.copy()
                 params_band['freq_range'] = (band.f_min, band.f_max)
+                if band.model_order is not None:
+                    params_band['model_order'] = band.model_order
 
                 result = esprit_function(processed, fs_band, **params_band)
+                per_band_results.append(result)
+                used_bands.append(band)
 
-                # Convert to candidates
+            except Exception as e:
+                print(f"Warning: Measurement {source_id}, band {band.name} failed: {e}")
+                continue
+
+        if use_band_merging and len(per_band_results) > 0:
+            # Merge cross-band duplicates before adding to candidates
+            merged = merge_multiband_modes(
+                per_band_results, used_bands,
+                mac_threshold=mac_threshold,
+                freq_tol_pct=freq_tol_pct,
+            )
+
+            for i in range(len(merged['frequencies'])):
+                shape = merged['mode_shapes'][i] if merged['mode_shapes'] is not None else None
+                candidate = ModeCandidate(
+                    frequency=merged['frequencies'][i],
+                    damping=merged['damping_ratios'][i],
+                    pole=merged['poles'][i],
+                    mode_shape=shape,
+                    quality=1.0,
+                    source_id=source_id,
+                    band_name=merged['band_names'][i] if i < len(merged['band_names']) else "",
+                )
+                all_candidates.append(candidate)
+        else:
+            # Legacy path: no merging, just concatenate
+            for result, band in zip(per_band_results, used_bands):
                 for i in range(len(result.frequencies)):
-                    # Check if frequency is within band range
                     if band.f_min <= result.frequencies[i] <= band.f_max:
                         candidate = ModeCandidate(
                             frequency=result.frequencies[i],
@@ -368,11 +412,6 @@ def multiband_multipoint_stabilization(measurement_data: List[np.ndarray],
                             band_name=band.name
                         )
                         all_candidates.append(candidate)
-
-            except Exception as e:
-                # Skip failed band processing
-                print(f"Warning: Measurement {source_id}, band {band.name} failed: {e}")
-                continue
 
     # Stabilize across all candidates
     stable_modes = stabilize_modes(
