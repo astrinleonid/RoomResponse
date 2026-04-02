@@ -23,6 +23,7 @@ class FrequencyBand:
     exp_factor: float      # Exponential pre-emphasis factor (positive, mild)
     name: str = ""         # Optional band name
     model_order: Optional[int] = None  # Per-band model order (None = use global)
+    window_length: Optional[int] = None  # Per-band window length (None = use global)
 
     def __post_init__(self):
         if not self.name:
@@ -39,10 +40,12 @@ STANDARD_BANDS = [
 
 
 # Extended bands: finer subdivision, no decimation, per-band model orders, cap at 6000 Hz
+# Low bands use longer windows (14400/10000 samples) to capture enough cycles
+# (a 50 Hz mode needs ~960 samples/cycle, so 2000 samples = ~2 cycles = insufficient)
 EXTENDED_BANDS = [
-    FrequencyBand(f_min=30,   f_max=100,  filter_order=4, decimation=1, exp_factor=0.30, name="Ultra-Low",  model_order=10),
-    FrequencyBand(f_min=80,   f_max=200,  filter_order=4, decimation=1, exp_factor=0.25, name="Low",        model_order=15),
-    FrequencyBand(f_min=180,  f_max=400,  filter_order=5, decimation=1, exp_factor=0.20, name="Low-Mid",    model_order=25),
+    FrequencyBand(f_min=30,   f_max=100,  filter_order=4, decimation=1, exp_factor=0.15, name="Ultra-Low",  model_order=20, window_length=12000),
+    FrequencyBand(f_min=80,   f_max=200,  filter_order=4, decimation=1, exp_factor=0.15, name="Low",        model_order=25, window_length=9600),
+    FrequencyBand(f_min=180,  f_max=400,  filter_order=5, decimation=1, exp_factor=0.15, name="Low-Mid",    model_order=25),
     FrequencyBand(f_min=350,  f_max=700,  filter_order=5, decimation=1, exp_factor=0.15, name="Mid",        model_order=35),
     FrequencyBand(f_min=600,  f_max=1200, filter_order=6, decimation=1, exp_factor=0.10, name="Mid-High",   model_order=45),
     FrequencyBand(f_min=1000, f_max=2500, filter_order=6, decimation=1, exp_factor=0.08, name="High",       model_order=50),
@@ -170,7 +173,8 @@ def process_band(signals: np.ndarray, fs: float, band: FrequencyBand,
         'n_samples_original': T,
         'n_samples_decimated': len(decimated),
         'preemphasis_applied': apply_preemphasis and band.exp_factor > 0,
-        'model_order': band.model_order
+        'model_order': band.model_order,
+        'window_length': band.window_length
     }
 
     return decimated, fs_band, metadata
@@ -307,8 +311,12 @@ def merge_multiband_results(signals: np.ndarray, fs: float,
             params['freq_range'] = (band.f_min, band.f_max)
             params.setdefault('min_freq', band.f_min)
 
-            # Clamp window_length
-            wl = params.get('window_length', len(processed) // 2)
+            # Use per-band window_length if set, otherwise fall back to global
+            if band.window_length is not None:
+                wl = band.window_length
+            else:
+                wl = params.get('window_length', len(processed) // 2)
+            # Clamp to half the available signal length
             params['window_length'] = min(wl, len(processed) // 2)
 
             # Remove fs from params if present (we pass fs_band positionally)
