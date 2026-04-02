@@ -22,6 +22,7 @@ class FrequencyBand:
     decimation: int        # Decimation factor
     exp_factor: float      # Exponential pre-emphasis factor (positive, mild)
     name: str = ""         # Optional band name
+    model_order: Optional[int] = None  # Per-band model order (None = use global)
 
     def __post_init__(self):
         if not self.name:
@@ -34,6 +35,19 @@ STANDARD_BANDS = [
     FrequencyBand(f_min=150, f_max=500, filter_order=5, decimation=2, exp_factor=0.2, name="Mid-Low"),
     FrequencyBand(f_min=400, f_max=1500, filter_order=6, decimation=1, exp_factor=0.1, name="Mid-High"),
     FrequencyBand(f_min=1200, f_max=5000, filter_order=8, decimation=1, exp_factor=0.05, name="High"),
+]
+
+
+# Extended bands: finer subdivision, no decimation, per-band model orders, cap at 6000 Hz
+EXTENDED_BANDS = [
+    FrequencyBand(f_min=30,   f_max=100,  filter_order=4, decimation=1, exp_factor=0.30, name="Ultra-Low",  model_order=10),
+    FrequencyBand(f_min=80,   f_max=200,  filter_order=4, decimation=1, exp_factor=0.25, name="Low",        model_order=15),
+    FrequencyBand(f_min=180,  f_max=400,  filter_order=5, decimation=1, exp_factor=0.20, name="Low-Mid",    model_order=25),
+    FrequencyBand(f_min=350,  f_max=700,  filter_order=5, decimation=1, exp_factor=0.15, name="Mid",        model_order=35),
+    FrequencyBand(f_min=600,  f_max=1200, filter_order=6, decimation=1, exp_factor=0.10, name="Mid-High",   model_order=45),
+    FrequencyBand(f_min=1000, f_max=2500, filter_order=6, decimation=1, exp_factor=0.08, name="High",       model_order=50),
+    FrequencyBand(f_min=2000, f_max=4500, filter_order=8, decimation=1, exp_factor=0.05, name="Upper",      model_order=50),
+    FrequencyBand(f_min=4000, f_max=6000, filter_order=8, decimation=1, exp_factor=0.03, name="Top",        model_order=50),
 ]
 
 
@@ -155,7 +169,8 @@ def process_band(signals: np.ndarray, fs: float, band: FrequencyBand,
         'exp_factor': band.exp_factor,
         'n_samples_original': T,
         'n_samples_decimated': len(decimated),
-        'preemphasis_applied': apply_preemphasis and band.exp_factor > 0
+        'preemphasis_applied': apply_preemphasis and band.exp_factor > 0,
+        'model_order': band.model_order
     }
 
     return decimated, fs_band, metadata
