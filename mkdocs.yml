@@ -1,0 +1,63 @@
+site_name: RoomResponse Documentation
+site_url: http://localhost:8000/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Architecture:
+    - System Overview: architecture/SYSTEM_OVERVIEW.md
+    - Build System: architecture/BUILD_SYSTEM.md
+    - Data Flows: architecture/DATA_FLOWS.md
+  - Modules:
+    - SDL Audio Core: modules/sdl-audio-core/OVERVIEW.md
+    - Recorder: modules/recorder/OVERVIEW.md
+    - Signal Processing: modules/signal-processing/OVERVIEW.md
+    - GUI: modules/gui/OVERVIEW.md
+    - Dataset & Collection: modules/dataset/OVERVIEW.md
+    - ML Pipeline: modules/ml-pipeline/OVERVIEW.md
+    - ESPRIT: modules/esprit/OVERVIEW.md
+  - Development:
+    - Testing: development/TESTING.md
+    - Work in Progress: development/WORK_IN_PROGRESS.md
+  - Guides:
+    - Quick Start: guides/QUICK_START.md
+    - Configuration: guides/CONFIGURATION.md

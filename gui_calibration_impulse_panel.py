@@ -255,7 +255,7 @@ class CalibrationImpulsePanel:
             max_first_pos_ratio = st.number_input(
                 "Max First Pos/Negative",
                 min_value=0.0,
-                max_value=1.0,
+                max_value=2.0,
                 value=float(qual_config.get('max_first_positive_ratio', 0.3)),
                 step=0.01,
                 key="max_first_pos_ratio",
@@ -297,7 +297,7 @@ class CalibrationImpulsePanel:
             max_highest_pos_ratio = st.number_input(
                 "Max Highest Pos/Negative",
                 min_value=0.0,
-                max_value=1.0,
+                max_value=2.0,
                 value=float(qual_config.get('max_highest_positive_ratio', 0.5)),
                 step=0.01,
                 key="max_highest_pos_ratio",

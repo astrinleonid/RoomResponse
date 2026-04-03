@@ -218,37 +218,46 @@ def export_point_response_file(
 
     print(f"    Saved: {output_file}")
 
-def main():
-    """Main entry point"""
-    piano_dir = Path("piano")
-    output_dir = Path("piano_point_responses")
+def export_point_responses(
+    scenario_paths: List[Path],
+    output_dir: Path,
+    progress_callback=None
+) -> dict:
+    """
+    Export point responses for a list of scenarios.
+
+    Args:
+        scenario_paths: List of scenario directory paths to export
+        output_dir: Directory to save exported text files
+        progress_callback: Optional callback function(current, total, message)
+
+    Returns:
+        Dict with export results and statistics
+    """
+    output_dir = Path(output_dir)
 
     # Create output directory
     output_dir.mkdir(exist_ok=True)
 
-    # Find all scenarios
-    scenarios = sorted(piano_dir.glob("Neumann-Scenario*"))
+    scenarios = [Path(p) for p in scenario_paths]
 
     if not scenarios:
-        print("No scenarios found in piano/ folder!")
-        return
-
-    print("=" * 80)
-    print("EXPORT PIANO POINT RESPONSE FILES")
-    print("=" * 80)
-    print(f"Found {len(scenarios)} measurement points in piano/ folder")
-    print(f"Output directory: {output_dir}")
-    print()
+        return {
+            'success': False,
+            'error': 'No scenarios provided',
+            'exported_count': 0,
+            'failed_count': 0,
+            'failed': []
+        }
 
     # Step 1: Generate missing averaged responses
-    print("=" * 80)
-    print("STEP 1: GENERATING MISSING AVERAGED RESPONSES")
-    print("=" * 80)
-
     missing_count = 0
     generated_count = 0
 
-    for scenario_path in scenarios:
+    for i, scenario_path in enumerate(scenarios):
+        if progress_callback:
+            progress_callback(i, len(scenarios) * 2, f"Checking averaged responses for {scenario_path.name}")
+
         avg_dir = scenario_path / "averaged_responses"
 
         # Check if averages exist and are complete
@@ -263,36 +272,25 @@ def main():
             if generate_averaged_responses_for_scenario(scenario_path):
                 generated_count += 1
 
-    if missing_count == 0:
-        print("All scenarios already have averaged responses!")
-    else:
-        print(f"\nGenerated averaged responses: {generated_count}/{missing_count} scenarios")
-
-    print()
-
     # Step 2: Export all scenarios
-    print("=" * 80)
-    print("STEP 2: EXPORTING POINT RESPONSE FILES")
-    print("=" * 80)
-
     success_count = 0
     failed = []
 
-    for scenario_path in scenarios:
+    for i, scenario_path in enumerate(scenarios):
         scenario_name = scenario_path.name
 
+        if progress_callback:
+            progress_callback(len(scenarios) + i, len(scenarios) * 2, f"Exporting {scenario_name}")
+
         # Extract point number from scenario name
-        # Format: Neumann-Scenario57-Take1 -> point 57
         try:
             point_number = int(scenario_name.split("-Scenario")[1].split("-")[0])
         except (ValueError, IndexError):
-            print(f"Warning: Could not extract point number from {scenario_name}")
+            failed.append((scenario_name, "Could not extract point number"))
             continue
 
         # Output file name
         output_file = output_dir / f"{point_number:02d}.txt"
-
-        print(f"Processing point {point_number} ({scenario_name})...")
 
         try:
             # Load averaged responses
@@ -304,21 +302,59 @@ def main():
             success_count += 1
 
         except Exception as e:
-            print(f"  ERROR: {e}")
-            failed.append((point_number, str(e)))
+            failed.append((scenario_name, str(e)))
 
-        print()
+    # Return summary
+    return {
+        'success': success_count > 0,
+        'exported_count': success_count,
+        'failed_count': len(failed),
+        'failed': failed,
+        'generated_avg_count': generated_count,
+        'missing_avg_count': missing_count,
+        'output_dir': str(output_dir.absolute())
+    }
+
+
+def main():
+    """Main entry point"""
+    piano_dir = Path("piano")
+    output_dir = Path("belarus_responses")
+
+    # Create output directory
+    output_dir.mkdir(exist_ok=True)
+
+    # Find all scenarios
+    scenarios = sorted(piano_dir.glob("Belarus-Scenario*"))
+
+    if not scenarios:
+        print("No scenarios found in piano/ folder!")
+        return
+
+    print("=" * 80)
+    print("EXPORT PIANO POINT RESPONSE FILES")
+    print("=" * 80)
+    print(f"Found {len(scenarios)} measurement points in piano/ folder")
+    print(f"Output directory: {output_dir}")
+    print()
+
+    # Export using the reusable function
+    def progress_print(current, total, message):
+        print(f"[{current}/{total}] {message}")
+
+    result = export_point_responses(scenarios, output_dir, progress_callback=progress_print)
 
     # Summary
+    print()
     print("=" * 80)
     print("SUMMARY")
     print("=" * 80)
-    print(f"Successfully exported: {success_count}/{len(scenarios)} point response files")
+    print(f"Successfully exported: {result['exported_count']}/{len(scenarios)} point response files")
 
-    if failed:
+    if result['failed']:
         print(f"\nFailed exports:")
-        for point, error in failed:
-            print(f"  Point {point}: {error}")
+        for point, error in result['failed']:
+            print(f"  {point}: {error}")
     else:
         print(f"\nAll point response files exported successfully!")
         print(f"Location: {output_dir.absolute()}")
@@ -326,7 +362,7 @@ def main():
     print("=" * 80)
 
     # Show file sizes
-    if success_count > 0:
+    if result['exported_count'] > 0:
         print("\nGenerated files:")
         for txt_file in sorted(output_dir.glob("*.txt")):
             size_mb = txt_file.stat().st_size / (1024 * 1024)

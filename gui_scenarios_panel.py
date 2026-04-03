@@ -52,6 +52,16 @@ except ImportError:
     parse_multichannel_filename = None
     MULTICHANNEL_UTILS_AVAILABLE = False
 
+# Optional: Point response export
+try:
+    from export_piano_point_responses import export_point_responses
+    EXPORT_POINT_RESPONSES_AVAILABLE = True
+    print("✓ Export point responses module loaded successfully")
+except ImportError as e:
+    export_point_responses = None
+    EXPORT_POINT_RESPONSES_AVAILABLE = False
+    print(f"✗ Failed to import export module: {e}")
+
 # Optional: Recorder for channel names
 try:
     from RoomResponseRecorder import RoomResponseRecorder
@@ -64,6 +74,7 @@ except ImportError:
 SK_SCN_SELECTIONS = "scenarios_selected_set"
 SK_SCN_EXPLORE = "scenarios_explore_path"
 SK_SCN_FIR_EXPORT = "scenarios_fir_export_path"
+SK_SCN_POINT_EXPORT = "scenarios_point_export_dialog"
 SK_FILTER_TEXT = "filter_text"
 SK_FILTER_COMPUTER = "filter_computer"
 SK_FILTER_ROOM = "filter_room"
@@ -130,6 +141,10 @@ class ScenariosPanel:
         self._render_scenario_summary(df, dfv)
         self._render_scenario_explorer()
         self._render_fir_export_dialog()
+
+        # Show point export dialog if triggered
+        if SK_SCN_POINT_EXPORT in st.session_state and st.session_state[SK_SCN_POINT_EXPORT]:
+            self._render_point_export_dialog()
 
     def _init_session_state(self) -> None:
         """Initialize session state defaults."""
@@ -201,6 +216,51 @@ class ScenariosPanel:
                     st.success(f"Cleared labels from {updated} scenarios")
                     self.scenario_manager.clear_cache()
                     st.rerun()
+
+        # Export Point Responses - Simple button approach
+        if EXPORT_POINT_RESPONSES_AVAILABLE:
+            st.markdown("---")
+            st.markdown("#### 📤 Export Point Responses")
+
+            col1, col2, col3 = st.columns([2, 1, 1])
+
+            with col1:
+                export_mode = st.radio(
+                    "Export scope:",
+                    ["all", "selected"],
+                    format_func=lambda x: "All Filtered Scenarios" if x == "all" else "Selected Scenarios Only",
+                    horizontal=True,
+                    key="export_point_mode"
+                )
+
+            selected_count = len(st.session_state[SK_SCN_SELECTIONS])
+
+            with col2:
+                count_to_export = selected_count if export_mode == "selected" else len(dfv)
+                st.metric("To Export", count_to_export)
+
+            with col3:
+                can_export = (export_mode == "all" and len(dfv) > 0) or (export_mode == "selected" and selected_count > 0)
+
+                if st.button("📤 Start Export", type="primary", disabled=not can_export, key="btn_start_export"):
+                    # Get paths
+                    if export_mode == "selected":
+                        paths = list(st.session_state[SK_SCN_SELECTIONS])
+                    else:
+                        paths = [row["path"] for _, row in dfv.iterrows()]
+
+                    # Open dialog
+                    st.session_state[SK_SCN_POINT_EXPORT] = {
+                        'mode': export_mode,
+                        'paths': paths,
+                        'count': len(paths)
+                    }
+
+            if not can_export:
+                if export_mode == "selected" and selected_count == 0:
+                    st.warning("⚠️ No scenarios selected")
+                elif len(dfv) == 0:
+                    st.warning("⚠️ No scenarios available after filtering")
 
     def _bulk_apply_labels(self, dfv, label_text: str, append_mode: bool) -> int:
         """Apply labels to multiple scenarios."""
@@ -2320,3 +2380,181 @@ class ScenariosPanel:
                 pass
 
         return channel_names
+
+    @st.dialog("📤 Export Point Responses", width="large")
+    def _render_point_export_dialog(self) -> None:
+        """Render point response export dialog using Streamlit dialog."""
+        if not EXPORT_POINT_RESPONSES_AVAILABLE:
+            st.error("Export module not available")
+            return
+
+        export_config = st.session_state.get(SK_SCN_POINT_EXPORT)
+        if not export_config:
+            return
+
+        # Get scenarios to export
+        export_mode = export_config.get('mode', 'all')
+        scenario_paths = export_config.get('paths', [])
+
+        # Filter to only existing paths
+        scenario_paths = [path for path in scenario_paths if os.path.exists(path)]
+
+        if not scenario_paths:
+            st.warning("⚠️ No scenarios to export")
+            if st.button("Close"):
+                st.session_state[SK_SCN_POINT_EXPORT] = None
+                st.rerun()
+            return
+
+        # Display export info
+        mode_label = "All Filtered Scenarios" if export_mode == "all" else "Selected Scenarios Only"
+        st.info(f"**Export scope:** {mode_label}")
+        st.metric("Scenarios to export", len(scenario_paths))
+
+        st.markdown("---")
+
+        # Output folder input
+        output_folder = st.text_input(
+            "Output folder name",
+            value="exported_responses",
+            help="Folder name to save exported response files",
+            key="point_export_folder_input"
+        )
+
+        # Get dataset root and build full path
+        dataset_root = st.session_state.get("dataset_root", os.getcwd())
+        output_dir = os.path.join(dataset_root, output_folder.strip())
+
+        st.caption(f"📁 Full path: `{output_dir}`")
+
+        # Check if exists
+        if os.path.exists(output_dir):
+            st.warning("⚠️ Folder exists. Files may be overwritten.")
+
+        st.markdown("---")
+
+        # Action buttons
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("🚀 Start Export", type="primary", use_container_width=True):
+                self._run_point_export(scenario_paths, output_dir)
+
+        with col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state[SK_SCN_POINT_EXPORT] = None
+                st.rerun()
+
+    def _run_point_export(self, scenario_paths: list, output_dir: str) -> None:
+        """
+        Run point response export with progress tracking.
+
+        Args:
+            scenario_paths: List of scenario paths to export
+            output_dir: Output directory path
+        """
+        if not EXPORT_POINT_RESPONSES_AVAILABLE:
+            st.error("Export module not available")
+            return
+
+        from pathlib import Path
+
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def progress_callback(current, total, message):
+            progress = current / total if total > 0 else 0
+            progress_bar.progress(progress)
+            status_text.text(f"[{current}/{total}] {message}")
+
+        # Run export
+        try:
+            with st.spinner("Exporting point responses..."):
+                result = export_point_responses(
+                    scenario_paths=[Path(p) for p in scenario_paths],
+                    output_dir=Path(output_dir),
+                    progress_callback=progress_callback
+                )
+
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+
+            # Show results
+            if result['success']:
+                st.success(f"✅ Successfully exported {result['exported_count']} scenarios!")
+                st.info(f"📁 Saved to: `{result['output_dir']}`")
+
+                # Show statistics
+                st.markdown("### Export Report")
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric(
+                        "Exported",
+                        result['exported_count']
+                    )
+
+                with col2:
+                    st.metric(
+                        "Failed",
+                        result['failed_count']
+                    )
+
+                with col3:
+                    st.metric(
+                        "Avg Generated",
+                        result['generated_avg_count']
+                    )
+
+                with col4:
+                    st.metric(
+                        "Total Scenarios",
+                        len(scenario_paths)
+                    )
+
+                # Show failed exports if any
+                if result['failed']:
+                    with st.expander("❌ Failed Exports", expanded=False):
+                        for scenario_name, error in result['failed']:
+                            st.write(f"- **{scenario_name}:** {error}")
+
+                # Show file sizes
+                if result['exported_count'] > 0:
+                    with st.expander("📄 Exported Files", expanded=True):
+                        output_path = Path(result['output_dir'])
+                        txt_files = sorted(output_path.glob("*.txt"))
+
+                        if txt_files:
+                            total_size = sum(f.stat().st_size for f in txt_files)
+                            total_size_mb = total_size / (1024 * 1024)
+
+                            st.caption(f"Total size: {total_size_mb:.2f} MB")
+
+                            # Show first few files
+                            for txt_file in txt_files[:10]:
+                                size_mb = txt_file.stat().st_size / (1024 * 1024)
+                                st.write(f"- {txt_file.name}: {size_mb:.2f} MB")
+
+                            if len(txt_files) > 10:
+                                st.caption(f"... and {len(txt_files) - 10} more files")
+
+                # Close button
+                st.markdown("---")
+                if st.button("✓ Done", use_container_width=True):
+                    st.session_state[SK_SCN_POINT_EXPORT] = None
+                    st.rerun()
+            else:
+                st.error(f"❌ Export failed: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            st.error(f"Export failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+            if 'progress_bar' in locals():
+                progress_bar.empty()
+            if 'status_text' in locals():
+                status_text.empty()
