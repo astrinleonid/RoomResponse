@@ -7,6 +7,7 @@ reference esprit.py implementation. Different frequency ranges are processed
 with band-specific filtering, decimation, and exponential pre-emphasis.
 """
 from __future__ import annotations
+import gc
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
@@ -32,10 +33,10 @@ class FrequencyBand:
 
 # Standard band presets matching esprit.py
 STANDARD_BANDS = [
-    FrequencyBand(f_min=30, f_max=200, filter_order=4, decimation=4, exp_factor=0.3, name="Low"),
-    FrequencyBand(f_min=150, f_max=500, filter_order=5, decimation=2, exp_factor=0.2, name="Mid-Low"),
-    FrequencyBand(f_min=400, f_max=1500, filter_order=6, decimation=1, exp_factor=0.1, name="Mid-High"),
-    FrequencyBand(f_min=1200, f_max=5000, filter_order=8, decimation=1, exp_factor=0.05, name="High"),
+    FrequencyBand(f_min=30, f_max=200, filter_order=4, decimation=4, exp_factor=0.3, name="Low", model_order=10),
+    FrequencyBand(f_min=150, f_max=500, filter_order=5, decimation=2, exp_factor=0.2, name="Mid-Low", model_order=15),
+    FrequencyBand(f_min=400, f_max=1500, filter_order=6, decimation=1, exp_factor=0.1, name="Mid-High", model_order=25),
+    FrequencyBand(f_min=1200, f_max=5000, filter_order=8, decimation=1, exp_factor=0.05, name="High", model_order=30),
 ]
 
 
@@ -43,8 +44,8 @@ STANDARD_BANDS = [
 # Low bands use longer windows (14400/10000 samples) to capture enough cycles
 # (a 50 Hz mode needs ~960 samples/cycle, so 2000 samples = ~2 cycles = insufficient)
 EXTENDED_BANDS = [
-    FrequencyBand(f_min=30,   f_max=100,  filter_order=4, decimation=1, exp_factor=0.15, name="Ultra-Low",  model_order=20, window_length=12000),
-    FrequencyBand(f_min=80,   f_max=200,  filter_order=4, decimation=1, exp_factor=0.15, name="Low",        model_order=25, window_length=9600),
+    FrequencyBand(f_min=30,   f_max=100,  filter_order=4, decimation=1, exp_factor=0.15, name="Ultra-Low",  model_order=8,  window_length=12000),
+    FrequencyBand(f_min=80,   f_max=200,  filter_order=4, decimation=1, exp_factor=0.15, name="Low",        model_order=12, window_length=9600),
     FrequencyBand(f_min=180,  f_max=400,  filter_order=5, decimation=1, exp_factor=0.15, name="Low-Mid",    model_order=25),
     FrequencyBand(f_min=350,  f_max=700,  filter_order=5, decimation=1, exp_factor=0.15, name="Mid",        model_order=35),
     FrequencyBand(f_min=600,  f_max=1200, filter_order=6, decimation=1, exp_factor=0.10, name="Mid-High",   model_order=45),
@@ -251,6 +252,16 @@ def process_multiband(signals: np.ndarray, fs: float,
     return band_results
 
 
+def _free_gpu_memory():
+    """Release CuPy GPU memory pools between bands to prevent OOM."""
+    try:
+        import cupy as cp
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+    except (ImportError, Exception):
+        pass
+
+
 def merge_multiband_results(signals: np.ndarray, fs: float,
                             bands: Optional[List[FrequencyBand]] = None,
                             esprit_function=None,
@@ -294,6 +305,8 @@ def merge_multiband_results(signals: np.ndarray, fs: float,
     per_band_results = []
     used_bands = []
 
+    use_gpu = esprit_params.get('use_gpu', False)
+
     for band in bands:
         try:
             processed, fs_band, metadata = process_band(
@@ -329,6 +342,13 @@ def merge_multiband_results(signals: np.ndarray, fs: float,
         except Exception as e:
             print(f"Warning: Band {band.name} failed: {e}")
             continue
+        finally:
+            # Free heavy intermediates between bands — serial processing
+            # should not accumulate memory from previous bands
+            del processed, fs_band, metadata
+            gc.collect()
+            if use_gpu:
+                _free_gpu_memory()
 
     # Merge across bands
     merged = merge_multiband_modes(
