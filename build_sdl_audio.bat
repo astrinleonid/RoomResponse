@@ -291,9 +291,24 @@ if !BUILD_RESULT! neq 0 (
     exit /b 1
 )
 
-:: Step 5: Verify installation
+:: Step 5: Copy SDL2.dll to sdl_audio_core directory
 echo.
-echo [6/6] Verifying installation...
+echo [6/7] Copying SDL2.dll to sdl_audio_core directory...
+if exist "C:\SDL2-2.30.8\lib\x64\SDL2.dll" (
+    copy /Y "C:\SDL2-2.30.8\lib\x64\SDL2.dll" "sdl_audio_core\SDL2.dll" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo SDL2.dll copied successfully to sdl_audio_core directory
+    ) else (
+        echo WARNING: Failed to copy SDL2.dll to sdl_audio_core directory
+    )
+) else (
+    echo WARNING: SDL2.dll not found at C:\SDL2-2.30.8\lib\x64\SDL2.dll
+    echo The module may fail to import!
+)
+
+:: Step 6: Verify installation
+echo.
+echo [7/7] Verifying installation...
 cd ..
 python -c "import sdl_audio_core; print('SDL Audio Core version:', sdl_audio_core.__version__); print('SDL version:', sdl_audio_core.SDL_VERSION); print('Available classes:', [x for x in dir(sdl_audio_core) if not x.startswith('_')])" 2>nul
 if %errorlevel% neq 0 (
@@ -319,7 +334,8 @@ echo 3. Check that your IDE recognizes the new package
 echo 4. Try the example: python test_audio.py
 echo.
 echo Configuration file saved at: sdl_audio_core\build_config.json
-echo You can edit this file to adjust paths if needed.
+echo SDL2.dll copied to: sdl_audio_core\SDL2.dll
+echo You can edit the config file to adjust paths if needed.
 echo.
 
 pause

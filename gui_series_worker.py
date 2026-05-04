@@ -42,6 +42,10 @@ class SeriesWorker(threading.Thread):
         enable_beeps: bool = True, beep_volume: float = 0.2, beep_freq: int = 880, beep_dur_ms: int = 200,
         interval_mode: str = "end_to_start",
         recording_mode: str = "standard",  # 'standard' or 'calibration'
+        esprit_config: Optional[Dict[str, Any]] = None,  # NEW: ESPRIT configuration
+        enable_esprit: bool = False,  # NEW: Enable ESPRIT processing
+        merge_mode: str = "append",            # 'append' | 'overwrite' | 'abort'
+        allow_config_mismatch: bool = False,   # tolerate recorder-config differences when appending
     ):
         super().__init__(daemon=True)
         self.scenario_numbers = list(scenario_numbers)
@@ -65,6 +69,14 @@ class SeriesWorker(threading.Thread):
         self._recorder: Optional[RoomResponseRecorder] = None
         self._total_measurements = 0; self._last_flush_ts = time.time(); self._last_heartbeat = 0.0
         self._beep_engine = None; self._sample_rate = 48000
+        # ESPRIT integration
+        self.esprit_config = esprit_config or {}
+        self.enable_esprit = bool(enable_esprit)
+        self.merge_mode = merge_mode if merge_mode in ("append", "overwrite", "abort") else "append"
+        self.allow_config_mismatch = bool(allow_config_mismatch)
+        self._esprit_processor = None
+        self._esprit_thread = None
+        self._esprit_results = []
 
     def _emit(self, kind: str, **payload):
         try: self.event_q.put_nowait(WorkerEvent(kind, payload))
@@ -95,6 +107,10 @@ class SeriesWorker(threading.Thread):
         try: self._init_recorder_once()
         except Exception as e: return self._finalize(ok=False, reason=f"recorder init failed: {e}")
         if self.enable_beeps: self._init_beeper_once()
+        # Initialize ESPRIT processor once for entire series
+        if self.enable_esprit:
+            try: self._init_esprit_once()
+            except Exception as e: self._emit_error(f"ESPRIT init failed: {e}", fatal=False); self._esprit_processor = None
         if self.warm_up_measurements > 0:
             self._emit_status("warmup", count=self.warm_up_measurements)
             try: self._run_warmup(self.warm_up_measurements)
@@ -113,6 +129,14 @@ class SeriesWorker(threading.Thread):
 
     def _finalize(self, ok: bool, reason: str | None = None):
         self.state = self.STOPPING; self._emit_status("finalizing", ok=ok, reason=reason)
+        # Wait for any remaining ESPRIT processing
+        if self._esprit_thread and self._esprit_thread.is_alive():
+            self._emit_status("Waiting for ESPRIT to complete...")
+            self._esprit_thread.join(timeout=60.0)  # Max 60s wait
+        # Aggregate ESPRIT results
+        if self._esprit_processor and self._esprit_results:
+            try: self._finalize_esprit()
+            except Exception as e: self._emit_error(f"ESPRIT aggregation failed: {e}", fatal=False)
         try:
             if self._recorder is not None: self._recorder.shutdown()
             if self._beep_engine is not None:
@@ -188,7 +212,9 @@ class SeriesWorker(threading.Thread):
                 "computer_name": self.base_computer, "room_name": self.base_room,
                 "num_measurements": self.num_measurements, "measurement_interval": self.measurement_interval,
             },
-            merge_mode="append", allow_config_mismatch=False, resume=True,
+            merge_mode=self.merge_mode,
+            allow_config_mismatch=self.allow_config_mismatch,
+            resume=True,
             recording_mode=self.recording_mode,
         )
         sc.setup_directories()
@@ -279,6 +305,18 @@ class SeriesWorker(threading.Thread):
         except Exception as e:
             self._emit_error(f"metadata flush failed: {e}")
         self._emit_status("scenario-end", scenario=sc.scenario.scenario_name)
+
+        # ESPRIT processing after scenario collection completes
+        if self._esprit_processor:
+            try:
+                averaged_response = self._get_scenario_averaged_response(sc)
+                if averaged_response is not None:
+                    # Process with ESPRIT (in parallel thread to not block)
+                    self._process_esprit_async(idx - 1, str(scen_no), averaged_response)
+                    self._emit_status("ESPRIT processing", scenario=str(scen_no), status="started")
+            except Exception as e:
+                self._emit_error(f"ESPRIT processing failed: {e}", fatal=False)
+
         return True
 
     def _effective_record_timeout(self) -> float:
@@ -374,3 +412,142 @@ class SeriesWorker(threading.Thread):
                     self._stop_requested = True; self._emit_status("stopping")
         except queue.Empty:
             pass
+
+    # ========== ESPRIT Integration Methods ==========
+
+    def _init_esprit_once(self):
+        """Initialize ESPRIT processor once for entire series."""
+        from ESPRIT.esprit_streaming import StreamingESPRITProcessor
+        import numpy as np
+
+        self._esprit_processor = StreamingESPRITProcessor(
+            M_out=self.esprit_config.get('M_out', 6),
+            N_use=self.esprit_config.get('N_use', 28800),
+            fs=self.esprit_config.get('fs', 48000),
+            band_index=self.esprit_config.get('band_index', 0),
+            L_fraction=self.esprit_config.get('L_fraction', 0.5),
+            K=self.esprit_config.get('K', 30),
+            skip_m=self.esprit_config.get('skip_m', 2)
+        )
+
+        self._emit_status(
+            "ESPRIT ready",
+            band=f"{self._esprit_processor.current_preset.low_freq}-{self._esprit_processor.current_preset.high_freq} Hz",
+            K=self.esprit_config.get('K', 30)
+        )
+
+    def _get_scenario_averaged_response(self, sc: SingleScenarioCollector) -> Optional[Any]:
+        """
+        Compute averaged room response across all measurements in scenario.
+
+        This mimics ScenarioManager.average_impulse_responses_by_channel() but
+        operates in-memory during collection.
+        """
+        import numpy as np
+        try:
+            from gui_audio_visualizer import AudioVisualizer
+        except ImportError:
+            self._emit_error("AudioVisualizer not available for averaging", fatal=False)
+            return None
+
+        scenario_dir = sc.get_scenario_dir()
+        room_dir = scenario_dir / "room_responses"
+
+        # Get all room response files
+        room_files = sorted(room_dir.glob("room_*.wav"))
+        if not room_files:
+            self._emit_error("No room response files found", fatal=False)
+            return None
+
+        # Group files by channel (for multi-channel)
+        channels_dict = {}  # {channel_idx: [file1, file2, ...]}
+
+        for file_path in room_files:
+            # Check if multi-channel naming (e.g., room_*_ch0.wav)
+            if "_ch" in file_path.stem:
+                ch_idx = int(file_path.stem.split("_ch")[-1])
+                channels_dict.setdefault(ch_idx, []).append(file_path)
+            else:
+                # Single-channel or unnamed multi-channel
+                channels_dict.setdefault(0, []).append(file_path)
+
+        # Average each channel
+        averaged_channels = {}
+        for channel_idx, channel_files in sorted(channels_dict.items()):
+            signals = []
+
+            for file_path in channel_files:
+                audio_data, sr, fmt = AudioVisualizer.load_audio_file(str(file_path))
+                if audio_data is not None:
+                    signals.append(audio_data)
+
+            if not signals:
+                continue
+
+            # Find minimum length and truncate all to match
+            min_length = min(len(s) for s in signals)
+            truncated_signals = [s[:min_length] for s in signals]
+
+            # Average across all measurements
+            averaged_signal = np.mean(truncated_signals, axis=0)
+            averaged_channels[channel_idx] = averaged_signal
+
+        if not averaged_channels:
+            return None
+
+        # Stack channels into (M_out, N_use) format
+        channel_arrays = [averaged_channels[i] for i in sorted(averaged_channels.keys())]
+        y_raw = np.vstack(channel_arrays)  # Shape: (num_channels, samples)
+
+        return y_raw
+
+    def _process_esprit_async(self, scenario_index: int, scenario_name: str, averaged_response: Any):
+        """Process ESPRIT in background thread during inter-scenario delay."""
+        import numpy as np
+
+        def _esprit_worker():
+            try:
+                result = self._esprit_processor.process_measurement(
+                    r_index=scenario_index,
+                    y_raw=averaged_response
+                )
+
+                self._esprit_results.append({
+                    'scenario_index': scenario_index,
+                    'scenario_name': scenario_name,
+                    'result': result
+                })
+
+                num_modes = len(result.get('frequencies', []))
+                freqs = result.get('frequencies', [])[:5]  # First 5
+                self._emit_status(
+                    "ESPRIT complete",
+                    scenario=scenario_name,
+                    modes=num_modes,
+                    frequencies=freqs.tolist() if hasattr(freqs, 'tolist') else list(freqs)
+                )
+
+            except Exception as e:
+                self._emit_error(f"ESPRIT failed for {scenario_name}: {e}", fatal=False)
+
+        # Start thread
+        self._esprit_thread = threading.Thread(target=_esprit_worker, daemon=True)
+        self._esprit_thread.start()
+
+    def _finalize_esprit(self):
+        """Aggregate ESPRIT results and save to file."""
+        final_results = self._esprit_processor.get_final_results(
+            names=[r['scenario_name'] for r in self._esprit_results]
+        )
+
+        # Save to base output directory
+        output_file = self.base_output_dir / "esprit_series_analysis.json"
+        with open(output_file, 'w') as f:
+            json.dump(final_results, f, indent=2)
+
+        self._emit_status(
+            "ESPRIT series complete",
+            total_scenarios=len(self._esprit_results),
+            common_modes=len(final_results.get('common_f', [])),
+            output_file=str(output_file)
+        )

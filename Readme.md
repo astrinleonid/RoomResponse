@@ -78,7 +78,7 @@ pip install numpy pybind11 streamlit pandas scipy scikit-learn matplotlib
   * **macOS:** `brew install sdl2`
   * **Linux (Debian/Ubuntu):** `sudo apt-get install libsdl2-dev`
 
-> **Windows DLL note:** Copy `SDL2.dll` (or `SDL.dll` depending on your build/package) **into the working directory** (the folder where you run Python/Streamlit). Alternatively, ensure the folder containing the DLL is on your `PATH`. Missing DLLs are a common cause of runtime import/init failures.
+> **Windows DLL note:** The `SDL2.dll` file must be copied to the `sdl_audio_core/` directory (where the compiled `.pyd` file is located). The `build_sdl_audio.bat` script does this automatically. If you build manually, copy `SDL2.dll` from `C:\SDL2-2.30.8\lib\x64\SDL2.dll` to `sdl_audio_core\SDL2.dll`. Missing DLLs are a common cause of runtime import/init failures.
 
 ### 3) Build and Install `sdl_audio_core`
 

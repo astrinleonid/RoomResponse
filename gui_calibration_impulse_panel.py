@@ -228,10 +228,10 @@ class CalibrationImpulsePanel:
         with col2:
             min_neg_width = st.number_input(
                 "Min Width",
-                min_value=0.1,
+                min_value=0.01,
                 max_value=10.0,
                 value=float(qual_config.get('min_negative_peak_width_ms', 0.3)),
-                step=0.1,
+                step=0.01,
                 key="min_neg_width",
                 help="Minimum acceptable peak width"
             )

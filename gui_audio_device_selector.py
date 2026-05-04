@@ -264,18 +264,18 @@ class AudioDeviceSelector:
         def _index_for_id(dev_id: int) -> int:
             if dev_id == -1:
                 return 0
-            # Try to find in devices_info first
-            if input_devices:
-                for i, dev in enumerate(input_devices):
-                    if int(dev["device_id"]) == dev_id:
-                        return i + 1
-            # Fallback to cache
-            for i, dev in enumerate(cache['input']):
+            # Look up in whichever list options was built from, so the returned
+            # index always points into options.
+            source = input_devices if input_devices else cache['input']
+            for i, dev in enumerate(source):
                 if int(dev["device_id"]) == dev_id:
                     return i + 1  # +1 for "System Default"
             return 0
 
         idx = _index_for_id(current_id)
+        # Defensive clamp: never let a stale device id crash st.selectbox
+        if idx < 0 or idx >= len(options):
+            idx = 0
         selection = st.selectbox("Select Microphone", options, index=idx, key="selector_input_device")
 
         selected_id = self._extract_device_id(selection)

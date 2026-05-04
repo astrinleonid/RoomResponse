@@ -669,6 +669,67 @@ class CollectionPanel:
                 'selected_channels': selected_channels  # List of channel indices to include
             }
 
+    def _emit_test_impulse(self) -> None:
+        """Play one pulse using the recorder's current settings, without recording.
+
+        Uses sdl_audio_core.AudioEngine in playback-only mode so the audio device
+        is configured for output only.
+        """
+        if not self.recorder:
+            st.error("Recorder unavailable")
+            return
+
+        try:
+            import sdl_audio_core as sdl
+        except Exception as e:
+            st.error(f"sdl_audio_core not available: {e}")
+            return
+
+        try:
+            r = self.recorder
+            # Make sure pulse_samples reflects the current waveform (esp. voice_coil)
+            pulse_samples = r._compute_pulse_samples() if hasattr(r, "_compute_pulse_samples") \
+                else int(r.pulse_duration * r.sample_rate)
+            pulse = r._generate_single_pulse(pulse_samples)
+
+            # Pad with ~50 ms of silence so the device has time to flush the buffer
+            tail_samples = int(0.05 * r.sample_rate)
+            signal_list = pulse.tolist() + [0.0] * tail_samples
+
+            cfg = sdl.AudioEngineConfig()
+            cfg.sample_rate = int(r.sample_rate)
+            cfg.output_device_id = int(getattr(r, "output_device", -1))
+            cfg.input_device_id = int(getattr(r, "input_device", -1))
+            # Engine requires input_channels >= 1 even when we don't consume the data
+            cfg.input_channels = 1
+            cfg.output_channels = 1
+            cfg.buffer_size = 1024
+
+            engine = sdl.AudioEngine()
+            try:
+                if not engine.initialize(cfg):
+                    st.error(f"Audio engine init failed: {engine.get_error_string()}")
+                    return
+                if not engine.start():
+                    st.error(f"Audio engine start failed: {engine.get_error_string()}")
+                    return
+                if not engine.start_playback(signal_list):
+                    st.error(f"Playback start failed: {engine.get_error_string()}")
+                    return
+
+                # Wait for playback (signal length + small margin)
+                duration_ms = int((len(signal_list) / r.sample_rate) * 1000) + 500
+                engine.wait_for_playback_completion(timeout_ms=duration_ms)
+            finally:
+                try: engine.stop()
+                except Exception: pass
+                try: engine.shutdown()
+                except Exception: pass
+
+            st.success(f"✓ Played test impulse ({pulse_samples} samples, {pulse_samples / r.sample_rate * 1000:.1f} ms)")
+        except Exception as e:
+            st.error(f"Test impulse failed: {e}")
+
     def _render_single_scenario_mode(self, common_cfg: Dict[str, Any]) -> None:
         st.markdown("### Single Scenario Configuration")
         c1, c2 = st.columns([1, 1])
@@ -693,24 +754,56 @@ class CollectionPanel:
 
         st.markdown("### Execute Collection")
 
+        # If-exists policy: lets the user resolve scenario-already-exists situations
+        # (e.g. after tweaking pulse-shape params, the new recorder config no longer
+        # matches the saved scenario metadata).
+        existing_policy_label = st.selectbox(
+            "If scenario already exists",
+            [
+                "Append — require matching config",
+                "Append — allow different config",
+                "Overwrite (delete existing measurements)",
+            ],
+            index=0,
+            key="single_existing_policy",
+            help="Choose 'Allow different config' or 'Overwrite' after changing pulse shape "
+                 "to record into a scenario that was previously collected with different settings.",
+        )
+
         # Check if collection is running
         is_running = st.session_state.get("single_thread") is not None and st.session_state.get("single_thread").is_alive()
         print(f"DEBUG: is_running check: thread={st.session_state.get('single_thread')}, is_alive={st.session_state.get('single_thread').is_alive() if st.session_state.get('single_thread') else 'N/A'}, is_running={is_running}")
         st.caption(f"DEBUG: is_running = {is_running}")
 
-        # Start button (disabled if already running)
-        if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True, disabled=is_running):
+        # Start button + Test Impulse button side-by-side (both disabled when running)
+        start_col, test_col = st.columns([3, 1])
+        with start_col:
+            if st.button("🎤 Start Single Scenario Collection", type="primary", use_container_width=True, disabled=is_running):
 
-            print("/n/n++++++++++++ Debug output of the recorder parameters 4 ++++++++++++++")
-            self.recorder.print_signal_analysis()
+                print("/n/n++++++++++++ Debug output of the recorder parameters 4 ++++++++++++++")
+                self.recorder.print_signal_analysis()
 
-            SingleScenarioExecutor(self.scenario_manager, recorder=self.recorder).execute(
-                                    common_config = common_cfg,
-                                    scenario_number = scenario_number,
-                                    description = description
-            )
-            # Force a rerun to show the controls
-            st.rerun()
+                # Map policy label to collector kwargs
+                if existing_policy_label.startswith("Overwrite"):
+                    merge_mode, allow_mismatch = "overwrite", True
+                elif "allow different config" in existing_policy_label:
+                    merge_mode, allow_mismatch = "append", True
+                else:
+                    merge_mode, allow_mismatch = "append", False
+
+                SingleScenarioExecutor(self.scenario_manager, recorder=self.recorder).execute(
+                                        common_config = common_cfg,
+                                        scenario_number = scenario_number,
+                                        description = description,
+                                        merge_mode = merge_mode,
+                                        allow_config_mismatch = allow_mismatch,
+                )
+                # Force a rerun to show the controls
+                st.rerun()
+        with test_col:
+            if st.button("🔔 Test Impulse", use_container_width=True, disabled=is_running,
+                         help="Emit a single pulse using the current recorder settings (no recording)"):
+                self._emit_test_impulse()
 
         # Control buttons (only visible when collection is running)
         if is_running:
@@ -733,7 +826,9 @@ class CollectionPanel:
                     if st.session_state.get("single_cmd_q"):
                         st.session_state["single_cmd_q"].put(WorkerCommand("stop"))
 
-            # Render status display
+        # Always render status when a thread reference exists, so we still
+        # tick once after the worker thread dies and re-enable the buttons.
+        if st.session_state.get("single_thread") is not None:
             self._render_single_scenario_status()
     def _render_series_mode(self, common_cfg: Dict[str, Any]) -> None:
         st.markdown("### Series Configuration")
@@ -783,6 +878,20 @@ class CollectionPanel:
             self._save_esprit_config(common_cfg["config_file"], esprit_cfg)
 
         st.markdown("### Execute Series (Background)")
+
+        series_existing_label = st.selectbox(
+            "If scenario already exists",
+            [
+                "Append — require matching config",
+                "Append — allow different config",
+                "Overwrite (delete existing measurements)",
+            ],
+            index=0,
+            key="series_existing_policy",
+            help="Pick 'Allow different config' or 'Overwrite' after changing pulse shape "
+                 "to record into scenarios that were collected with previous settings.",
+        )
+
         btn_cols = st.columns([2, 2, 2, 2])
         with btn_cols[0]:
             start_clicked = st.button("🎤 Start Series", type="primary", use_container_width=True)
@@ -797,6 +906,14 @@ class CollectionPanel:
             if not parsed:
                 st.error("❌ No valid scenarios to collect.")
             else:
+                # Map policy label to collector kwargs
+                if series_existing_label.startswith("Overwrite"):
+                    series_merge_mode, series_allow_mismatch = "overwrite", True
+                elif "allow different config" in series_existing_label:
+                    series_merge_mode, series_allow_mismatch = "append", True
+                else:
+                    series_merge_mode, series_allow_mismatch = "append", False
+
                 evt_q: queue.Queue = queue.Queue(); cmd_q: queue.Queue = queue.Queue()
                 worker = SeriesWorker(
                     scenario_numbers=parsed,
@@ -822,6 +939,8 @@ class CollectionPanel:
                     recording_mode=common_cfg["recording_mode"],
                     esprit_config=esprit_cfg if esprit_cfg.get('enabled') else None,
                     enable_esprit=esprit_cfg.get('enabled', False),
+                    merge_mode=series_merge_mode,
+                    allow_config_mismatch=series_allow_mismatch,
                 )
                 st.session_state[SK_SERIES_EVT_Q] = evt_q
                 st.session_state[SK_SERIES_CMD_Q] = cmd_q
@@ -1031,28 +1150,29 @@ class CollectionPanel:
                 reason = last_done.payload.get("reason", "Unknown reason")
                 st.warning(f"⚠️ Collection ended: {reason}")
 
-        # Auto-refresh while thread is alive (1 Hz)
+        # Active polling: sleep + st.rerun produces true periodic renders. The
+        # bare `st.rerun()` pattern only fires once because Streamlit doesn't
+        # poll on its own — without the sleep here, the page stays frozen on
+        # the last render after the worker thread dies and the disabled
+        # buttons never re-enable.
         try:
             is_alive = thread.is_alive()
             print(f"DEBUG: Thread alive check: {is_alive}")
             st.caption(f"DEBUG: Thread is_alive = {is_alive}")
 
             if is_alive:
-                last_refresh = st.session_state.get("_single_last_refresh_ts", 0.0)
-                now = time.time()
-                elapsed = now - last_refresh
-                print(f"DEBUG: Auto-refresh check - elapsed={elapsed:.2f}s, threshold=1.0s")
-                st.caption(f"DEBUG: Time since last refresh: {elapsed:.2f}s")
-
-                if elapsed > 1.0:
-                    st.session_state["_single_last_refresh_ts"] = now
-                    print(f"DEBUG: *** TRIGGERING RERUN at {now} ***")
-                    st.rerun()
-                else:
-                    print(f"DEBUG: Not yet time to refresh (need {1.0 - elapsed:.2f}s more)")
+                # Reset post-completion latch in case this is a new run
+                st.session_state["_single_post_complete_refreshed"] = False
+                time.sleep(0.5)
+                st.rerun()
             else:
-                print(f"DEBUG: Thread not alive, skipping auto-refresh")
-                st.caption("DEBUG: Thread not alive")
+                # Thread just finished — fire one last rerun so the freshly
+                # computed is_running=False propagates to the buttons. Latch
+                # prevents an infinite rerun loop.
+                if not st.session_state.get("_single_post_complete_refreshed", False):
+                    st.session_state["_single_post_complete_refreshed"] = True
+                    print("DEBUG: *** Final post-completion rerun ***")
+                    st.rerun()
         except Exception as e:
             st.caption(f"(auto-refresh skipped: {e})")
             print(f"DEBUG: Auto-refresh exception: {e}")
@@ -1076,7 +1196,14 @@ class SingleScenarioExecutor:
         self.scenario_manager = scenario_manager
         self.recorder = recorder
 
-    def execute(self, common_config: Dict[str, Any], scenario_number: str, description: str) -> None:
+    def execute(
+        self,
+        common_config: Dict[str, Any],
+        scenario_number: str,
+        description: str,
+        merge_mode: str = "append",
+        allow_config_mismatch: bool = False,
+    ) -> None:
         if not self._validate_inputs(common_config, scenario_number):
             return
         scenario_name = f"{common_config['computer_name']}-Scenario{scenario_number}-{common_config['room_name']}"
@@ -1104,7 +1231,9 @@ class SingleScenarioExecutor:
                 base_output_dir=common_config["output_dir"],
                 recorder_config=common_config["config_file"],
                 scenario_config=params,
-                merge_mode="append", allow_config_mismatch=False, resume=True,
+                merge_mode=merge_mode,
+                allow_config_mismatch=allow_config_mismatch,
+                resume=True,
                 recorder=self.recorder,
                 recording_mode=common_config["recording_mode"],
                 event_q=evt_q,

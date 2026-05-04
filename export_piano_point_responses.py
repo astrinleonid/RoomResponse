@@ -94,11 +94,11 @@ def generate_averaged_responses_for_scenario(scenario_path: Path) -> bool:
     impulse_dir = scenario_path / "impulse_responses"
     output_dir = scenario_path / "averaged_responses"
 
-    # Check if averages already exist
+    # Check if averages already exist (we'll regenerate if needed)
     if output_dir.exists():
         avg_files = list(output_dir.glob("average_ch*.npy"))
-        if len(avg_files) == 6:
-            return True  # Already has all 6 averaged files
+        if avg_files:
+            return True  # Already has averaged files
 
     print(f"  Generating averaged responses for {scenario_name}...")
 
@@ -145,13 +145,12 @@ def generate_averaged_responses_for_scenario(scenario_path: Path) -> bool:
     print(f"    Generated {len(channels)} averaged response files")
     return True
 
-def load_averaged_responses(scenario_path: Path, num_channels: int = 6) -> Dict[int, np.ndarray]:
+def load_averaged_responses(scenario_path: Path) -> Dict[int, np.ndarray]:
     """
     Load all averaged response files for a scenario.
 
     Args:
         scenario_path: Path to scenario folder
-        num_channels: Number of channels to load (default: 6)
 
     Returns:
         Dict mapping channel number to averaged signal array
@@ -161,13 +160,19 @@ def load_averaged_responses(scenario_path: Path, num_channels: int = 6) -> Dict[
     if not avg_dir.exists():
         raise FileNotFoundError(f"No averaged_responses folder found in {scenario_path}")
 
-    channels = {}
-    for ch in range(num_channels):
-        avg_file = avg_dir / f"average_ch{ch}.npy"
-        if not avg_file.exists():
-            raise FileNotFoundError(f"Missing averaged response file: {avg_file}")
+    # Find all available averaged channel files
+    avg_files = list(avg_dir.glob("average_ch*.npy"))
+    if not avg_files:
+        raise FileNotFoundError(f"No averaged response files found in {avg_dir}")
 
-        channels[ch] = np.load(avg_file)
+    channels = {}
+    for avg_file in avg_files:
+        # Extract channel number from filename: average_chN.npy
+        try:
+            ch_num = int(avg_file.stem.replace("average_ch", ""))
+            channels[ch_num] = np.load(avg_file)
+        except ValueError:
+            print(f"Warning: Could not parse channel number from {avg_file.name}")
 
     return channels
 
@@ -184,18 +189,27 @@ def export_point_response_file(
         channels: Dict mapping channel number to signal array
         output_file: Output file path
     """
-    num_channels = len(channels)
-    channel_nums = sorted(channels.keys())
+    # Remap channels: source -> destination
+    # 0 (calibration) -> 2, 2 -> 0, 3 -> 1, 4 -> 3, 5 -> 4, 6 -> 5
+    channel_map = {0: 2, 2: 0, 3: 1, 4: 3, 5: 4, 6: 5}
+
+    remapped = {}
+    for src, dst in channel_map.items():
+        if src in channels:
+            remapped[dst] = channels[src]
+
+    num_channels = len(remapped)
+    channel_nums = sorted(remapped.keys())
 
     # Verify all channels have same length
-    lengths = [len(channels[ch]) for ch in channel_nums]
+    lengths = [len(remapped[ch]) for ch in channel_nums]
     if len(set(lengths)) != 1:
         raise ValueError(f"Channel lengths don't match: {lengths}")
 
     N_REF = lengths[0]
 
     print(f"  Exporting point {point_number}:")
-    print(f"    Channels: {channel_nums}")
+    print(f"    Remapped channels: {channel_nums} (from {sorted(channels.keys())})")
     print(f"    Length: {N_REF} samples")
 
     # Write file
@@ -210,7 +224,7 @@ def export_point_response_file(
         # Write data rows
         for i in range(N_REF):
             # Get sample from each channel
-            row_values = [channels[ch][i] for ch in channel_nums]
+            row_values = [remapped[ch][i] for ch in channel_nums]
 
             # Format as scientific notation with tab separation
             row_str = "\t".join([f"{val:e}" for val in row_values])
@@ -260,11 +274,11 @@ def export_point_responses(
 
         avg_dir = scenario_path / "averaged_responses"
 
-        # Check if averages exist and are complete
+        # Check if averages exist
         needs_generation = True
         if avg_dir.exists():
             avg_files = list(avg_dir.glob("average_ch*.npy"))
-            if len(avg_files) == 6:
+            if avg_files:
                 needs_generation = False
 
         if needs_generation:
@@ -294,7 +308,7 @@ def export_point_responses(
 
         try:
             # Load averaged responses
-            channels = load_averaged_responses(scenario_path, num_channels=6)
+            channels = load_averaged_responses(scenario_path)
 
             # Export to text file
             export_point_response_file(point_number, channels, str(output_file))

@@ -791,6 +791,16 @@ class AudioCollectionGUI:
                 if signed_shapes and len(signed_shapes) > 0:
                     st.markdown("#### Mode Shapes")
 
+                    # Extract scenario numbers once
+                    scenario_numbers = []
+                    for name in scenario_names:
+                        import re
+                        match = re.search(r'Scenario(\d+)', name)
+                        if match:
+                            scenario_numbers.append(match.group(1))
+                        else:
+                            scenario_numbers.append(name)
+
                     mode_idx = st.slider(
                         "Select mode to view:",
                         min_value=0,
@@ -801,15 +811,143 @@ class AudioCollectionGUI:
                     fig, ax = plt.subplots(figsize=(12, 6))
                     shape = signed_shapes[mode_idx]
                     ax.plot(range(len(shape)), shape, 'o-', linewidth=2, markersize=8)
-                    ax.set_xlabel('Scenario Index')
+                    ax.set_xlabel('Scenario Number')
                     ax.set_ylabel('Signed Amplitude (Normalized)')
                     ax.set_title(f'Mode Shape {mode_idx}: f={common_f[mode_idx]:.2f} Hz, ζ={common_z[mode_idx]:.4f}')
                     ax.set_xticks(range(len(shape)))
-                    ax.set_xticklabels(scenario_names, rotation=45, ha='right')
+                    ax.set_xticklabels(scenario_numbers, rotation=0)
                     ax.grid(True, alpha=0.3)
                     ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
                     plt.tight_layout()
                     st.pyplot(fig)
+
+                    # Outlier Detection Section
+                    st.markdown("#### Outlier Detection")
+                    st.markdown("""
+                    Detects scenarios that systematically deviate from smooth mode shapes.
+                    Points are analyzed within two diapasons: Bass bridge (1-28) and Discant bridge (29-88).
+                    """)
+
+                    with st.expander("🔍 Analyze Outliers", expanded=False):
+                        # Parameters
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            outlier_threshold = st.slider(
+                                "Deviation Threshold (σ)",
+                                min_value=1.0, max_value=4.0, value=2.0, step=0.5,
+                                help="Points deviating more than this many standard deviations are flagged"
+                            )
+                        with col2:
+                            min_modes_outlier = st.slider(
+                                "Min Modes as Outlier",
+                                min_value=1, max_value=min(10, len(common_f)), value=3,
+                                help="Scenario must be outlier in at least this many modes to be flagged"
+                            )
+
+                        bass_cutoff = st.number_input(
+                            "Bass/Discant Cutoff (scenario #)",
+                            min_value=1, max_value=88, value=28,
+                            help="Scenarios <= this are bass bridge, > this are discant bridge"
+                        )
+
+                        if st.button("🔍 Find Outliers", type="secondary"):
+                            import numpy as np
+
+                            # Convert scenario numbers to integers for bridge classification
+                            scenario_nums_int = []
+                            for sn in scenario_numbers:
+                                try:
+                                    scenario_nums_int.append(int(sn))
+                                except:
+                                    scenario_nums_int.append(0)
+
+                            num_scenarios = len(scenario_numbers)
+                            num_modes = len(signed_shapes)
+
+                            # Track outlier counts per scenario
+                            outlier_counts = np.zeros(num_scenarios)
+                            outlier_details = {i: [] for i in range(num_scenarios)}
+
+                            # Analyze each mode
+                            for mode_i, shape in enumerate(signed_shapes):
+                                shape = np.array(shape)
+
+                                # Analyze bass and discant separately
+                                for bridge_name, (start_num, end_num) in [("Bass", (1, bass_cutoff)), ("Discant", (bass_cutoff + 1, 88))]:
+                                    # Find indices belonging to this bridge
+                                    bridge_indices = [i for i, sn in enumerate(scenario_nums_int) if start_num <= sn <= end_num]
+
+                                    if len(bridge_indices) < 5:
+                                        continue
+
+                                    bridge_values = shape[bridge_indices]
+
+                                    # Calculate local deviation using differences from neighbors
+                                    deviations = np.zeros(len(bridge_indices))
+                                    for j in range(len(bridge_indices)):
+                                        # Get neighbors (excluding self)
+                                        neighbors = []
+                                        if j > 0:
+                                            neighbors.append(bridge_values[j-1])
+                                        if j < len(bridge_indices) - 1:
+                                            neighbors.append(bridge_values[j+1])
+                                        if j > 1:
+                                            neighbors.append(bridge_values[j-2])
+                                        if j < len(bridge_indices) - 2:
+                                            neighbors.append(bridge_values[j+2])
+
+                                        if neighbors:
+                                            expected = np.mean(neighbors)
+                                            deviations[j] = abs(bridge_values[j] - expected)
+
+                                    # Calculate threshold based on std of deviations
+                                    if np.std(deviations) > 0:
+                                        z_scores = deviations / np.std(deviations)
+
+                                        # Flag outliers
+                                        for j, z in enumerate(z_scores):
+                                            if z > outlier_threshold:
+                                                global_idx = bridge_indices[j]
+                                                outlier_counts[global_idx] += 1
+                                                outlier_details[global_idx].append({
+                                                    'mode': mode_i,
+                                                    'freq': common_f[mode_i],
+                                                    'z_score': z,
+                                                    'bridge': bridge_name
+                                                })
+
+                            # Find scenarios that are outliers in multiple modes
+                            problem_scenarios = [(i, int(outlier_counts[i])) for i in range(num_scenarios)
+                                               if outlier_counts[i] >= min_modes_outlier]
+                            problem_scenarios.sort(key=lambda x: -x[1])  # Sort by count descending
+
+                            if problem_scenarios:
+                                st.warning(f"⚠️ Found {len(problem_scenarios)} potentially problematic scenarios:")
+
+                                # Create summary table
+                                import pandas as pd
+                                outlier_df = pd.DataFrame({
+                                    'Scenario': [scenario_numbers[i] for i, _ in problem_scenarios],
+                                    'Outlier in # Modes': [count for _, count in problem_scenarios],
+                                    'Bridge': [
+                                        "Bass" if scenario_nums_int[i] <= bass_cutoff else "Discant"
+                                        for i, _ in problem_scenarios
+                                    ]
+                                })
+                                st.dataframe(outlier_df, use_container_width=True)
+
+                                # Detailed breakdown
+                                st.markdown("**Detailed Breakdown:**")
+                                for idx, count in problem_scenarios[:10]:  # Show top 10
+                                    with st.expander(f"Scenario {scenario_numbers[idx]} - outlier in {count} modes"):
+                                        details = outlier_details[idx]
+                                        for d in details[:10]:
+                                            st.write(f"- Mode {d['mode']}: f={d['freq']:.1f} Hz, deviation={d['z_score']:.1f}σ ({d['bridge']})")
+
+                                st.markdown("---")
+                                st.markdown("**Recommendation:** Consider re-measuring the scenarios listed above.")
+                            else:
+                                st.success("✓ No systematic outliers detected with current thresholds.")
 
 
 def main():

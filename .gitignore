@@ -44,5 +44,16 @@ user_config.json
 # Piano point responses export
 piano_point_responses/
 piano_point_responses.zip
+piano_point_responses_export.zip
 piano.zip
+
+# Measurement data (large, binary)
+ESPRIT/Ivers_Pond_Combined/
+ESPRIT/Ivers_Pond_Take1/
+Ivers&PondTake1/
 belarus_responses/
+
+# Editor / shell artifacts
+*.py.tmp.*
+/nul
+/sdl_audio_core/nul
