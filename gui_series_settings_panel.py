@@ -103,6 +103,44 @@ class SeriesSettingsPanel:
             'series_pulse_form': str(config.get('impulse_form', getattr(self.recorder, 'impulse_form', 'sine') if self.recorder else 'sine')),
             'series_fade_duration': float(1000.0 * config.get('pulse_fade', getattr(self.recorder, 'pulse_fade', 0.0001) if self.recorder else 0.0001)),         # s -> ms
 
+            # Voice-coil pulse-shape parameters (only used when waveform == voice_coil)
+            'series_vc_init_pos_ms': float(config.get('voice_coil_config', {}).get(
+                'init_pos_ms',
+                (self.recorder.voice_coil_config.get('init_pos_ms', 0.0)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else 0.0)
+            )),
+            'series_vc_init_pos_amplitude': float(config.get('voice_coil_config', {}).get(
+                'init_pos_amplitude',
+                (self.recorder.voice_coil_config.get('init_pos_amplitude', -0.1)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else -0.1)
+            )),
+            'series_vc_positive_ms': float(config.get('voice_coil_config', {}).get(
+                'positive_ms',
+                (self.recorder.voice_coil_config.get('positive_ms', 20.0)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else 20.0)
+            )),
+            'series_vc_gap_ms': float(config.get('voice_coil_config', {}).get(
+                'gap_ms',
+                (self.recorder.voice_coil_config.get('gap_ms', 10.0)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else 10.0)
+            )),
+            'series_vc_negative_ms': float(config.get('voice_coil_config', {}).get(
+                'negative_ms',
+                (self.recorder.voice_coil_config.get('negative_ms', 100.0)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else 100.0)
+            )),
+            'series_vc_pullback_amplitude': float(config.get('voice_coil_config', {}).get(
+                'pullback_amplitude',
+                (self.recorder.voice_coil_config.get('pullback_amplitude', 0.5)
+                 if (self.recorder and getattr(self.recorder, 'voice_coil_config', None)) else 0.5)
+            )),
+
+            # Global pulse-shape post-processing (applies to all waveforms)
+            'series_invert_polarity': bool(config.get('invert_polarity',
+                getattr(self.recorder, 'invert_polarity', False) if self.recorder else False)),
+            'series_pulse_smoothing_ms': float(config.get('pulse_smoothing_ms',
+                getattr(self.recorder, 'pulse_smoothing_ms', 0.0) if self.recorder else 0.0)),
+
             # Analysis parameters from series_config section
             'series_record_extra_time': float(config.get('series_config', {}).get('record_extra_time_ms', 200.0)),
             'series_averaging_start_cycle': int(config.get('series_config', {}).get('averaging_start_cycle', 2)),
@@ -165,6 +203,8 @@ class SeriesSettingsPanel:
             config['volume'] = float(st.session_state['series_pulse_volume'])
             config['pulse_frequency'] = float(st.session_state['series_pulse_frequency'])
             config['impulse_form'] = str(st.session_state['series_pulse_form'])
+            config['invert_polarity'] = bool(st.session_state['series_invert_polarity'])
+            config['pulse_smoothing_ms'] = float(st.session_state['series_pulse_smoothing_ms'])
 
             # Update series_config section
             if 'series_config' not in config:
@@ -180,6 +220,16 @@ class SeriesSettingsPanel:
             config['truncate_config']['enabled'] = bool(st.session_state['series_truncate_enabled'])
             config['truncate_config']['ir_working_length_ms'] = float(st.session_state['series_ir_working_length'])
             config['truncate_config']['ir_fade_length_ms'] = float(st.session_state['series_ir_fade_length'])
+
+            # Update voice_coil_config section
+            if 'voice_coil_config' not in config:
+                config['voice_coil_config'] = {}
+            config['voice_coil_config']['init_pos_ms'] = float(st.session_state['series_vc_init_pos_ms'])
+            config['voice_coil_config']['init_pos_amplitude'] = float(st.session_state['series_vc_init_pos_amplitude'])
+            config['voice_coil_config']['positive_ms'] = float(st.session_state['series_vc_positive_ms'])
+            config['voice_coil_config']['gap_ms'] = float(st.session_state['series_vc_gap_ms'])
+            config['voice_coil_config']['negative_ms'] = float(st.session_state['series_vc_negative_ms'])
+            config['voice_coil_config']['pullback_amplitude'] = float(st.session_state['series_vc_pullback_amplitude'])
 
             # Save using config manager
             return config_manager.save_config(config, updated_by="Series Settings Panel")
@@ -251,60 +301,59 @@ class SeriesSettingsPanel:
 
         mc_config = getattr(self.recorder, 'multichannel_config', {})
 
-        with st.expander("🔨 Calibration Mode Configuration", expanded=True):
-            col1, col2 = st.columns(2)
+        st.markdown("##### 🔨 Calibration Mode Configuration")
+        col1, col2 = st.columns(2)
 
-            with col1:
-                st.markdown("**Sensor Setup**")
-                cal_ch = mc_config.get('calibration_channel')
-                channel_names = mc_config.get('channel_names', [])
-                cal_name = channel_names[cal_ch] if cal_ch is not None and cal_ch < len(channel_names) else f"Channel {cal_ch}"
+        with col1:
+            st.markdown("**Sensor Setup**")
+            cal_ch = mc_config.get('calibration_channel')
+            channel_names = mc_config.get('channel_names', [])
+            cal_name = channel_names[cal_ch] if cal_ch is not None and cal_ch < len(channel_names) else f"Channel {cal_ch}"
 
-                st.success(f"🔨 Calibration Sensor: Ch {cal_ch} - {cal_name}")
+            st.success(f"🔨 Calibration Sensor: Ch {cal_ch} - {cal_name}")
 
-                ref_ch = mc_config.get('reference_channel', 0)
-                ref_name = channel_names[ref_ch] if ref_ch < len(channel_names) else f"Channel {ref_ch}"
-                st.info(f"🎤 Reference Channel: Ch {ref_ch} - {ref_name}")
+            ref_ch = mc_config.get('reference_channel', 0)
+            ref_name = channel_names[ref_ch] if ref_ch < len(channel_names) else f"Channel {ref_ch}"
+            st.info(f"🎤 Reference Channel: Ch {ref_ch} - {ref_name}")
 
-            with col2:
-                st.markdown("**Processing Options**")
+        with col2:
+            st.markdown("**Processing Options**")
 
-                # Normalization toggle - default to True for calibration mode
-                current_normalize = mc_config.get('normalize_by_calibration', True)
-                normalize_enabled = st.checkbox(
-                    "Enable Normalization",
-                    value=current_normalize,
-                    key="series_normalize_by_calibration",
-                    help="Divide response amplitudes by impact magnitude for quantitative comparison"
-                )
+            # Normalization toggle - default to True for calibration mode
+            current_normalize = mc_config.get('normalize_by_calibration', True)
+            normalize_enabled = st.checkbox(
+                "Enable Normalization",
+                value=current_normalize,
+                key="series_normalize_by_calibration",
+                help="Divide response amplitudes by impact magnitude for quantitative comparison"
+            )
 
-                # Update recorder config if changed
-                if normalize_enabled != current_normalize:
-                    self.recorder.multichannel_config['normalize_by_calibration'] = normalize_enabled
-                    if normalize_enabled:
-                        st.success("✅ Normalization enabled - responses will be normalized by impact magnitude")
-                    else:
-                        st.info("ℹ️ Normalization disabled - responses will show raw aligned amplitudes")
-
-                # Show current status
+            # Update recorder config if changed
+            if normalize_enabled != current_normalize:
+                self.recorder.multichannel_config['normalize_by_calibration'] = normalize_enabled
                 if normalize_enabled:
-                    st.caption("✅ Responses normalized by impact magnitude")
+                    st.success("✅ Normalization enabled - responses will be normalized by impact magnitude")
                 else:
-                    st.caption("⚠️ Raw aligned responses (not normalized)")
+                    st.info("ℹ️ Normalization disabled - responses will show raw aligned amplitudes")
 
-            # Display quality thresholds summary
-            cal_config = getattr(self.recorder, 'calibration_quality_config', {})
-            if cal_config:
-                st.markdown("**Quality Validation**")
-                with st.container():
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        min_neg = cal_config.get('min_negative_peak', 0)
-                        max_neg = cal_config.get('max_negative_peak', 1)
-                        st.caption(f"Negative peak range: {min_neg:.2f} - {max_neg:.2f}")
-                    with col_b:
-                        corr_thresh = mc_config.get('alignment_correlation_threshold', 0.7)
-                        st.caption(f"Correlation threshold: {corr_thresh:.2f}")
+            # Show current status
+            if normalize_enabled:
+                st.caption("✅ Responses normalized by impact magnitude")
+            else:
+                st.caption("⚠️ Raw aligned responses (not normalized)")
+
+        # Display quality thresholds summary
+        cal_config = getattr(self.recorder, 'calibration_quality_config', {})
+        if cal_config:
+            st.markdown("**Quality Validation**")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                min_neg = cal_config.get('min_negative_peak', 0)
+                max_neg = cal_config.get('max_negative_peak', 1)
+                st.caption(f"Negative peak range: {min_neg:.2f} - {max_neg:.2f}")
+            with col_b:
+                corr_thresh = mc_config.get('alignment_correlation_threshold', 0.7)
+                st.caption(f"Correlation threshold: {corr_thresh:.2f}")
 
     def _render_mode_comparison_table(self):
         """Display comparison table of Standard vs Calibration modes."""
@@ -359,6 +408,526 @@ class SeriesSettingsPanel:
             st.caption(f"Out: {str(out_dev)[:24]}")
 
     # ----------------------
+    # Auto-save just the pulse-shape fields (called when user edits them)
+    # ----------------------
+    def _autosave_pulse_shape(self) -> None:
+        """Persist only the pulse-shape-related fields to recorderConfig.json.
+
+        Called automatically when any pulse-shape control changes so the user
+        doesn't need to click Save Configuration to keep their pulse design.
+        Other Series Settings fields (num_pulses, cycle_duration, volume, etc.)
+        still require the explicit Save Configuration button.
+        """
+        try:
+            from config_manager import config_manager
+            config = config_manager.load_config()
+
+            # Top-level pulse-shape fields
+            config['pulse_duration'] = float(st.session_state['series_pulse_duration']) / 1000.0
+            config['pulse_fade'] = float(st.session_state['series_fade_duration']) / 1000.0
+            config['pulse_frequency'] = float(st.session_state['series_pulse_frequency'])
+            config['impulse_form'] = str(st.session_state['series_pulse_form'])
+            config['invert_polarity'] = bool(st.session_state['series_invert_polarity'])
+            config['pulse_smoothing_ms'] = float(st.session_state['series_pulse_smoothing_ms'])
+
+            # Voice-coil section
+            if 'voice_coil_config' not in config:
+                config['voice_coil_config'] = {}
+            config['voice_coil_config']['init_pos_ms'] = float(st.session_state['series_vc_init_pos_ms'])
+            config['voice_coil_config']['init_pos_amplitude'] = float(st.session_state['series_vc_init_pos_amplitude'])
+            config['voice_coil_config']['positive_ms'] = float(st.session_state['series_vc_positive_ms'])
+            config['voice_coil_config']['gap_ms'] = float(st.session_state['series_vc_gap_ms'])
+            config['voice_coil_config']['negative_ms'] = float(st.session_state['series_vc_negative_ms'])
+            config['voice_coil_config']['pullback_amplitude'] = float(st.session_state['series_vc_pullback_amplitude'])
+
+            config_manager.save_config(config, updated_by="Pulse Shape (auto-save)")
+        except Exception as e:
+            # Don't break the UI on a save failure; surface as a small caption
+            st.caption(f"⚠️ Pulse shape auto-save failed: {e}")
+
+    # ----------------------
+    # Pulse Shape sub-panel (controls + preview chart)
+    # ----------------------
+    def _render_pulse_shape_subpanel(self) -> tuple:
+        """Render the pulse-shape controls + a live preview chart.
+
+        Controls vary by waveform:
+          - sine: duration, frequency, fade
+          - square: duration, fade
+          - voice_coil: positive / gap / negative durations + pull-back amplitude
+
+        Returns:
+            (pulse_duration_ms, pulse_freq, fade_ms, pulse_form)
+            For voice_coil, pulse_duration_ms is the derived total (positive + gap + negative).
+        """
+        st.markdown("**Pulse Shape**")
+
+        col_ctrl, col_chart = st.columns([1, 1])
+
+        with col_ctrl:
+            current_sample_rate = int(st.session_state['series_sample_rate'])
+            min_pulse_ms = (1.0 / current_sample_rate) * 1000.0
+
+            waveform_options = ["sine", "square", "voice_coil"]
+            current_form = st.session_state['series_pulse_form']
+            default_idx = waveform_options.index(current_form) if current_form in waveform_options else 0
+            pulse_form = st.selectbox(
+                "Pulse waveform",
+                waveform_options,
+                index=default_idx
+            )
+
+            if pulse_form == "voice_coil":
+                vc_init_pos_ms = st.number_input(
+                    "Initial positioning duration (ms)",
+                    min_value=float(0.0), max_value=float(2000.0),
+                    value=float(st.session_state['series_vc_init_pos_ms']),
+                    step=float(1.0),
+                    help="Flat plateau before the main pulse — pre-positions the coil. 0 = disabled."
+                )
+                vc_init_pos_amplitude = st.slider(
+                    "Initial positioning amplitude",
+                    min_value=float(-0.2), max_value=float(0.0),
+                    value=float(max(-0.2, min(0.0, st.session_state['series_vc_init_pos_amplitude']))),
+                    step=float(0.01),
+                    help="Linear ramp from this value up to 0 over the duration. "
+                         "Negative pre-tensions the coil so it recedes back to rest just before "
+                         "the main pulse fires. 0 = silent (effectively disabled)."
+                )
+                vc_positive_ms = st.number_input(
+                    "Positive duration (ms)",
+                    min_value=float(min_pulse_ms), max_value=float(2000.0),
+                    value=float(st.session_state['series_vc_positive_ms']),
+                    step=float(1.0),
+                    help="Flat positive plateau driving the actuator"
+                )
+                vc_gap_ms = st.number_input(
+                    "Gap duration (ms)",
+                    min_value=float(0.0), max_value=float(2000.0),
+                    value=float(st.session_state['series_vc_gap_ms']),
+                    step=float(1.0),
+                    help="Silent gap between positive plateau and negative spike"
+                )
+                vc_negative_ms = st.number_input(
+                    "Negative duration (ms)",
+                    min_value=float(min_pulse_ms), max_value=float(2000.0),
+                    value=float(st.session_state['series_vc_negative_ms']),
+                    step=float(1.0),
+                    help="Negative spike: starts at -amplitude and linearly ramps to 0"
+                )
+                vc_pullback_amplitude = st.slider(
+                    "Pull-back amplitude",
+                    min_value=float(-1.0), max_value=float(1.0),
+                    value=float(st.session_state['series_vc_pullback_amplitude']),
+                    step=float(0.05),
+                    help="Signed amplitude of the secondary pulse. Positive = opposite "
+                         "polarity to plateau (pulls coil back). Negative = same polarity "
+                         "as plateau (pushes coil further). 0 = no secondary pulse."
+                )
+
+                # Persist
+                st.session_state['series_vc_init_pos_ms'] = float(vc_init_pos_ms)
+                st.session_state['series_vc_init_pos_amplitude'] = float(vc_init_pos_amplitude)
+                st.session_state['series_vc_positive_ms'] = float(vc_positive_ms)
+                st.session_state['series_vc_gap_ms'] = float(vc_gap_ms)
+                st.session_state['series_vc_negative_ms'] = float(vc_negative_ms)
+                st.session_state['series_vc_pullback_amplitude'] = float(vc_pullback_amplitude)
+
+                # Derived total (used by series duration / duty-cycle calc)
+                pulse_duration_ms = (
+                    float(vc_init_pos_ms)
+                    + float(vc_positive_ms)
+                    + float(vc_gap_ms)
+                    + float(vc_negative_ms)
+                )
+                pulse_freq = float(st.session_state['series_pulse_frequency'])
+                fade_ms = float(st.session_state['series_fade_duration'])
+                st.caption(f"Total pulse length: **{pulse_duration_ms:.1f} ms**")
+            else:
+                max_pulse_ms = 100.0
+                pulse_duration_ms = st.number_input(
+                    "Pulse duration (ms)",
+                    min_value=float(min_pulse_ms),
+                    max_value=float(max_pulse_ms),
+                    value=float(min(max(st.session_state['series_pulse_duration'], min_pulse_ms), max_pulse_ms)),
+                    step=float(min_pulse_ms),
+                    help=f"Min: 1 sample ({min_pulse_ms:.4f} ms @ {current_sample_rate}Hz) | Max: {max_pulse_ms} ms"
+                )
+                pulse_freq = st.number_input(
+                    "Pulse frequency (Hz)",
+                    min_value=float(20.0), max_value=float(24000.0),
+                    value=float(st.session_state['series_pulse_frequency']),
+                    step=float(50.0),
+                    disabled=(pulse_form != "sine"),
+                    help="Only used for sine waveform" if pulse_form != "sine" else None
+                )
+                fade_ms = st.number_input(
+                    "Fade duration (ms)",
+                    min_value=float(0.05), max_value=float(20.0),
+                    value=float(st.session_state['series_fade_duration']),
+                    step=float(0.05),
+                    help="Symmetric fade-in/out to prevent clicks"
+                )
+
+            # Global modifiers (apply after waveform-specific shape, before volume scaling)
+            invert_polarity = st.checkbox(
+                "Invert polarity (flip vertically)",
+                value=bool(st.session_state['series_invert_polarity']),
+                help="Multiply the entire pulse by -1"
+            )
+            smoothing_ms = st.slider(
+                "Smoothing (ms)",
+                min_value=float(0.0), max_value=float(20.0),
+                value=float(st.session_state['series_pulse_smoothing_ms']),
+                step=float(0.1),
+                help="Hann-window low-pass smoothing applied to the whole pulse (0 = off)"
+            )
+            st.session_state['series_invert_polarity'] = bool(invert_polarity)
+            st.session_state['series_pulse_smoothing_ms'] = float(smoothing_ms)
+
+        # Persist common keys (all branches)
+        st.session_state['series_pulse_duration'] = float(pulse_duration_ms)
+        st.session_state['series_pulse_frequency'] = float(pulse_freq)
+        st.session_state['series_fade_duration'] = float(fade_ms)
+        st.session_state['series_pulse_form'] = str(pulse_form)
+
+        # Auto-save when any pulse-shape value changed since last write
+        fingerprint = (
+            float(pulse_duration_ms), float(pulse_freq), float(fade_ms), str(pulse_form),
+            bool(st.session_state['series_invert_polarity']),
+            float(st.session_state['series_pulse_smoothing_ms']),
+            float(st.session_state['series_vc_init_pos_ms']),
+            float(st.session_state['series_vc_init_pos_amplitude']),
+            float(st.session_state['series_vc_positive_ms']),
+            float(st.session_state['series_vc_gap_ms']),
+            float(st.session_state['series_vc_negative_ms']),
+            float(st.session_state['series_vc_pullback_amplitude']),
+        )
+        if st.session_state.get('_pulse_shape_last_saved') != fingerprint:
+            self._autosave_pulse_shape()
+            st.session_state['_pulse_shape_last_saved'] = fingerprint
+
+        with col_chart:
+            self._render_pulse_shape_chart(
+                sample_rate=current_sample_rate,
+                pulse_form=str(pulse_form),
+                pulse_duration_ms=float(pulse_duration_ms),
+                fade_ms=float(fade_ms),
+                pulse_freq=float(pulse_freq),
+            )
+
+        return pulse_duration_ms, pulse_freq, fade_ms, pulse_form
+
+    def _generate_pulse_shape_preview(
+        self,
+        sample_rate: int,
+        pulse_form: str,
+        pulse_duration_ms: float,
+        fade_ms: float,
+        pulse_freq: float,
+    ) -> np.ndarray:
+        """Mirror RoomResponseRecorder._generate_single_pulse() (without volume scaling)
+        so the preview stays in sync without mutating the recorder."""
+        if pulse_form == "voice_coil":
+            init_n = max(0, int(round((float(st.session_state['series_vc_init_pos_ms']) / 1000.0) * sample_rate)))
+            init_amp = float(st.session_state['series_vc_init_pos_amplitude'])
+            pos = max(1, int(round((float(st.session_state['series_vc_positive_ms']) / 1000.0) * sample_rate)))
+            gap = max(0, int(round((float(st.session_state['series_vc_gap_ms']) / 1000.0) * sample_rate)))
+            neg = max(1, int(round((float(st.session_state['series_vc_negative_ms']) / 1000.0) * sample_rate)))
+            amp = float(st.session_state['series_vc_pullback_amplitude'])
+            exact_samples = init_n + pos + gap + neg
+
+            pulse = np.zeros(exact_samples)
+            if init_n > 0:
+                pulse[:init_n] = np.linspace(init_amp, 0.0, init_n)
+            pulse[init_n:init_n + pos] = 1.0
+            neg_start = init_n + pos + gap
+            pulse[neg_start:neg_start + neg] = np.linspace(-amp, 0.0, neg)
+            return self._apply_pulse_post_processing(pulse, sample_rate).astype(np.float32)
+
+        exact_samples = max(1, int(round((pulse_duration_ms / 1000.0) * sample_rate)))
+        fade_samples = max(0, int(round((fade_ms / 1000.0) * sample_rate)))
+
+        if pulse_form == "sine":
+            t = np.linspace(0.0, exact_samples / float(sample_rate), exact_samples, endpoint=False)
+            pulse = np.sin(2.0 * np.pi * pulse_freq * t)
+        else:  # square
+            pulse = np.ones(exact_samples)
+
+        if fade_samples > 0 and fade_samples < exact_samples // 2:
+            fade_in = np.linspace(0.0, 1.0, fade_samples)
+            fade_out = np.linspace(1.0, 0.0, fade_samples)
+            pulse[:fade_samples] *= fade_in
+            pulse[-fade_samples:] *= fade_out
+
+        return self._apply_pulse_post_processing(pulse, sample_rate).astype(np.float32)
+
+    def _apply_pulse_post_processing(self, pulse: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Apply smoothing + polarity flip + volume scaling — mirrors the
+        recorder's full post-processing so the chart preview matches what the
+        device actually emits, including the volume*0.3 scaling at the end of
+        RoomResponseRecorder._generate_single_pulse()."""
+        smoothing_ms = float(st.session_state.get('series_pulse_smoothing_ms', 0.0))
+        if smoothing_ms > 0.0 and pulse.size > 1:
+            k = max(2, int(round((smoothing_ms / 1000.0) * sample_rate)))
+            if k < pulse.size:
+                kernel = np.hanning(k).astype(pulse.dtype)
+                kernel /= kernel.sum()
+                pulse = np.convolve(pulse, kernel, mode='same')
+
+        if bool(st.session_state.get('series_invert_polarity', False)):
+            pulse = -pulse
+
+        # Match recorder's `* volume * 0.3` scaling so amplitude = device output
+        volume = float(st.session_state.get('series_pulse_volume', 0.4))
+        pulse = pulse * volume * 0.3
+
+        return pulse
+
+    def _render_pulse_shape_chart(
+        self,
+        sample_rate: int,
+        pulse_form: str,
+        pulse_duration_ms: float,
+        fade_ms: float,
+        pulse_freq: float,
+    ) -> None:
+        pulse = self._generate_pulse_shape_preview(
+            sample_rate=sample_rate,
+            pulse_form=pulse_form,
+            pulse_duration_ms=pulse_duration_ms,
+            fade_ms=fade_ms,
+            pulse_freq=pulse_freq,
+        )
+
+        if pulse.size == 0:
+            st.caption("Pulse is empty — increase duration.")
+            return
+
+        t_ms = (np.arange(pulse.size, dtype=np.float64) / float(sample_rate)) * 1000.0
+
+        try:
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=t_ms, y=pulse,
+                mode='lines',
+                name='Pulse',
+                line=dict(width=2),
+            ))
+            fig.add_hline(y=0.0, line_color="rgba(128,128,128,0.4)", line_width=1)
+
+            # For voice_coil, mark the boundaries between the regions
+            if pulse_form == "voice_coil":
+                init_pos_ms = float(st.session_state['series_vc_init_pos_ms'])
+                pos_ms = float(st.session_state['series_vc_positive_ms'])
+                gap_ms = float(st.session_state['series_vc_gap_ms'])
+                if init_pos_ms > 0:
+                    fig.add_vline(x=init_pos_ms, line_dash="dot", line_color="rgba(0,0,150,0.6)",
+                                  annotation_text="main", annotation_position="top")
+                fig.add_vline(x=init_pos_ms + pos_ms, line_dash="dot", line_color="rgba(0,150,0,0.6)",
+                              annotation_text="gap", annotation_position="top")
+                fig.add_vline(x=init_pos_ms + pos_ms + gap_ms, line_dash="dot", line_color="rgba(200,0,0,0.6)",
+                              annotation_text="neg", annotation_position="top")
+
+            fig.update_layout(
+                title=f"{pulse_form} — {pulse.size} samples @ {sample_rate} Hz",
+                xaxis_title="Time (ms)",
+                yaxis_title="Amplitude",
+                yaxis=dict(range=[-1.1, 1.1]),
+                height=280,
+                margin=dict(l=50, r=20, t=40, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except ImportError:
+            st.line_chart({"Amplitude": pulse.tolist()})
+            st.caption(f"{pulse_form} — {pulse.size} samples @ {sample_rate} Hz")
+
+    # ----------------------
+    # Test Pulse: emit a single pulse and overlay it with the calibration-channel recording
+    # ----------------------
+    def _render_test_pulse_section(self) -> None:
+        """Render Test Pulse button + overlay chart of emitted vs recorded channel."""
+        target_ch, target_label = self._pick_test_pulse_channel()
+
+        st.markdown("---")
+        col_btn, col_info = st.columns([1, 3])
+        with col_btn:
+            clicked = st.button(
+                "🧪 Test Pulse",
+                disabled=not (SDL_AVAILABLE and self.recorder is not None),
+                help="Emit a single pulse with the current settings and record one channel"
+            )
+        with col_info:
+            st.caption(f"Will record one pulse on {target_label} and overlay it on the emitted waveform.")
+
+        if clicked:
+            self._execute_test_pulse(target_ch)
+
+        result = st.session_state.get('series_test_pulse_result')
+        if result:
+            self._render_test_pulse_overlay(result)
+
+    def _pick_test_pulse_channel(self) -> tuple:
+        """Choose which channel to capture for Test Pulse.
+
+        Priority: calibration channel → reference channel → channel 0 (single-channel mode).
+        Returns (channel_index, human_label).
+        """
+        mc_config = getattr(self.recorder, 'multichannel_config', {}) or {}
+        is_multichannel = bool(mc_config.get('enabled', False))
+        cal_ch = mc_config.get('calibration_channel')
+        ref_ch = mc_config.get('reference_channel', 0)
+        names = mc_config.get('channel_names', []) or []
+
+        def _name(ch_idx: int) -> str:
+            if 0 <= ch_idx < len(names):
+                return f"Ch {ch_idx} — {names[ch_idx]}"
+            return f"Ch {ch_idx}"
+
+        if is_multichannel and cal_ch is not None:
+            return int(cal_ch), f"calibration sensor ({_name(int(cal_ch))})"
+        if is_multichannel:
+            return int(ref_ch), f"reference channel ({_name(int(ref_ch))})"
+        return 0, "the input channel"
+
+    def _execute_test_pulse(self, target_ch: int) -> None:
+        """Temporarily switch the shared recorder to single-pulse, record, restore.
+
+        Args:
+            target_ch: Channel index whose audio will be stored for the overlay
+                (calibration channel if configured, else reference channel,
+                else 0 in single-channel mode).
+        """
+        if not self.recorder:
+            st.error("Recorder unavailable")
+            return
+
+        r = self.recorder
+        sr = int(getattr(r, 'sample_rate', 48000))
+
+        # Snapshot fields we mutate so we can restore even on failure.
+        saved = {
+            'num_pulses': r.num_pulses,
+            'pulse_samples': r.pulse_samples,
+            'cycle_samples': r.cycle_samples,
+            'gap_samples': r.gap_samples,
+            'total_duration': getattr(r, 'total_duration', None),
+            'playback_signal': getattr(r, 'playback_signal', None),
+        }
+
+        try:
+            # Configure for one pulse with the same per-cycle listening window.
+            r.num_pulses = 1
+            r.pulse_samples = r._compute_pulse_samples()
+            r.cycle_samples = int(r.cycle_duration * r.sample_rate)
+            r.gap_samples = r.cycle_samples - r.pulse_samples
+            r.total_duration = float(r.cycle_duration)
+            r.playback_signal = r._generate_complete_signal()
+
+            emitted_signal = np.asarray(r.playback_signal, dtype=np.float32).copy()
+
+            with st.spinner(f"Recording test pulse on Ch {target_ch}..."):
+                recorded = r._record_audio()
+
+            if recorded is None:
+                st.error("Test pulse recording failed — no data captured")
+                return
+
+            # Extract the requested channel from the recording.
+            if isinstance(recorded, dict):
+                if target_ch in recorded:
+                    rec_audio = np.asarray(recorded[target_ch], dtype=np.float32)
+                else:
+                    # Recorder returned multi-channel but not the requested index
+                    # (e.g. fewer channels actually opened than configured) — fall
+                    # back to the first available channel so the user still sees something.
+                    fallback = sorted(recorded.keys())[0]
+                    rec_audio = np.asarray(recorded[fallback], dtype=np.float32)
+                    st.warning(
+                        f"Channel {target_ch} not in recording (got {sorted(recorded.keys())}); "
+                        f"showing Ch {fallback} instead"
+                    )
+                    target_ch = fallback
+            else:
+                rec_audio = np.asarray(recorded, dtype=np.float32)
+
+            st.session_state['series_test_pulse_result'] = {
+                'cal_audio': rec_audio,
+                'emitted': emitted_signal,
+                'sample_rate': sr,
+                'cal_channel': int(target_ch),
+                'pulse_samples': int(r.pulse_samples),
+                'timestamp': time.time(),
+            }
+            st.success(
+                f"Test pulse OK — {len(rec_audio)} samples "
+                f"({len(rec_audio)/sr*1000:.1f} ms) on Ch {target_ch}"
+            )
+
+        except Exception as e:
+            st.error(f"Test pulse error: {e}")
+            with st.expander("Details"):
+                st.code(str(e))
+        finally:
+            # Restore series-mode state on the shared recorder.
+            for k, v in saved.items():
+                if v is not None:
+                    setattr(r, k, v)
+
+    def _render_test_pulse_overlay(self, result: Dict[str, Any]) -> None:
+        """Overlay emitted pulse + recorded channel using the panel's standard
+        multi-waveform component (same one used for cycle overlays).
+
+        The display is truncated to 2× pulse length so the chart focuses on
+        the pulse + immediate response and doesn't waste space on idle tail.
+        """
+        emitted = np.asarray(result.get('emitted', []), dtype=np.float32)
+        rec_audio = np.asarray(result.get('cal_audio', []), dtype=np.float32)
+        sr = int(result.get('sample_rate', 48000))
+        cal_ch = int(result.get('cal_channel', -1))
+        pulse_samples = int(result.get('pulse_samples', 0))
+
+        if emitted.size == 0 or rec_audio.size == 0:
+            st.warning("No test pulse data to display")
+            return
+
+        # Truncate both traces to 2× pulse length for a focused view.
+        if pulse_samples > 0:
+            display_n = 2 * pulse_samples
+            emitted = emitted[:display_n]
+            rec_audio = rec_audio[:display_n]
+
+        ts = result.get('timestamp', 0.0)
+        if ts:
+            st.caption(
+                f"Recorded at: {time.strftime('%H:%M:%S', time.localtime(ts))} · "
+                f"showing first {emitted.size} samples ({emitted.size / sr * 1000:.1f} ms)"
+            )
+
+        if not (VISUALIZER_AVAILABLE and AudioVisualizer):
+            st.warning("AudioVisualizer not available - cannot display overlay")
+            return
+
+        normalize = st.checkbox(
+            "Normalize traces (peak = 1)",
+            value=True,
+            key="series_test_pulse_normalize",
+            help="Scale each trace by its own peak so shape comparison isn't dominated by absolute amplitude"
+        )
+
+        AudioVisualizer.render_multi_waveform_with_zoom(
+            audio_signals=[emitted, rec_audio],
+            labels=["Emitted Pulse", f"Recorded Ch {cal_ch}"],
+            sample_rate=sr,
+            title=f"Test Pulse — Emitted vs Recorded (Ch {cal_ch})",
+            component_id="series_test_pulse_overlay",
+            height=380,
+            normalize=normalize,
+            show_analysis=False,
+        )
+
+    # ----------------------
     # Config UI (permanent apply to recorder)
     # ----------------------
     def _render_pulse_series_config(self) -> None:
@@ -371,18 +940,6 @@ class SeriesSettingsPanel:
             st.info(f"ℹ️ Settings loaded from **{config_path.name}** — Changes are applied to recorder but not saved until you click 'Save Configuration'")
         else:
             st.warning(f"⚠️ No configuration file found at {config_path} — Using default values")
-
-        st.markdown("---")
-
-        # NEW: Recording mode selection (Phase 1 - Calibration Mode Integration)
-        recording_mode = self._render_recording_mode_selection()
-
-        # NEW: Show calibration config if in calibration mode
-        if recording_mode == 'calibration':
-            self._render_calibration_mode_info()
-
-        # NEW: Mode comparison table
-        self._render_mode_comparison_table()
 
         st.markdown("---")
 
@@ -412,138 +969,115 @@ class SeriesSettingsPanel:
                 "volume": config.get('volume')
             })
 
-        col1, col2, col3 = st.columns(3)
+        # ── Group 1: Mode and channels configuration ──────────────────────
+        with st.expander("🎚️ Mode and Channels Configuration", expanded=True):
+            recording_mode = self._render_recording_mode_selection()
+            if recording_mode == 'calibration':
+                self._render_calibration_mode_info()
+            self._render_mode_comparison_table()
 
-        with col1:
-            st.markdown("**Pulse Properties**")
-            # ints across the board
-            num_pulses = st.number_input(
-                "Number of pulses",
-                min_value=int(1), max_value=int(200),
-                value=int(st.session_state['series_num_pulses']),
-                step=int(1)
-            )
-            # Get sample rate to constrain pulse duration
-            current_sample_rate = int(st.session_state['series_sample_rate'])
+        # ── Group 2: Series configuration ─────────────────────────────────
+        with st.expander("🔁 Series Configuration", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                num_pulses = st.number_input(
+                    "Number of pulses",
+                    min_value=int(1), max_value=int(200),
+                    value=int(st.session_state['series_num_pulses']),
+                    step=int(1)
+                )
+                cycle_duration_ms = st.number_input(
+                    "Cycle duration (ms)",
+                    min_value=float(5.0), max_value=float(3000.0),
+                    value=float(st.session_state['series_cycle_duration']),
+                    step=float(5.0)
+                )
+            with col2:
+                extra_ms = st.number_input(
+                    "Extra record time (ms)",
+                    min_value=float(0.0), max_value=float(5000.0),
+                    value=float(st.session_state['series_record_extra_time']),
+                    step=float(25.0),
+                    help="Additional recording time after the last pulse to capture trailing reverb"
+                )
 
-            # Minimum pulse duration = one sample period
-            min_pulse_ms = (1.0 / current_sample_rate) * 1000.0  # Convert to ms
+            # Persist series-side values immediately so the calculated-parameters
+            # placeholder below sees fresh values on this same rerun.
+            st.session_state['series_num_pulses'] = int(num_pulses)
+            st.session_state['series_cycle_duration'] = float(cycle_duration_ms)
+            st.session_state['series_record_extra_time'] = float(extra_ms)
 
-            # Maximum pulse duration = 100 ms
-            max_pulse_ms = 100.0
+            # Placeholder for Calculated Parameters — filled after the Pulse
+            # subpanel writes the current pulse_duration to session state.
+            calc_placeholder = st.container()
 
-            # floats across the board
-            pulse_duration_ms = st.number_input(
-                "Pulse duration (ms)",
-                min_value=float(min_pulse_ms),
-                max_value=float(max_pulse_ms),
-                value=float(min(max(st.session_state['series_pulse_duration'], min_pulse_ms), max_pulse_ms)),
-                step=float(min_pulse_ms),
-                help=f"Min: 1 sample ({min_pulse_ms:.4f} ms @ {current_sample_rate}Hz) | Max: {max_pulse_ms} ms"
-            )
-            pulse_freq = st.number_input(
-                "Pulse frequency (Hz)",
-                min_value=float(20.0), max_value=float(24000.0),
-                value=float(st.session_state['series_pulse_frequency']),
-                step=float(50.0)
-            )
-
-        with col2:
-            st.markdown("**Timing & Volume**")
-            cycle_duration_ms = st.number_input(
-                "Cycle duration (ms)",
-                min_value=float(5.0), max_value=float(3000.0),
-                value=float(st.session_state['series_cycle_duration']),
-                step=float(5.0)
-            )
+        # ── Group 3: Pulse configuration ──────────────────────────────────
+        with st.expander("🎵 Pulse Configuration", expanded=True):
+            pulse_duration_ms, pulse_freq, fade_ms, pulse_form = self._render_pulse_shape_subpanel()
             pulse_vol = st.slider(
                 "Pulse volume",
                 min_value=float(0.0), max_value=float(1.0),
                 value=float(st.session_state['series_pulse_volume']),
                 step=float(0.05)
             )
-            fade_ms = st.number_input(
-                "Fade duration (ms)",
-                min_value=float(0.05), max_value=float(20.0),
-                value=float(st.session_state['series_fade_duration']),
-                step=float(0.05)
-            )
+            # Persist volume immediately so a Test Pulse click below uses the
+            # current slider value (apply-to-recorder runs further down).
+            st.session_state['series_pulse_volume'] = float(pulse_vol)
+            self.recorder.volume = float(pulse_vol)
+            self._render_test_pulse_section()
 
-        with col3:
-            st.markdown("**Waveform & Analysis**")
-            waveform_options = ["sine", "square", "voice_coil"]
-            current_form = st.session_state['series_pulse_form']
-            if current_form in waveform_options:
-                default_idx = waveform_options.index(current_form)
-            else:
-                default_idx = 0
-            pulse_form = st.selectbox(
-                "Pulse waveform",
-                waveform_options,
-                index=default_idx
-            )
-            extra_ms = st.number_input(
-                "Extra record time (ms)",
-                min_value=float(0.0), max_value=float(5000.0),
-                value=float(st.session_state['series_record_extra_time']),
-                step=float(25.0)
-            )
-            # ints across the board; max depends on num_pulses
+        # ── Group 4: Post processing ──────────────────────────────────────
+        with st.expander("🧪 Post Processing", expanded=False):
+            st.markdown("**Cycle Averaging**")
             avg_start = st.number_input(
                 "Averaging start cycle",
                 min_value=int(1), max_value=int(max(1, int(num_pulses))),
                 value=int(min(int(st.session_state['series_averaging_start_cycle']), int(num_pulses))),
-                step=int(1)
+                step=int(1),
+                help="Skip cycles before this index when computing the averaged response (allows system settling)"
             )
 
-        # Impulse Response Truncation Section
-        st.markdown("---")
-        st.markdown("**Impulse Response Truncation**")
+            st.markdown("---")
+            st.markdown("**Impulse Response Truncation**")
+            truncate_enabled = st.checkbox(
+                "Enable IR Truncation",
+                value=st.session_state.get('series_truncate_enabled', False),
+                help="Truncate averaged impulse responses to reduce file size and focus on working length"
+            )
 
-        truncate_enabled = st.checkbox(
-            "Enable IR Truncation",
-            value=st.session_state.get('series_truncate_enabled', False),
-            help="Truncate averaged impulse responses to reduce file size and focus on working length"
-        )
+            if truncate_enabled:
+                col1, col2 = st.columns(2)
+                with col1:
+                    working_length = st.number_input(
+                        "IR Working Length (ms)",
+                        min_value=10.0,
+                        max_value=5000.0,
+                        value=st.session_state.get('series_ir_working_length', 500.0),
+                        step=10.0,
+                        format="%.1f",
+                        help="Duration of impulse response to keep (before fade-out)"
+                    )
+                with col2:
+                    fade_length = st.number_input(
+                        "IR Fade Length (ms)",
+                        min_value=1.0,
+                        max_value=200.0,
+                        value=st.session_state.get('series_ir_fade_length', 50.0),
+                        step=5.0,
+                        format="%.1f",
+                        help="Duration of fade-out window to prevent abrupt cutoff"
+                    )
 
-        if truncate_enabled:
-            col1, col2 = st.columns(2)
+                if fade_length >= working_length:
+                    st.error("⚠️ Fade length must be shorter than working length")
 
-            with col1:
-                working_length = st.number_input(
-                    "IR Working Length (ms)",
-                    min_value=10.0,
-                    max_value=5000.0,
-                    value=st.session_state.get('series_ir_working_length', 500.0),
-                    step=10.0,
-                    format="%.1f",
-                    help="Duration of impulse response to keep (before fade-out)"
-                )
-
-            with col2:
-                fade_length = st.number_input(
-                    "IR Fade Length (ms)",
-                    min_value=1.0,
-                    max_value=200.0,
-                    value=st.session_state.get('series_ir_fade_length', 50.0),
-                    step=5.0,
-                    format="%.1f",
-                    help="Duration of fade-out window to prevent abrupt cutoff"
-                )
-
-            # Validation
-            if fade_length >= working_length:
-                st.error("⚠️ Fade length must be shorter than working length")
-
-            # Preview calculation
-            sample_rate = st.session_state.get('series_sample_rate', 48000)
-            working_samples = int(working_length * sample_rate / 1000)
-            fade_samples = int(fade_length * sample_rate / 1000)
-            st.caption(f"💡 Truncated length: {working_samples:,} samples, Fade window: {fade_samples:,} samples")
-        else:
-            # Use defaults when disabled
-            working_length = st.session_state.get('series_ir_working_length', 500.0)
-            fade_length = st.session_state.get('series_ir_fade_length', 50.0)
+                sample_rate = st.session_state.get('series_sample_rate', 48000)
+                working_samples = int(working_length * sample_rate / 1000)
+                fade_samples = int(fade_length * sample_rate / 1000)
+                st.caption(f"💡 Truncated length: {working_samples:,} samples, Fade window: {fade_samples:,} samples")
+            else:
+                working_length = st.session_state.get('series_ir_working_length', 500.0)
+                fade_length = st.session_state.get('series_ir_fade_length', 50.0)
 
         # Store in session (correct types)
         st.session_state['series_num_pulses'] = int(num_pulses)
@@ -562,7 +1096,13 @@ class SeriesSettingsPanel:
         # APPLY PERMANENTLY to the shared recorder (no restore)
         self._apply_series_settings_to_recorder(self.recorder)
 
-        self._show_calculated_parameters()
+        # Render Calculated Parameters into the placeholder reserved inside the
+        # Series Configuration expander. By now session state holds fresh values
+        # for both pulse_duration (written by the pulse subpanel) and the
+        # series-level fields (written above), so gap/duty/total are correct.
+        with calc_placeholder:
+            self._show_calculated_parameters()
+
         st.markdown("---")
         self._render_series_controls()
 
@@ -825,12 +1365,24 @@ class SeriesSettingsPanel:
         r.num_pulses = int(st.session_state['series_num_pulses'])
         r.volume = float(st.session_state['series_pulse_volume'])
         r.impulse_form = str(st.session_state['series_pulse_form'])
+        r.invert_polarity = bool(st.session_state['series_invert_polarity'])
+        r.pulse_smoothing_ms = float(st.session_state['series_pulse_smoothing_ms'])
+
+        # Voice-coil pulse-shape parameters (consumed by recorder when impulse_form == voice_coil)
+        if not getattr(r, 'voice_coil_config', None):
+            r.voice_coil_config = {}
+        r.voice_coil_config['init_pos_ms'] = float(st.session_state['series_vc_init_pos_ms'])
+        r.voice_coil_config['init_pos_amplitude'] = float(st.session_state['series_vc_init_pos_amplitude'])
+        r.voice_coil_config['positive_ms'] = float(st.session_state['series_vc_positive_ms'])
+        r.voice_coil_config['gap_ms'] = float(st.session_state['series_vc_gap_ms'])
+        r.voice_coil_config['negative_ms'] = float(st.session_state['series_vc_negative_ms'])
+        r.voice_coil_config['pullback_amplitude'] = float(st.session_state['series_vc_pullback_amplitude'])
 
         extra = float(st.session_state['series_record_extra_time']) / 1000.0
         r.total_duration = (r.num_pulses * r.cycle_duration) + extra
 
         # Recompute derived fields on recorder
-        r.pulse_samples = int(r.pulse_duration * r.sample_rate)
+        r.pulse_samples = r._compute_pulse_samples()
         r.fade_samples = int(r.pulse_fade * r.sample_rate)
         r.cycle_samples = int(r.cycle_duration * r.sample_rate)
         r.gap_samples = r.cycle_samples - r.pulse_samples

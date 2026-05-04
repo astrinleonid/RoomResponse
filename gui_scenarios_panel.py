@@ -13,7 +13,7 @@ Provides:
 import os
 import numpy as np
 import streamlit as st
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 # Optional: Audio visualizer
 try:
@@ -561,19 +561,28 @@ class ScenariosPanel:
                 view_options = ["Single File", "Overlay All", "By Channel", "By Measurement"]
                 if averaged_files:
                     view_options.append("Averaged")
+                view_options.append("Sanity Check")
 
                 view_mode = st.radio(
                     "View mode",
                     view_options,
                     horizontal=True,
-                    help="Single File: View one file at a time. Overlay All: Compare all files. By Channel: Overlay measurements per channel. By Measurement: Compare channels per measurement. Averaged: View averaged response per channel."
+                    help=(
+                        "Single File: View one file at a time. Overlay All: Compare all files. "
+                        "By Channel: Overlay measurements per channel. By Measurement: Compare "
+                        "channels per measurement. Averaged: View averaged response per channel. "
+                        "Sanity Check: Split-half reproducibility — close traces = stable."
+                    )
                 )
             else:
                 view_mode = st.radio(
                     "View mode",
-                    ["Single File", "Overlay All"],
+                    ["Single File", "Overlay All", "Sanity Check"],
                     horizontal=True,
-                    help="Single File: View one file at a time. Overlay All: Compare all files overlaid."
+                    help=(
+                        "Single File: View one file at a time. Overlay All: Compare all files "
+                        "overlaid. Sanity Check: Split-half reproducibility — close traces = stable."
+                    )
                 )
         else:
             view_mode = "Single File"
@@ -587,6 +596,10 @@ class ScenariosPanel:
             self._render_by_measurement_view(exp_path, os.path.basename(exp_path))
         elif view_mode == "Averaged":
             self._render_averaged_view(averaged_files, exp_path, os.path.basename(exp_path))
+        elif view_mode == "Sanity Check":
+            self._render_sanity_check_view(
+                exp_path, os.path.basename(exp_path), audio_type, files_of_type, bool(is_multichannel)
+            )
         else:
             # Single file view
             col1, col2 = st.columns([3, 1])
@@ -2357,6 +2370,202 @@ class ScenariosPanel:
                             normalize=normalize,
                             height=300
                         )
+
+    def _render_sanity_check_view(
+        self,
+        scenario_path: str,
+        scenario_name: str,
+        audio_type: str,
+        files_of_type: list,
+        is_multichannel: bool,
+    ) -> None:
+        """Split-half reproducibility view.
+
+        Splits all measurements (per channel) into two random samples, averages
+        each independently, and overlays them. Tightly overlapping traces mean
+        the system is reproducible; divergent traces flag a problem.
+        """
+        st.markdown("---")
+        st.markdown("#### Sanity Check — Split-Half Reproducibility")
+        st.caption(
+            "Randomly split measurements into two halves, average each, and overlay them per "
+            "channel. The two traces should be near-identical — divergence flags drift, noise, "
+            "or inconsistent setup."
+        )
+
+        # Build {channel_idx: {measurement_idx: file_path}}
+        channel_measurements: Dict[int, Dict[int, str]] = {}
+        if is_multichannel and MULTICHANNEL_UTILS_AVAILABLE:
+            channel_groups = group_files_by_channel(files_of_type)
+            for ch, files in channel_groups.items():
+                meas_map: Dict[int, str] = {}
+                for f in files:
+                    parsed = parse_multichannel_filename(f)
+                    if parsed:
+                        meas_map[parsed.index] = f
+                if meas_map:
+                    channel_measurements[ch] = meas_map
+        else:
+            # Single-channel: treat all files as one channel; measurement index = sorted position
+            sorted_files = sorted(files_of_type)
+            channel_measurements[0] = {i: f for i, f in enumerate(sorted_files)}
+
+        if not channel_measurements:
+            st.info("No measurements found in this scenario.")
+            return
+
+        # Use the SAME A/B split across all channels — that's the proper system-wide
+        # reproducibility test. Restrict to measurement indices present on every channel.
+        index_sets = [set(m.keys()) for m in channel_measurements.values()]
+        common_indices = sorted(set.intersection(*index_sets)) if index_sets else []
+        n_total = len(common_indices)
+
+        if n_total < 4:
+            st.warning(
+                f"Need at least 4 measurements common to all channels for a split-half test. "
+                f"Found: {n_total}."
+            )
+            return
+
+        # Random seed (randomized on first view, persisted, reshuffleable)
+        seed_widget_key = f"sanity_seed_{scenario_name}_{audio_type}"
+        if seed_widget_key not in st.session_state:
+            st.session_state[seed_widget_key] = int(np.random.randint(0, 99999))
+
+        col_a, col_b, col_c = st.columns([1, 1, 2])
+        with col_a:
+            st.number_input(
+                "Random seed",
+                min_value=0, max_value=99999, step=1,
+                key=seed_widget_key,
+                help="Same seed reproduces the same A/B split. Reshuffle picks a new one."
+            )
+        with col_b:
+            if st.button("🎲 Reshuffle", key=f"sanity_reshuffle_{scenario_name}_{audio_type}"):
+                st.session_state[seed_widget_key] = int(np.random.randint(0, 99999))
+                st.rerun()
+        with col_c:
+            st.metric("Per-sample size", f"~{n_total // 2}", help=f"Of {n_total} total measurements")
+
+        effective_seed = int(st.session_state[seed_widget_key])
+
+        # Random split (deterministic in seed)
+        rng = np.random.RandomState(effective_seed)
+        shuffled = list(common_indices)
+        rng.shuffle(shuffled)
+        half = len(shuffled) // 2
+        sample_a = sorted(shuffled[:half])
+        sample_b = sorted(shuffled[half:half * 2])  # drop one if total is odd
+
+        def _fmt_indices(ix: list) -> str:
+            if len(ix) <= 12:
+                return ", ".join(str(i) for i in ix)
+            return ", ".join(str(i) for i in ix[:10]) + f", … (+{len(ix) - 10} more)"
+
+        st.caption(f"**Sample A** ({len(sample_a)}): {_fmt_indices(sample_a)}")
+        st.caption(f"**Sample B** ({len(sample_b)}): {_fmt_indices(sample_b)}")
+
+        # Cache averaged results per (seed, n, audio_type, scenario)
+        cache_key = f"sanity_data_{scenario_name}_{audio_type}_{effective_seed}_{n_total}"
+        if cache_key not in st.session_state:
+            with st.spinner("Computing split-half averages…"):
+                results: Dict[int, Dict[str, Any]] = {}
+                for ch in sorted(channel_measurements.keys()):
+                    meas_map = channel_measurements[ch]
+                    avg_a, sr_a = self._average_files_for_indices(meas_map, sample_a)
+                    avg_b, sr_b = self._average_files_for_indices(meas_map, sample_b)
+                    if avg_a is None or avg_b is None:
+                        continue
+
+                    # Trim to common length, compute RMS-difference metric
+                    n = min(len(avg_a), len(avg_b))
+                    a = avg_a[:n].astype(np.float32, copy=False)
+                    b = avg_b[:n].astype(np.float32, copy=False)
+                    diff = a - b
+                    rms_diff = float(np.sqrt(np.mean(diff * diff)))
+                    rms_a = float(np.sqrt(np.mean(a * a)))
+                    rms_b = float(np.sqrt(np.mean(b * b)))
+                    ref_rms = (rms_a + rms_b) / 2.0
+                    rms_diff_pct = (100.0 * rms_diff / ref_rms) if ref_rms > 0 else float('nan')
+
+                    results[ch] = {
+                        'avg_a': a,
+                        'avg_b': b,
+                        'sample_rate': sr_a or sr_b or 48000,
+                        'rms_diff': rms_diff,
+                        'rms_diff_pct': rms_diff_pct,
+                    }
+                st.session_state[cache_key] = results
+
+        results = st.session_state.get(cache_key, {})
+        if not results:
+            st.error("Could not load any audio for averaging.")
+            return
+
+        channel_names = self._load_channel_names_from_metadata(scenario_path) if is_multichannel else {}
+
+        normalize = st.checkbox(
+            "Normalize signals",
+            value=True,
+            key=f"sanity_normalize_{scenario_name}_{audio_type}",
+            help="Normalize each averaged signal to peak=1 before plotting"
+        )
+
+        # One chart per channel — RMS diff in the expander header tells the story at a glance
+        for ch in sorted(results.keys()):
+            r = results[ch]
+            ch_name = channel_names.get(ch, f"Channel {ch}") if is_multichannel else "Recording"
+            pct = r['rms_diff_pct']
+            if pct < 5.0:
+                badge = "✅"
+            elif pct < 10.0:
+                badge = "🟡"
+            else:
+                badge = "⚠️"
+            ch_label = f"Ch {ch} — {ch_name}" if is_multichannel else ch_name
+            header = (
+                f"📊 {ch_label}  ·  RMS diff: {r['rms_diff']:.4f}  "
+                f"({pct:.1f}% of avg signal RMS) {badge}"
+            )
+            with st.expander(header, expanded=True):
+                AudioVisualizer.render_multi_waveform_with_zoom(
+                    audio_signals=[r['avg_a'], r['avg_b']],
+                    labels=[f"Sample A ({len(sample_a)})", f"Sample B ({len(sample_b)})"],
+                    sample_rate=r['sample_rate'],
+                    title=f"Sanity Check — {ch_label}",
+                    component_id=f"sanity_ch{ch}_{scenario_name}_{audio_type}_{effective_seed}",
+                    normalize=normalize,
+                    height=320,
+                )
+
+    def _average_files_for_indices(
+        self,
+        meas_map: Dict[int, str],
+        indices: list,
+    ) -> tuple:
+        """Load files at the given measurement indices and return (mean_signal, sample_rate).
+
+        Pads each loaded signal to the longest length with zeros before averaging,
+        matching the strategy used elsewhere in the panel for cross-measurement averaging.
+        """
+        signals = []
+        sr = None
+        for idx in indices:
+            path = meas_map.get(idx)
+            if path is None:
+                continue
+            audio, file_sr, _ = AudioVisualizer.load_audio_file(path, default_sample_rate=48000)
+            if audio is not None and len(audio) > 0:
+                signals.append(np.asarray(audio, dtype=np.float32))
+                if sr is None:
+                    sr = int(file_sr)
+        if not signals:
+            return None, sr
+        max_len = max(len(s) for s in signals)
+        padded = np.zeros((len(signals), max_len), dtype=np.float32)
+        for i, s in enumerate(signals):
+            padded[i, :len(s)] = s
+        return padded.mean(axis=0), sr
 
     def _load_channel_names_from_metadata(self, scenario_path: str) -> dict:
         """Load channel names from scenario metadata."""

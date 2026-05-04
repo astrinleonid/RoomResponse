@@ -45,7 +45,10 @@ class RoomResponseRecorder:
             'num_pulses': 8,
             'volume': 0.4,
             'pulse_frequency': 1000,
-            'impulse_form': 'sine'
+            'impulse_form': 'sine',
+            # Global pulse-shape post-processing (applies to all waveforms)
+            'invert_polarity': False,
+            'pulse_smoothing_ms': 0.0,
         }
 
         # Multi-channel support (backward compatible default)
@@ -85,6 +88,19 @@ class RoomResponseRecorder:
             'enabled': False,
             'ir_working_length_ms': 500.0,
             'ir_fade_length_ms': 50.0
+        }
+
+        # Voice-coil pulse-shape defaults (only used when impulse_form == 'voice_coil')
+        # Optional initial positioning plateau, then positive plateau, then a silent
+        # gap, then a negative spike that linearly ramps back to 0. All durations
+        # in milliseconds. init_pos_ms = 0 disables the positioning phase.
+        self.voice_coil_config = {
+            'init_pos_ms': 0.0,
+            'init_pos_amplitude': -0.1,
+            'positive_ms': 20.0,
+            'gap_ms': 10.0,
+            'negative_ms': 100.0,
+            'pullback_amplitude': 0.5,
         }
 
         # Save format configuration defaults
@@ -143,6 +159,10 @@ class RoomResponseRecorder:
                 if 'truncate_config' in file_config:
                     self.truncate_config.update(file_config['truncate_config'])
 
+                # Load voice-coil pulse-shape config
+                if 'voice_coil_config' in file_config:
+                    self.voice_coil_config.update(file_config['voice_coil_config'])
+
                 # Load save format config
                 if 'save_format' in file_config:
                     self.save_format_config.update(file_config['save_format'])
@@ -159,7 +179,7 @@ class RoomResponseRecorder:
             setattr(self, param, value)
 
         # Calculated parameters
-        self.pulse_samples = int(self.pulse_duration * self.sample_rate)
+        self.pulse_samples = self._compute_pulse_samples()
         self.fade_samples = int(self.pulse_fade * self.sample_rate)
         self.cycle_samples = int(self.cycle_duration * self.sample_rate)
         self.gap_samples = self.cycle_samples - self.pulse_samples
@@ -415,6 +435,24 @@ class RoomResponseRecorder:
                 f"Channel {i}" for i in range(num_ch)
             ]
 
+    def _compute_pulse_samples(self) -> int:
+        """Total pulse buffer length in samples.
+
+        For voice_coil this is derived from voice_coil_config (positive + gap + negative)
+        so the three durations can be tuned independently. For sine/square it remains
+        pulse_duration * sample_rate.
+        """
+        if self.impulse_form == 'voice_coil':
+            vc = self.voice_coil_config
+            total_ms = (
+                float(vc.get('init_pos_ms', 0.0))
+                + float(vc.get('positive_ms', 20.0))
+                + float(vc.get('gap_ms', 10.0))
+                + float(vc.get('negative_ms', 100.0))
+            )
+            return max(1, int(round((total_ms / 1000.0) * self.sample_rate)))
+        return int(self.pulse_duration * self.sample_rate)
+
     def _generate_single_pulse(self, exact_samples: int) -> np.ndarray:
         """Generate a single pulse with exact sample count and smooth envelope"""
         if self.impulse_form == "sine":
@@ -429,24 +467,42 @@ class RoomResponseRecorder:
                 pulse[-self.fade_samples:] *= fade_out
 
         elif self.impulse_form == "voice_coil":
-            # Voice coil actuator impulse: square pulse + negative pull-back
-            # pulse_duration controls the main positive pulse
-            # fade controls the pull-back negative signal duration
+            # Voice coil actuator impulse, fully parameterized via voice_coil_config:
+            #   0) optional initial-positioning ramp of length init_pos_ms that
+            #      linearly recedes from init_pos_amplitude (signed) up to 0
+            #   1) flat positive plateau of length positive_ms
+            #   2) silent gap of length gap_ms
+            #   3) negative spike at -pullback_amplitude that linearly ramps to 0 over negative_ms
+            vc = self.voice_coil_config
+            sr = self.sample_rate
+            init_n = max(0, int(round((float(vc.get('init_pos_ms', 0.0)) / 1000.0) * sr)))
+            init_amp = float(vc.get('init_pos_amplitude', -0.1))
+            pos = max(1, int(round((float(vc.get('positive_ms', 20.0)) / 1000.0) * sr)))
+            gap = max(0, int(round((float(vc.get('gap_ms', 10.0)) / 1000.0) * sr)))
+            neg = max(1, int(round((float(vc.get('negative_ms', 100.0)) / 1000.0) * sr)))
+            amp = float(vc.get('pullback_amplitude', 0.5))
 
-            # Main positive square pulse
-            pulse = np.ones(exact_samples)
+            pulse = np.zeros(exact_samples)
 
-            # Add pull-back negative signal at the end
-            if self.fade_samples > 0 and self.fade_samples < exact_samples:
-                # Pull-back signal: negative square wave
-                # Position it at the end of the pulse
-                pullback_samples = np.zeros(self.fade_samples)
-                pullback_impulse_start = self.fade_samples//3
-                pullback_impulse_samples = self.fade_samples - pullback_impulse_start
-                pullback_samples[pullback_impulse_start:] = np.linspace(-0.5, 0, pullback_impulse_samples)
-                pullback_start = exact_samples - self.fade_samples
-                pulse[pullback_start:] = pullback_samples
-                #-0.5  # Negative pull-back at half amplitude
+            # Initial-positioning receding ramp (optional)
+            if init_n > 0:
+                end_init = min(init_n, exact_samples)
+                if end_init > 0:
+                    pulse[:end_init] = np.linspace(init_amp, 0.0, end_init)
+
+            # Main positive plateau
+            pos_start = init_n
+            if pos_start < exact_samples:
+                pos_end = min(pos_start + pos, exact_samples)
+                pulse[pos_start:pos_end] = 1.0
+
+            # Negative ramp
+            neg_start = init_n + pos + gap
+            if neg_start < exact_samples:
+                neg_end = min(neg_start + neg, exact_samples)
+                actual_neg = neg_end - neg_start
+                if actual_neg > 0:
+                    pulse[neg_start:neg_end] = np.linspace(-amp, 0.0, actual_neg)
 
 
 
@@ -461,11 +517,23 @@ class RoomResponseRecorder:
                 pulse[:self.fade_samples] *= fade_in
                 pulse[-self.fade_samples:] *= fade_out
 
+        # Global post-processing: smoothing (Hann-window convolution) + polarity flip
+        smoothing_ms = float(getattr(self, 'pulse_smoothing_ms', 0.0))
+        if smoothing_ms > 0.0 and pulse.size > 1:
+            k = max(2, int(round((smoothing_ms / 1000.0) * self.sample_rate)))
+            if k < pulse.size:
+                kernel = np.hanning(k).astype(pulse.dtype)
+                kernel /= kernel.sum()
+                pulse = np.convolve(pulse, kernel, mode='same')
+
+        if bool(getattr(self, 'invert_polarity', False)):
+            pulse = -pulse
+
         return pulse * self.volume * 0.3
 
     def _generate_complete_signal(self) -> list:
         """Generate the complete test signal with all pulses"""
-        self.pulse_samples = int(self.pulse_duration * self.sample_rate)
+        self.pulse_samples = self._compute_pulse_samples()
         total_samples = self.cycle_samples * self.num_pulses
         signal = np.zeros(total_samples, dtype=np.float32)
         single_pulse = self._generate_single_pulse(self.pulse_samples)
